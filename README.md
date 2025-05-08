@@ -9,7 +9,8 @@
 3. Activate the environment (in case you need to use it in the terminal)
 
     ```shell
-    conda activate mastermind
+    conda activate 2025_mmjb_reports
+    # conda deactivate # To deactivate
     ```
 4. Install required packages
     ```shell
