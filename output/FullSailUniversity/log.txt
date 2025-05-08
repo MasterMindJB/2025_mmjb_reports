@@ -1,0 +1,106 @@
+[0;32mINFO:root:assemblyai_helper_functions.py(164):get_audio_transcript 2025-05-07 19:35:19,215[0m
+[0;1mCreating Audio transcript[0m
+[0;32mINFO:root:assemblyai_helper_functions.py(169):get_audio_transcript 2025-05-07 19:35:19,215[0m
+Transcript already stored, retrieving from json file.
+[0;32mINFO:root:llm_functions.py(62):summarize_and_map_speaker 2025-05-07 19:35:19,987[0m
+Creating speaker mapping...
+[0;32mINFO:root:llm_functions.py(75):summarize_and_map_speaker 2025-05-07 19:35:19,987[0m
+...speaker mapping not created, creating.
+[0;32mINFO:root:llm_functions.py(111):summarize_and_map_speaker 2025-05-07 19:35:20,016[0m
+...processing speaker [A].
+[0;32mINFO:root:llm_functions.py(111):summarize_and_map_speaker 2025-05-07 19:35:23,225[0m
+...processing speaker [B].
+[0;32mINFO:root:llm_functions.py(111):summarize_and_map_speaker 2025-05-07 19:35:26,174[0m
+...processing speaker [C].
+[0;32mINFO:root:llm_functions.py(111):summarize_and_map_speaker 2025-05-07 19:35:29,641[0m
+...processing speaker [D].
+[0;32mINFO:root:llm_functions.py(111):summarize_and_map_speaker 2025-05-07 19:35:33,329[0m
+...processing speaker [E].
+[0;32mINFO:root:llm_functions.py(111):summarize_and_map_speaker 2025-05-07 19:35:35,882[0m
+...processing speaker [F].
+[0;32mINFO:root:llm_functions.py(111):summarize_and_map_speaker 2025-05-07 19:35:39,882[0m
+...processing speaker [G].
+[0;34mDEBUG:root:llm_functions.py(138):summarize_and_map_speaker 2025-05-07 19:36:13,946[0m
+...saving speaker mapping to json file [/Users/felipe/Documents/development/python projects/2025/output/FullSailUniversity/speaker_mapping.json]
+[0;34mDEBUG:urllib3.connectionpool:connectionpool.py(1049):_new_conn 2025-05-07 19:36:15,689[0m
+Starting new HTTPS connection (1): plotapi.com:443
+[0;34mDEBUG:urllib3.connectionpool:connectionpool.py(544):_make_request 2025-05-07 19:36:16,580[0m
+https://plotapi.com:443 "POST /chord/ HTTP/1.1" 200 None
+[0;34mDEBUG:urllib3.connectionpool:connectionpool.py(544):_make_request 2025-05-07 19:36:16,786[0m
+https://plotapi.com:443 "POST /chord/ HTTP/1.1" 200 None
+[0;34mDEBUG:PIL.PngImagePlugin:PngImagePlugin.py(200):call 2025-05-07 19:36:17,234[0m
+STREAM b'IHDR' 16 13
+[0;34mDEBUG:PIL.PngImagePlugin:PngImagePlugin.py(200):call 2025-05-07 19:36:17,235[0m
+STREAM b'tEXt' 41 58
+[0;34mDEBUG:PIL.PngImagePlugin:PngImagePlugin.py(200):call 2025-05-07 19:36:17,236[0m
+STREAM b'pHYs' 111 9
+[0;34mDEBUG:PIL.PngImagePlugin:PngImagePlugin.py(200):call 2025-05-07 19:36:17,236[0m
+STREAM b'IDAT' 132 20432
+[0;34mDEBUG:fpdf.output:output.py(1333):_log_final_sections_sizes 2025-05-07 19:36:17,282[0m
+Final size summary of the biggest document sections:
+[0;34mDEBUG:fpdf.output:output.py(1335):_log_final_sections_sizes 2025-05-07 19:36:17,282[0m
+- pages: 1.0KiB
+[0;34mDEBUG:fpdf.output:output.py(1335):_log_final_sections_sizes 2025-05-07 19:36:17,282[0m
+- fonts: 199.0B
+[0;34mDEBUG:fpdf.output:output.py(1335):_log_final_sections_sizes 2025-05-07 19:36:17,283[0m
+- images: 25.1KiB
+[0;32mINFO:root:assemblyai_helper_functions.py(164):get_audio_transcript 2025-05-07 19:47:57,501[0m
+[0;1mCreating Audio transcript[0m
+[0;32mINFO:root:assemblyai_helper_functions.py(169):get_audio_transcript 2025-05-07 19:47:57,502[0m
+Transcript already stored, retrieving from json file.
+[0;32mINFO:root:llm_functions.py(62):summarize_and_map_speaker 2025-05-07 19:47:58,230[0m
+Creating speaker mapping...
+[0;34mDEBUG:root:llm_functions.py(65):summarize_and_map_speaker 2025-05-07 19:47:58,230[0m
+...speaker mapping already created, loading mapping from json file [/Users/felipe/Documents/development/python projects/2025/output/FullSailUniversity/speaker_mapping.json]
+[0;34mDEBUG:urllib3.connectionpool:connectionpool.py(1049):_new_conn 2025-05-07 19:47:59,852[0m
+Starting new HTTPS connection (1): plotapi.com:443
+[0;34mDEBUG:urllib3.connectionpool:connectionpool.py(544):_make_request 2025-05-07 19:48:00,739[0m
+https://plotapi.com:443 "POST /chord/ HTTP/1.1" 200 None
+[0;34mDEBUG:urllib3.connectionpool:connectionpool.py(544):_make_request 2025-05-07 19:48:00,956[0m
+https://plotapi.com:443 "POST /chord/ HTTP/1.1" 200 None
+[0;34mDEBUG:PIL.PngImagePlugin:PngImagePlugin.py(200):call 2025-05-07 19:48:01,359[0m
+STREAM b'IHDR' 16 13
+[0;34mDEBUG:PIL.PngImagePlugin:PngImagePlugin.py(200):call 2025-05-07 19:48:01,360[0m
+STREAM b'tEXt' 41 58
+[0;34mDEBUG:PIL.PngImagePlugin:PngImagePlugin.py(200):call 2025-05-07 19:48:01,360[0m
+STREAM b'pHYs' 111 9
+[0;34mDEBUG:PIL.PngImagePlugin:PngImagePlugin.py(200):call 2025-05-07 19:48:01,361[0m
+STREAM b'IDAT' 132 20432
+[0;34mDEBUG:fpdf.output:output.py(1333):_log_final_sections_sizes 2025-05-07 19:48:01,405[0m
+Final size summary of the biggest document sections:
+[0;34mDEBUG:fpdf.output:output.py(1335):_log_final_sections_sizes 2025-05-07 19:48:01,405[0m
+- pages: 1.0KiB
+[0;34mDEBUG:fpdf.output:output.py(1335):_log_final_sections_sizes 2025-05-07 19:48:01,405[0m
+- fonts: 199.0B
+[0;34mDEBUG:fpdf.output:output.py(1335):_log_final_sections_sizes 2025-05-07 19:48:01,406[0m
+- images: 25.1KiB
+[0;32mINFO:root:assemblyai_helper_functions.py(164):get_audio_transcript 2025-05-07 19:48:13,708[0m
+[0;1mCreating Audio transcript[0m
+[0;32mINFO:root:assemblyai_helper_functions.py(169):get_audio_transcript 2025-05-07 19:48:13,709[0m
+Transcript already stored, retrieving from json file.
+[0;32mINFO:root:llm_functions.py(62):summarize_and_map_speaker 2025-05-07 19:48:14,423[0m
+Creating speaker mapping...
+[0;34mDEBUG:root:llm_functions.py(65):summarize_and_map_speaker 2025-05-07 19:48:14,424[0m
+...speaker mapping already created, loading mapping from json file [/Users/felipe/Documents/development/python projects/2025/output/FullSailUniversity/speaker_mapping.json]
+[0;34mDEBUG:urllib3.connectionpool:connectionpool.py(1049):_new_conn 2025-05-07 19:48:16,115[0m
+Starting new HTTPS connection (1): plotapi.com:443
+[0;34mDEBUG:urllib3.connectionpool:connectionpool.py(544):_make_request 2025-05-07 19:48:16,939[0m
+https://plotapi.com:443 "POST /chord/ HTTP/1.1" 200 None
+[0;34mDEBUG:urllib3.connectionpool:connectionpool.py(544):_make_request 2025-05-07 19:48:17,144[0m
+https://plotapi.com:443 "POST /chord/ HTTP/1.1" 200 None
+[0;34mDEBUG:PIL.PngImagePlugin:PngImagePlugin.py(200):call 2025-05-07 19:48:17,585[0m
+STREAM b'IHDR' 16 13
+[0;34mDEBUG:PIL.PngImagePlugin:PngImagePlugin.py(200):call 2025-05-07 19:48:17,586[0m
+STREAM b'tEXt' 41 58
+[0;34mDEBUG:PIL.PngImagePlugin:PngImagePlugin.py(200):call 2025-05-07 19:48:17,586[0m
+STREAM b'pHYs' 111 9
+[0;34mDEBUG:PIL.PngImagePlugin:PngImagePlugin.py(200):call 2025-05-07 19:48:17,587[0m
+STREAM b'IDAT' 132 20432
+[0;34mDEBUG:fpdf.output:output.py(1333):_log_final_sections_sizes 2025-05-07 19:48:17,629[0m
+Final size summary of the biggest document sections:
+[0;34mDEBUG:fpdf.output:output.py(1335):_log_final_sections_sizes 2025-05-07 19:48:17,630[0m
+- pages: 1.0KiB
+[0;34mDEBUG:fpdf.output:output.py(1335):_log_final_sections_sizes 2025-05-07 19:48:17,630[0m
+- fonts: 199.0B
+[0;34mDEBUG:fpdf.output:output.py(1335):_log_final_sections_sizes 2025-05-07 19:48:17,630[0m
+- images: 25.1KiB
