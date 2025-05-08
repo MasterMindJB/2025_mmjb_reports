@@ -4,7 +4,7 @@
 2. Create an environment
 
     ```shell
-    conda create -n mastermind python=3
+    conda create -n 2025_mmjb_reports python=3
     ```
 3. Activate the environment (in case you need to use it in the terminal)
 
