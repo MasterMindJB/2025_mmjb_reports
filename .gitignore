@@ -1,3 +1,6 @@
+# Avoid the working mail file
+PROD_PROGRAM_from_mail.ipynb
+
 .DS_Store
 
 # Python .gitignore from https://github.com/github/gitignore/blob/main/Python.gitignore
