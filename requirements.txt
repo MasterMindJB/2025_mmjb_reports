@@ -1,0 +1,19 @@
+fpdf2 # To create PDFs
+jupyterlab # To allow notebooks
+matplotlib # To create plots
+pandas # To handle data
+Pillow # Fork of PIL (Python Imaging Library)
+python-dotenv # To load environment variables
+seaborn # To create plots
+
+langchain
+
+langchain-google-genai
+
+plotapi
+
+#ipywidgets
+
+holoviews
+
+nltk

@@ -1,0 +1,3 @@
+Summarize - Summarize in one paragraph the following transcript.
+
+"{participation}"
