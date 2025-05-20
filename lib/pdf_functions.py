@@ -174,6 +174,7 @@ def create_report(
     image_speaker_sentiment_evo: PIL.Image,
     image_convo_wpm: PIL.Image,
     image_speaker_wpm: PIL.Image,
+    image_action_items: PIL.Image,
     path_report_assets: Path,
     path_reports_dir: Path,
     summaries: JSON,
@@ -364,6 +365,7 @@ def create_report(
 
     pdf.add_page()
     pdf.add_title_1(text='Action Items', link_dest=link_action_items)
+    pdf.image(image_action_items, x='C', w=pdf.epw * 1/3)
     for speaker, name in sorted(
         [(speaker, speaker_map[speaker]['name']) for speaker in speaker_map], key=lambda x: x[1]
     ):
