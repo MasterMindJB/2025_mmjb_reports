@@ -1,0 +1,8 @@
+Please give one paragraph summarizing the following conversation following these rules:
+- The paragraph should be concise and interesting to make people want to read the whole thing.
+- Only return the paragraph and nothing more.
+- Do not assume the gender of any of the participants.
+
+Here's the conversation:
+
+{conversation}

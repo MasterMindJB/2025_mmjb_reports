@@ -1,0 +1,7 @@
+Extract the three most important verbatim quotes, lightly edited for legibility, from the transcript that highlight a person's profound contribution to the discussion. No need for in-depth analysis or additional commentary. Do not assume the gender of the person speaking.
+
+Respond in the format [{{"tagline": a tag line for quote 1, "quote": the quote 1}}, {{"tagline": a tag line for quote 2, "quote": the quote 2}}]. If no quotes were found, respond an empty array like this: []. Do not use variables.
+
+Here's the 
+
+"{participation}"

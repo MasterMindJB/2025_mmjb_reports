@@ -1,0 +1,5 @@
+Summarize in one paragraph the following transcript. Do not assume the gender of the person speaking.
+
+Here's the transcript:
+
+"{participation}"

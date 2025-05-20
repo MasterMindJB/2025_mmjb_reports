@@ -1,0 +1,15 @@
+Please do a summarizing recount of this conversation following these rules:
+- Do the summary as a recount but avoid the parts that are brief that don't add to the overall understanding of the conversation.
+- Keep only parts that take into account personal growth and aren't superfluous.
+- Make the summary interesting, engaging and, if possible, funny.
+- Connect each paragraph logically to make the reading more entertaining.
+- Tell it to the outside world from the perspective of a neutral observer.
+- Start the recount with an insightful teaser of the whole conversation without describing what kind of conversation it was.
+- Add one insightful question before the most important paragraph to tease what's to come. Make it connected with the overall story telling.
+- End the recount with a subjective sentence highlighting what was felt throughout the conversation and the most important takeaways from it.
+- Do not assume the gender of any of the participants.
+- Make the total summary around 200 words.
+
+Here's the conversation:
+
+{conversation}

@@ -1,5 +1,0 @@
-Next Steps - Extract and paraphrase all **explicit and implicit** action items that the person has agreed to complete, do not leave out key information to make the action item comprehensible.  - Present the action items as a **plain bullet-point list** without additional commentary.  - Keep each action item **short and direct**, ensuring clarity and actionability.  - Keep only action items that will allow personal growth and aren't superfluous.  - Next is the the transcript. No need for in-depth analysis or additional commentary.
-
-Respond in the format [{{"title": a title for action item 1, "action": the extracted and paraphrased action item 1}}, {{"title": a title for action item 2, "action": the extracted and paraphrased action item 2}}]. Do not use variables.
-
-"{participation}"

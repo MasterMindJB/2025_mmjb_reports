@@ -5,6 +5,9 @@ from pathlib import Path
 from time import sleep
 
 import requests
+from typing import TypeAlias
+
+JSON: TypeAlias = dict[str, "JSON"] | list["JSON"] | str | int | float | bool | None
 
 
 def _yield_file_chunks(file_path, chunk_size=5242880):
@@ -33,7 +36,7 @@ def _upload_file(
             return json.load(file)
     else:
         if path_response_upload_json.is_file() and force:
-            logging.info('...file already uploaded, forcing reupload.')
+            logging.info('...file already uploaded but forcing reupload.')
             path_response_upload_json.unlink(missing_ok=True)
         else:
             logging.info('...file not uploaded, uploading.')
@@ -49,7 +52,7 @@ def _upload_file(
         json_response = response_upload.json()
         with open(path_response_upload_json, 'x', encoding='UTF-8') as file:
             logging.debug('...saving to json file [%s].', path_response_upload_json)
-            json.dump(json_response, fp=file)
+            json.dump(json_response, fp=file, indent=4)
         return json_response
 
 
@@ -69,7 +72,7 @@ def _create_transcript(
             return json.load(file)
     else:
         if path_response_create_json.is_file() and force:
-            logging.info('...transcript already generated, forcing regeneration.')
+            logging.info('...transcript already generated but forcing regeneration.')
             path_response_create_json.unlink(missing_ok=True)
         else:
             logging.info('...transcript not generated, asking to generate.')
@@ -98,7 +101,7 @@ def _create_transcript(
         json_response = response_gen_transcript.json()
         with open(path_response_create_json, 'x', encoding='UTF-8') as file:
             logging.debug('...Saving json to file [%s].', path_response_create_json)
-            json.dump(json_response, fp=file)
+            json.dump(json_response, fp=file, indent=4)
         return json_response
 
 
@@ -111,13 +114,13 @@ def _obtain_transcript(
     if path_response_transcript_json.is_file() and not force:
         with open(path_response_transcript_json, 'r', encoding='UTF-8') as file:
             logging.debug(
-                '...transcript already obtained, loading transcript from json file [%s].',
+                '...transcript already obtained, loading from json file [%s].',
                 path_response_transcript_json,
             )
             return json.load(file)
     else:
         if path_response_transcript_json.is_file() and force:
-            logging.info('...transcript already obtained, forcing request.')
+            logging.info('...transcript already obtained but forcing request.')
             path_response_transcript_json.unlink(missing_ok=True)
         else:
             logging.info('...transcript not obtained, obtaining.')
@@ -145,7 +148,7 @@ def _obtain_transcript(
 
         with open(path_response_transcript_json, 'x', encoding='UTF-8') as file:
             logging.debug('...saving transcript to json file [%s]', path_response_transcript_json)
-            json.dump(response_get_transcript, fp=file)
+            json.dump(response_get_transcript, fp=file, indent=4)
 
         return response_get_transcript
 
@@ -156,36 +159,50 @@ def get_audio_transcript(
     path_response_create_json: Path,
     path_response_transcript_json: Path,
     speakers_expected: int,
-    force=False,
-):
+    force_upload: bool = False,
+    force_regen: bool = False,
+) -> JSON:
     if not Path(path_file).is_file():
         raise ValueError(f'File doesn\'t exist: {path_file}.')
 
-    logging.info('\x1b[0;1mCreating Audio transcript\x1b[0m')
+    response_transcript_json = {}
 
-    force_regen = False
-    if path_response_transcript_json.is_file() and not force:
-        with open(path_response_transcript_json, 'r', encoding='UTF-8') as file:
-            logging.info('Transcript already stored, retrieving from json file.')
-            response_transcript_json = json.load(file)
-        if speakers_expected == response_transcript_json['speakers_expected']:
-            return response_transcript_json
-        else:
+    counter = 0  # For maximum number of iterations
+    while (
+        # Checks first call
+        'speakers_expected' not in response_transcript_json
+        # Checks subsequent calls:
+        or response_transcript_json['speakers_expected'] != speakers_expected
+    ):
+        logging.info('\x1b[0;1mCreating Audio transcript\x1b[0m')
+        response_upload_json = _upload_file(path_file, path_response_upload_json, force_upload)
+        url_upload = response_upload_json['upload_url']
+        logging.debug('Uploaded file URL: %s', url_upload)
+        force_regen_final = force_upload or force_regen
+        response_create_json = _create_transcript(
+            url_upload, path_response_create_json, speakers_expected, force_regen_final
+        )
+        id_transcript = response_create_json['id']
+        logging.debug('Transcript id: %s', id_transcript)
+        try:
+            response_transcript_json = _obtain_transcript(
+                id_transcript, path_response_transcript_json, force_regen_final
+            )
+        except RuntimeError as e:
+            if 'File not found' in str(e):
+                logging.warning(
+                    'When trying to obtain the transcript, a "File not found" error happened, retrying with `force_upload=True`.'
+                )
+                force_upload = True
+            else:
+                raise
+        if response_transcript_json['speakers_expected'] != speakers_expected:
             logging.warning(
-                '...speakers_expected differs from what was in the stored transcript, regenerating.'
+                'speakers_expected differs from what was stored on file, retrying with `force_regen=True`.'
             )
             force_regen = True
+        counter += 1
+        if counter > 2:
+            logging.error('Maximum iterations reached.')
 
-    response_upload_json = _upload_file(path_file, path_response_upload_json, force)
-    url_upload = response_upload_json['upload_url']
-    logging.debug('Uploaded file URL: %s', url_upload)
-    force = force or force_regen
-    response_create_json = _create_transcript(
-        url_upload, path_response_create_json, speakers_expected, force
-    )
-    id_transcript = response_create_json['id']
-    logging.debug('Transcript id: %s', id_transcript)
-    response_transcript_json = _obtain_transcript(
-        id_transcript, path_response_transcript_json, force
-    )
     return response_transcript_json

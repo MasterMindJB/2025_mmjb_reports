@@ -1,20 +1,26 @@
 import logging
 
-pltlogger = logging.getLogger('matplotlib')
-pltlogger.setLevel(logging.WARNING)
+logger_matplotlib = logging.getLogger('matplotlib')
+logger_matplotlib.setLevel(logging.WARNING)
 
+import io
 import textwrap
-from pathlib import Path
 
+import matplotlib
+import matplotlib.figure
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+
+# from PIL import Image, ImageFile
+import PIL.Image
+import PIL.ImageFile
 import seaborn as sns
 
 
-# Make warnings display only the actual message instead of the long (with context) message
-# See https://stackoverflow.com/q/2187269/1071459
 def _warning(message, category, filename, lineno, file, line):
+    '''Make warnings display only the actual message instead of the long (with context) message'''
+    # See https://stackoverflow.com/q/2187269/1071459
     warning_text = f'{category.__name__}: {message} ({lineno} in {filename})'
     warning_text = textwrap.fill(warning_text, width=100)
     print(warning_text)
@@ -23,7 +29,19 @@ def _warning(message, category, filename, lineno, file, line):
     # print('=' * 20)
 
 
-def gini(values: list | np.ndarray):
+def gini(values: list | np.ndarray) -> float:
+    """Computes the Gini index (or coefficient).
+
+    Parameters
+    ----------
+    values : list | np.ndarray
+        A list with all the values.
+
+    Returns
+    -------
+    float
+        The Gini index value.
+    """
     values = np.array(values, dtype=float).flatten()
     n = len(values)
     sorted_values = np.sort(values)
@@ -31,7 +49,19 @@ def gini(values: list | np.ndarray):
     return float((n + 1 - 2 * (np.sum(cumulative_values) / np.sum(values))) / n)
 
 
-def gini_plot(values: list | np.ndarray):
+def lorenz_plot(values: list | np.ndarray) -> plt.figure:
+    """Returns the plot of the Lorenz curve used to compute the Gini index alongsize a y=x curve from 0 to 1.
+
+    Parameters
+    ----------
+    values : list | np.ndarray
+        A list with all the values.
+
+    Returns
+    -------
+    plt.figure
+        The figure.
+    """
     values = sorted(values)
     values_cum_pct = np.cumsum(values) / np.sum(values)
     fig = plt.figure(figsize=(5, 3))
@@ -45,11 +75,30 @@ def gini_plot(values: list | np.ndarray):
     return fig
 
 
-def barplot(data: pd.DataFrame, title: str, ylabel: str, xlabel: str):
-    pltlogger = logging.getLogger('matplotlib')
-    pltlogger.setLevel(logging.WARNING)
+def barplot(
+    data: pd.DataFrame, title: str = None, ylabel: str = None, xlabel: str = None
+) -> plt.figure:
+    """_summary_
 
-    fig = plt.figure(figsize=(10, 6))
+    Parameters
+    ----------
+    data : pd.DataFrame
+        The data to be plotted. Axis 0 is the metric to be printed and axis 1 are the values for each component.
+    title : str
+        The title, by default None.
+    ylabel : str, optional
+        The ylabel, by default None.
+    xlabel : str, optional
+        The xlabel, by default None.
+
+    Returns
+    -------
+    plt.figure
+        The figure.
+    """
+    if data.index.shape[0] != 1:
+        raise ValueError('Data index should be of length 1.')
+    fig = plt.figure(figsize=(10, 2.25))
     sns.barplot(
         data=data,
         palette='viridis',
@@ -57,10 +106,47 @@ def barplot(data: pd.DataFrame, title: str, ylabel: str, xlabel: str):
     plt.title(title)
     plt.xlabel(xlabel)
     plt.ylabel(ylabel)
-    plt.xticks(rotation=45)
+    plt.axhline(y=data.mean(axis=1).iloc[0], color='lime', label='Average')
+    plt.legend()
     plt.tight_layout()
     plt.grid(axis='y', alpha=0.3)
-    # plt.show()
-    # fig.show()
-
     return fig
+
+
+def figure_to_image(figure: matplotlib.figure.Figure) -> PIL.ImageFile.ImageFile:
+    """Transorms a figure into a PIL Image.
+
+    Parameters
+    ----------
+    figure : matplotlib.figure.Figure
+        The figure to transform.
+
+    Returns
+    -------
+    PIL.ImageFile.ImageFile
+        The Image.
+    """
+    # Save figure to an in-memory bytes buffer
+    buf = io.BytesIO()
+    figure.savefig(buf, format='png', bbox_inches='tight')
+    buf.seek(0)  # Important: go to the start of the buffer, TODO: verify if necessary
+
+    # Open as PIL Image directly from memory
+    return PIL.Image.open(buf)
+
+
+def png_to_image(png: bytes) -> PIL.ImageFile.ImageFile:
+    """Transforms a png as bytes into a PIL Image.
+
+    Parameters
+    ----------
+    png : bytes
+        The png as bytes.
+
+    Returns
+    -------
+    PIL.ImageFile.ImageFile
+        The Image.
+    """
+    buf_chord = io.BytesIO(png)
+    return PIL.Image.open(buf_chord)
