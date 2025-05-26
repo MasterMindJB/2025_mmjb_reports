@@ -157,7 +157,7 @@ class MM_PDF(FPDF):
                         if val == datamax:
                             style = FontFace(fill_color=(255, 192, 203))  # pink
                         elif val == datamin:
-                            style = FontFace(fill_color=(176, 224, 230))  # poderblue
+                            style = FontFace(fill_color=(176, 224, 230))  # powderblue
                     row.cell(str(val), style=style)
         self.set_font_recall()
 
@@ -254,7 +254,7 @@ def create_report(
         row.cell('Action Items', style=style_link, link=link_action_items)
         row.cell('Actionable ideas discussed during the MasterMind.', style=style_desc)
         row = table.row()
-        row.cell('Participan Summary', style=style_link, link=link_participant_summ)
+        row.cell('Participant Summary', style=style_link, link=link_participant_summ)
         row.cell('A summary of each participant\'s contribution.', style=style_desc)
         row = table.row()
         row.cell('Sentiment Evolution', style=style_link, link=link_convo_evo)
@@ -278,7 +278,7 @@ def create_report(
     pdf.multi_cell(
         w=0,
         h=pdf.font_size,
-        text='The Group Participation Score measures how evenly participants engage in a conversation, taking into account the number of interventions by each participant. So for instance, if every participan in the conversation spoke 10 times, the score will be 100%. However, if all participants except one spoke 10 times and the other one spoke 50 times, the score will be much lower.',
+        text='The Group Participation Score measures how evenly participants engage in a conversation, taking into account the number of interventions by each participant. So for instance, if every participant in the conversation spoke 10 times, the score will be 100%. However, if all participants except one spoke 10 times and the other one spoke 50 times, the score will be much lower.',
         align='J',
         markdown=True,
     )
