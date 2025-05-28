@@ -1,11 +1,12 @@
-fpdf2 # To create PDFs
-jupyterlab # To allow notebooks
+fpdf2  # To create PDFs
+jupyterlab  # To allow notebooks
 langchain
 langchain-google-genai
-matplotlib # To create plots
+matplotlib  # To create plots
 nltk
-pandas # To handle data
-Pillow # Fork of PIL (Python Imaging Library)
+pandas  # To handle data
+papermill  # To allow notebook automation
+Pillow  # Fork of PIL (Python Imaging Library)
 plotapi
-python-dotenv # To load environment variables
-seaborn # To create plots
+python-dotenv  # To load environment variables
+seaborn  # To create plots
