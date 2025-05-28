@@ -38,7 +38,8 @@ class ConversationSummarizer:
 
         # self.llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro") # Free quota/day = 50
         self.llm = ChatGoogleGenerativeAI(
-            model="gemini-1.5-flash", temperature=0
+            model="gemini-1.5-flash",
+            temperature=0,
         )  # Free quota/day = 1500
 
         self.prompt_templates = {
@@ -60,6 +61,9 @@ class ConversationSummarizer:
             'convo_summ_short': ChatPromptTemplate.from_template(
                 self.get_prompt_template('conversation_summarize_short.txt')
             ),
+            'convo_title': ChatPromptTemplate.from_template(
+                self.get_prompt_template('conversation_create_title.txt')
+            ),
         }
 
         parser_json = JsonOutputParser()
@@ -74,6 +78,7 @@ class ConversationSummarizer:
             ),
             'convo_summ_long': self.prompt_templates['convo_summ_long'] | self.llm | parser_str,
             'convo_summ_short': self.prompt_templates['convo_summ_short'] | self.llm | parser_str,
+            'convo_title': self.prompt_templates['convo_title'] | self.llm | parser_str,
         }
 
     def _rename_speaker_map(self, speaker_map: JSON) -> JSON:
@@ -270,9 +275,9 @@ class ConversationSummarizer:
         else:
             logging.info('...conversation summaries not created, creating.')
 
-        logging.info('...creating conversation long summary.')
-        convo_summ_long = (
-            self.chains['convo_summ_long']
+        logging.info('...creating conversation title.')
+        convo_title = (
+            self.chains['convo_title']
             .with_retry(stop_after_attempt=self.stop_after_attempt)
             .invoke({'conversation': conversation_script})
         )
@@ -282,11 +287,18 @@ class ConversationSummarizer:
             .with_retry(stop_after_attempt=self.stop_after_attempt)
             .invoke({'conversation': conversation_script})
         )
+        logging.info('...creating conversation long summary.')
+        convo_summ_long = (
+            self.chains['convo_summ_long']
+            .with_retry(stop_after_attempt=self.stop_after_attempt)
+            .invoke({'conversation': conversation_script})
+        )
 
         summaries = {
             'speaker_count': speakers_expected,
-            'long': convo_summ_long,
+            'title': convo_title,
             'short': convo_summ_short,
+            'long': convo_summ_long,
         }
         with open(path_file_convo_summs, 'x', encoding='UTF-8') as file:
             logging.debug('...Saving json to file [%s].', path_file_convo_summs)

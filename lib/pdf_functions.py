@@ -91,7 +91,7 @@ class MM_PDF(FPDF):
 
     def add_title_document(self, title: str, subtitle: str = None):
         self.set_font_to_recall()
-        self.set_font('KulimPark', '', 29)
+        self.set_font('KulimPark-light', '', 29)
         self.cell(w=0, h=self.font_size * 1.4, text=title, align='C', ln=True)
         if subtitle is not None:
             self.set_font('KulimPark-light', '', 14)
@@ -203,11 +203,17 @@ def create_report(
     )
 
     pdf.set_font_to_recall()
-    pdf.set_font('ZillaSlab', 'i', 12)
-    pdf.multi_cell(w=0, padding=(20, 10, 5), text=summaries['short'])
-    pdf.ln()
-    pdf.multi_cell(w=pdf.epw * 0.5, text='', border='B', center=True)
-    pdf.ln()
+    pdf.ln(15)
+    pdf.multi_cell(w=pdf.epw * 0.5, padding=0, text='', border='B', center=True)
+    pdf.ln(0)
+    pdf.set_font('KulimPark', '', 14)
+    pdf.multi_cell(w=0, padding=(8, 10, 0), text=summaries['title'], align='C')
+    pdf.ln(0)
+    pdf.set_font('KulimPark-light', '', 12)
+    pdf.multi_cell(w=0, padding=(6, 10, 8), text=summaries['short'])
+    pdf.ln(0)
+    pdf.multi_cell(w=pdf.epw * 0.5, padding=0, text='', border='T', center=True)
+    pdf.ln(5)
     pdf.set_font_recall()
 
     link_convo_stats = pdf.add_link()
@@ -271,7 +277,7 @@ def create_report(
     pdf.ln(3)
 
     pdf.add_title_2(
-        text=f'Group **Participation** Score {round(100*gini_reverse_interventions,2)}%'
+        text=f'Group **Participation** Score: {round(100*gini_reverse_interventions)}%'
     )
     pdf.set_font_to_recall()
     pdf.set_font('KulimPark-light', '', 10)
@@ -285,7 +291,7 @@ def create_report(
     pdf.set_font_recall()
     pdf.ln()
 
-    pdf.add_title_2(text=f'Group **Interaction** Score {round(100*gini_reverse_interactions,2)}%')
+    pdf.add_title_2(text=f'Group **Interaction** Score: {round(100*gini_reverse_interactions)}%')
     pdf.set_font_to_recall()
     pdf.set_font('KulimPark-light', '', 10)
     pdf.multi_cell(
@@ -299,7 +305,7 @@ def create_report(
     pdf.ln()
 
     pdf.add_title_2(
-        text=f'Group **Word Interaction** Score {round(100*gini_reverse_interactions_both_wrd_cnt,2)}%'
+        text=f'Group **Word Interaction** Score: {round(100*gini_reverse_interactions_both_wrd_cnt)}%'
     )
     pdf.set_font_to_recall()
     pdf.set_font('KulimPark-light', '', 10)

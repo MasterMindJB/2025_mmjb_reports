@@ -76,7 +76,13 @@ def lorenz_plot(values: list | np.ndarray) -> plt.figure:
 
 
 def barplot(
-    data: pd.DataFrame, title: str = None, ylabel: str = None, xlabel: str = None
+    data: pd.DataFrame,
+    title: str = None,
+    ylabel: str = None,
+    xlabel: str = None,
+    show_mean: bool = True,
+    show_mean_value: bool = True,
+    show_values: bool = False,
 ) -> plt.figure:
     """_summary_
 
@@ -90,6 +96,12 @@ def barplot(
         The ylabel, by default None.
     xlabel : str, optional
         The xlabel, by default None.
+    show_mean : str, optional
+        Wether to show the mean as a line, by default True.
+    show : str, optional
+        When showing the mean add the value of the mean in the legend, by default None.
+    show_values : bool, optional
+        Whether to show values in plot or not, by default False.
 
     Returns
     -------
@@ -98,16 +110,34 @@ def barplot(
     """
     if data.index.shape[0] != 1:
         raise ValueError('Data index should be of length 1.')
+
     fig = plt.figure(figsize=(10, 2.25))
-    sns.barplot(
+    ax = sns.barplot(
         data=data,
         palette='viridis',
     )
+
+    if show_mean:
+        _mean = data.mean(axis=1).iloc[0]
+        _mean_legend_txt = f'Average = {round(_mean,1)}' if show_mean_value else 'Average'
+        plt.axhline(y=_mean, color='lime', label=_mean_legend_txt)
+        plt.legend()
+
+    if show_values:
+        # This is a hack to give more space to the label, it should probably be done in another way
+        plt.ylim(0, data.iloc[0].max() * 1.12)
+
+        for _container in ax.containers:
+            ax.bar_label(
+                _container,
+                fmt='%.1f',
+                # label_type='center',
+                # padding=-5,
+            )
+
     plt.title(title)
     plt.xlabel(xlabel)
     plt.ylabel(ylabel)
-    plt.axhline(y=data.mean(axis=1).iloc[0], color='lime', label='Average')
-    plt.legend()
     plt.tight_layout()
     plt.grid(axis='y', alpha=0.3)
     return fig
@@ -128,7 +158,7 @@ def figure_to_image(figure: matplotlib.figure.Figure) -> PIL.ImageFile.ImageFile
     """
     # Save figure to an in-memory bytes buffer
     buf = io.BytesIO()
-    figure.savefig(buf, format='png', bbox_inches='tight')
+    figure.savefig(buf, format='png', bbox_inches='tight', dpi=300)
     buf.seek(0)  # Important: go to the start of the buffer, TODO: verify if necessary
 
     # Open as PIL Image directly from memory
