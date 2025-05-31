@@ -7,12 +7,12 @@ logger_fontTools.setLevel(logging.WARNING)
 logger_fpdf = logging.getLogger('fpdf')
 logger_fpdf.setLevel(logging.INFO)
 
-import plotapi
+from pathlib import Path
 from typing import TypeAlias
+
+import PIL.Image
 from fpdf import FPDF
 from fpdf.fonts import FontFace
-import PIL.Image
-from pathlib import Path
 
 JSON: TypeAlias = dict[str, "JSON"] | list["JSON"] | str | int | float | bool | None
 
@@ -38,11 +38,16 @@ class MM_PDF(FPDF):
         unit="mm",
         format="A4",
         font_cache_dir="DEPRECATED",
+        link_feedback: str = None,
     ):
         # print('__init__')
         # print('wow')
         super().__init__(orientation, unit, format, font_cache_dir)
+
         self.set_margins(20, 10)
+
+        self.link_feedback = link_feedback
+
         path_kulim_dir = path_report_assets.joinpath('fonts').joinpath('Kulim_Park')
         self.add_font('KulimPark', style='', fname=path_kulim_dir.joinpath('KulimPark-Regular.ttf'))
         self.add_font('KulimPark', style='b', fname=path_kulim_dir.joinpath('KulimPark-Bold.ttf'))
@@ -71,6 +76,9 @@ class MM_PDF(FPDF):
             'ZillaSlab-light', style='i', fname=path_zilla_dir.joinpath('ZillaSlab-LightItalic.ttf')
         )
 
+        path_dejavusans_dir = path_report_assets.joinpath('fonts').joinpath('DejaVuSans')
+        self.add_font('DejaVuSans', style='', fname=path_dejavusans_dir.joinpath('DejaVuSans.ttf'))
+
         # Font settings
         self.set_font('KulimPark', '', 12)
         self.set_font_to_recall()
@@ -86,7 +94,17 @@ class MM_PDF(FPDF):
     # Page footer
     def footer(self):
         self.set_y(-15)  # Set position of the footer
-        self.set_font('KulimPark', '', 8)
+        self.set_font('DejaVuSans', '', 13)
+        self.cell(6, 10, '😊', align='L')
+        self.set_font('KulimPark-light', 'U', 11)
+        self.cell(
+            0,
+            10,
+            text="Give us Feedback",
+            align='L',
+            link=self.link_feedback,
+        )
+        self.set_font('KulimPark-light', '', 11)
         self.cell(0, 10, f'{self.page_no()}/{{nb}}', align='R')  # Page number
 
     def add_title_document(self, title: str, subtitle: str = None):
@@ -143,7 +161,7 @@ class MM_PDF(FPDF):
             titles = ['Name'] + list(nice_stats_data.columns)
             for title in titles:
                 row.cell(title)
-            for index, rowdata in nice_stats_data.astype('int').iterrows():
+            for index, rowdata in nice_stats_data.round().astype('int').iterrows():
                 datamax = max(rowdata)
                 datamin = min(rowdata)
                 row = table.row()
@@ -169,20 +187,21 @@ def create_report(
     # image_idea_count: PIL.Image,
     # image_unique_words: PIL.Image,
     images_barplot: [PIL.Image],
-    image_chord: PIL.Image,
     image_convo_sentiment_evo: PIL.Image,
     image_speaker_sentiment_evo: PIL.Image,
     image_convo_wpm: PIL.Image,
     image_speaker_wpm: PIL.Image,
     image_action_items: PIL.Image,
+    path_image_chord: Path,
     path_report_assets: Path,
-    path_reports_dir: Path,
+    path_file: Path,
     summaries: JSON,
     gini_reverse_interventions,
     gini_reverse_interactions,
     gini_reverse_interactions_both_wrd_cnt,
     nice_stats_data,
     speaker_map,
+    link_feedback,
 ):
     logging.info('Creating PDF report.')
 
@@ -191,6 +210,7 @@ def create_report(
         orientation='P',
         unit='mm',
         format='letter',
+        link_feedback=link_feedback,
     )
 
     pdf.add_page()
@@ -264,7 +284,10 @@ def create_report(
         row.cell('A summary of each participant\'s contribution.', style=style_desc)
         row = table.row()
         row.cell('Sentiment Evolution', style=style_link, link=link_convo_evo)
-        row.cell('How the sentiment of the conversation evolved throughout the conversation.', style=style_desc)
+        row.cell(
+            'How the sentiment of the conversation evolved throughout the conversation.',
+            style=style_desc,
+        )
         row = table.row()
         row.cell('Words Per Minute Evolution', style=style_link, link=link_convo_evo)
         row.cell('How the rate of speech evolved throughout the conversation.', style=style_desc)
@@ -273,12 +296,10 @@ def create_report(
     pdf.add_title_1(text='Conversation Statistics', link_dest=link_convo_stats)
 
     pdf.ln(3)
-    pdf.image(image_chord, x='C', w=pdf.epw * 0.5)
+    pdf.image(path_image_chord, x='C', w=pdf.epw * 0.5)
     pdf.ln(3)
 
-    pdf.add_title_2(
-        text=f'Group **Participation** Score: {round(100*gini_reverse_interventions)}%'
-    )
+    pdf.add_title_2(text=f'Group **Participation** Score: {round(100*gini_reverse_interventions)}%')
     pdf.set_font_to_recall()
     pdf.set_font('KulimPark-light', '', 10)
     pdf.multi_cell(
@@ -371,7 +392,7 @@ def create_report(
 
     pdf.add_page()
     pdf.add_title_1(text='Action Items', link_dest=link_action_items)
-    pdf.image(image_action_items, x='C', w=pdf.epw * 1/3)
+    pdf.image(image_action_items, x='C', w=pdf.epw * 1 / 3)
     for speaker, name in sorted(
         [(speaker, speaker_map[speaker]['name']) for speaker in speaker_map], key=lambda x: x[1]
     ):
@@ -421,13 +442,12 @@ def create_report(
     pdf.image(image_convo_sentiment_evo, x='C', w=pdf.epw)
     pdf.ln(2)
     pdf.image(image_speaker_sentiment_evo, x='C', w=pdf.epw)
-    
+
     pdf.add_page()
     pdf.add_title_1(text='Words per minute Evolution', link_dest=link_wpm_evo)
     pdf.image(image_convo_wpm, x='C', w=pdf.epw)
     pdf.ln(2)
     pdf.image(image_speaker_wpm, x='C', w=pdf.epw)
 
-    path_output = path_reports_dir.joinpath("report_group.pdf")
-    pdf.output(path_output)
-    logging.info('...created pdf [%s].', path_output)
+    pdf.output(path_file)
+    logging.info('...created pdf [%s].', path_file)
