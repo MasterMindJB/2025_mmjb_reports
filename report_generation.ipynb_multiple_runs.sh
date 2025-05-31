@@ -1,4 +1,4 @@
-# # Testing recordings
+# Testing recordings
 # papermill report_generation.ipynb - -p file_name 'Debate_Trump_Biden_2024.mp3' -p speakers_expected 4
 # papermill report_generation.ipynb - -p file_name 'GMT20250508-161006_Recording.mp4' -p speakers_expected 2
 
