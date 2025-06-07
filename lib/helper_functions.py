@@ -83,6 +83,7 @@ def barplot(
     show_mean: bool = True,
     show_mean_value: bool = True,
     show_values: bool = False,
+    colors: str | list[tuple[float, float, float]] | None = None,
 ) -> plt.figure:
     """_summary_
 
@@ -102,6 +103,8 @@ def barplot(
         When showing the mean add the value of the mean in the legend, by default None.
     show_values : bool, optional
         Whether to show values in plot or not, by default False.
+    colors : str | list[tuple[float, float, float]] | None, optional
+        The colors to use for the bars, by default None. If a string is provided, it will be used as a seaborn palette. If a list of tuples is provided, it will be used as the colors for the bars.
 
     Returns
     -------
@@ -114,7 +117,8 @@ def barplot(
     fig = plt.figure(figsize=(10, 2.25))
     ax = sns.barplot(
         data=data,
-        palette='viridis',
+        palette=colors,
+        saturation=1, # The colors passed are the ones we want, we don't want the saturation to be changed by the default 0.75
     )
 
     if show_mean:

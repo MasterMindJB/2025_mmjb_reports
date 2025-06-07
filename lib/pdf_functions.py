@@ -333,7 +333,7 @@ def create_report(
     pdf.multi_cell(
         w=0,
         h=pdf.font_size,
-        text='The Group Word Interaction Score measures how evenly participants engage in a conversation between each other and how much they talked to each other, taking into account the number of interactions between each participant and the word count of each interaction. So for instance if every participant spoke to every other participant 5 times 100 words each time, the score will be 100%. However, if all participants spoke to each other three times, but one participant spoke a lot more to the others, the score will be much lower.',
+        text='The Group Word Interaction Score measures how evenly participants engage in a conversation between each other and how much they talked to each other, taking into account the word count of each interaction. So for instance if every participant spoke to every other participant 100 words each time, the score will be 100%. However, if all participants spoke to each other 100 words, but one participant spoke a lot more words to the others, the score will be much lower.',
         align='J',
         markdown=True,
     )
