@@ -146,10 +146,10 @@ class ConversationSummarizer:
 
         return speaker_map
 
-    def speaker_mapping(
+    def speaker_map(
         self, utterances: JSON, speakers_expected: int, force_regen: bool = False
     ) -> JSON:
-        """Creates a speaker mapping, it creates a map of each speaker with this information:
+        """Creates a speaker map of each speaker with this information:
         - name
         - personal_summary
         - personal_key_contributions
@@ -167,15 +167,15 @@ class ConversationSummarizer:
         Returns
         -------
         JSON
-            The JSON mapping.
+            The JSON map.
         """
-        path_file_speaker_map = self.path_save_dir.joinpath('speaker_mapping.json')
+        path_file_speaker_map = self.path_save_dir.joinpath('speaker_map.json')
 
-        logging.info('Creating speaker mapping...')
+        logging.info('Creating speaker map...')
         if path_file_speaker_map.is_file() and not force_regen:
             with open(path_file_speaker_map, 'r', encoding='UTF-8') as file:
                 logging.debug(
-                    '...speaker mapping already created, loading mapping from json file [%s]',
+                    '...speaker map already created, loading from json file [%s]',
                     file.name,
                 )
                 speaker_map = json.load(file)
@@ -187,10 +187,10 @@ class ConversationSummarizer:
                     logging.warning('...speakers_expected differs from what was stored on file.')
 
         if path_file_speaker_map.is_file() and force_regen:
-            logging.info('...speaker mapping already created, but forcing recreation.')
+            logging.info('...speaker map already created, but forcing recreation.')
             path_file_speaker_map.unlink(missing_ok=True)
         else:
-            logging.info('...speaker mapping not created, creating.')
+            logging.info('...speaker map not created, creating.')
 
         _df_utter = pd.DataFrame.from_dict(utterances)
 
@@ -238,7 +238,7 @@ class ConversationSummarizer:
         speaker_map = self._rename_speaker_map(speaker_map=speaker_map)
 
         with open(path_file_speaker_map, 'x', encoding='UTF-8') as file:
-            logging.debug('...saving speaker mapping to json file [%s]', file.name)
+            logging.debug('...saving speaker map to json file [%s]', file.name)
             json.dump(speaker_map, fp=file, indent=4)
 
         return speaker_map
