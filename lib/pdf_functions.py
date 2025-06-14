@@ -227,10 +227,10 @@ def create_report(
     pdf.multi_cell(w=pdf.epw * 0.5, padding=0, text='', border='B', center=True)
     pdf.ln(0)
     pdf.set_font('KulimPark', '', 14)
-    pdf.multi_cell(w=0, padding=(8, 10, 0), text=summaries['title'], align='C')
+    pdf.multi_cell(w=0, padding=(8, 10, 0), text=summaries['conversation_title'], align='C')
     pdf.ln(0)
     pdf.set_font('KulimPark-light', '', 12)
-    pdf.multi_cell(w=0, padding=(6, 10, 8), text=summaries['short'])
+    pdf.multi_cell(w=0, padding=(6, 10, 8), text=summaries['conversation_summary_short'])
     pdf.ln(0)
     pdf.multi_cell(w=pdf.epw * 0.5, padding=0, text='', border='T', center=True)
     pdf.ln(5)
@@ -355,7 +355,7 @@ def create_report(
     pdf.add_title_1(text='Conversation Summary', link_dest=link_convo_summ)
     pdf.set_font_to_recall()
     pdf.set_font('KulimPark-light', '', 12)
-    pdf.multi_cell(w=0, text=summaries['long'], align='J', ln=True)
+    pdf.multi_cell(w=0, text=summaries['conversation_summary_long'], align='J', ln=True)
     pdf.set_font_recall()
 
     pdf.add_page()
@@ -365,7 +365,7 @@ def create_report(
     ):
         pdf.add_title_2(text=speaker_map[speaker]['name'])
         pdf.set_font_to_recall()
-        for quote in speaker_map[speaker]['quotes']:
+        for quote in speaker_map[speaker]['personal_key_contributions']:
             pdf.set_font('KulimPark', '', 12)
             pdf.set_x(pdf.l_margin + pdf.epw * 0.05)
             pdf.multi_cell(
@@ -397,7 +397,7 @@ def create_report(
         [(speaker, speaker_map[speaker]['name']) for speaker in speaker_map], key=lambda x: x[1]
     ):
         pdf.add_title_2(text=speaker_map[speaker]['name'])
-        for action in speaker_map[speaker]['actions']:
+        for action in speaker_map[speaker]['personal_action_items']:
             pdf.set_x(pdf.l_margin + pdf.epw * 0.05)
             pdf.multi_cell(
                 # padding=(0, 7),
@@ -430,7 +430,7 @@ def create_report(
             w=0,
             # padding=(0, 10),
             # padding=(0, 0),
-            text=f'{speaker_map[speaker]['summary']}',
+            text=f'{speaker_map[speaker]['personal_summary']}',
             align='J',
             ln=True,
             markdown=True,

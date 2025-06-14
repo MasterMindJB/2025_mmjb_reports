@@ -1,12 +1,18 @@
 import json
 import logging
 from pathlib import Path
-from typing import TypeAlias
+from typing import TypeAlias, Dict
 
 import pandas as pd
+from langchain_core.language_models.chat_models import BaseChatModel
+
+from langchain.globals import set_debug
 from langchain_core.output_parsers import JsonOutputParser, StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI
+from google.api_core.exceptions import ResourceExhausted
+
+set_debug(False)  # Set to True to see communication information
 
 JSON: TypeAlias = dict[str, "JSON"] | list["JSON"] | str | int | float | bool | None
 
@@ -14,6 +20,25 @@ JSON: TypeAlias = dict[str, "JSON"] | list["JSON"] | str | int | float | bool | 
 class ConversationSummarizer:
 
     stop_after_attempt = 15
+
+    parser_json = JsonOutputParser()
+    parser_str = StrOutputParser()
+
+    # The file name is kept without the '.txt' extension to declutter the code
+    file_parser_map = {
+        'personal_key_contributions': parser_json,
+        'personal_summary': parser_str,
+        'personal_action_items': parser_json,
+        #
+        'personal_errors_and_corrections': parser_str,
+        'personal_framework_amase': parser_json,
+        'personal_framework_enneagram': parser_json,
+        'personal_framework_doshas': parser_json,
+        #
+        'conversation_summary_long': parser_str,
+        'conversation_summary_short': parser_str,
+        'conversation_title': parser_str,
+    }
 
     def get_prompt_template(self, file_name: str) -> str:
         """Get a template by filename.
@@ -37,49 +62,41 @@ class ConversationSummarizer:
         self.path_prompt_templates = path_prompt_templates
 
         # self.llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro") # Free quota/day = 50
-        self.llm = ChatGoogleGenerativeAI(
+        self.llm = ChatGoogleGenerativeAI(  # Free quota/day = 1500
             model="gemini-1.5-flash",
             temperature=0,
-        )  # Free quota/day = 1500
+        )
 
-        self.prompt_templates = {
-            'contribs': ChatPromptTemplate.from_template(
-                self.get_prompt_template('personal_key_contributions.txt')
-            ),
-            'summary': ChatPromptTemplate.from_template(
-                self.get_prompt_template('personal_summarize_participation.txt')
-            ),
-            'next_steps': ChatPromptTemplate.from_template(
-                self.get_prompt_template('personal_action_items.txt')
-            ),
-            'errors_and_corrections': ChatPromptTemplate.from_template(
-                self.get_prompt_template('personal_errors_and_corrections.txt')
-            ),
-            'convo_summ_long': ChatPromptTemplate.from_template(
-                self.get_prompt_template('conversation_summarize_long.txt')
-            ),
-            'convo_summ_short': ChatPromptTemplate.from_template(
-                self.get_prompt_template('conversation_summarize_short.txt')
-            ),
-            'convo_title': ChatPromptTemplate.from_template(
-                self.get_prompt_template('conversation_create_title.txt')
-            ),
-        }
+        # Create dictionary to store prompt templates for each type of conversation information generation
+        self.prompt_templates = {}
+        for partial_file_name, parser in self.file_parser_map.items():
+            # Create a ChatPromptTemplate for each type of conversation information generation using the corresponding template file
+            self.prompt_templates[partial_file_name] = ChatPromptTemplate.from_template(
+                self.get_prompt_template(Path(partial_file_name).with_suffix('.txt'))
+            )
 
-        parser_json = JsonOutputParser()
-        parser_str = StrOutputParser()
+        # Create dictionary to store processing chains for each type of conversation information generation
+        self.chains: dict[str, BaseChatModel] = {}
+        for partial_file_name, parser in self.file_parser_map.items():
+            # Create a processing chain that combines:
+            # 1. The prompt template
+            # 2. The language model (LLM)
+            # 3. The appropriate parser (JSON or String)
+            self.chains[partial_file_name] = (
+                self.prompt_templates[partial_file_name] | self.llm | parser
+            )
 
-        self.chains = {
-            'contribs': self.prompt_templates['contribs'] | self.llm | parser_json,
-            'summary': self.prompt_templates['summary'] | self.llm | parser_str,
-            'next_steps': self.prompt_templates['next_steps'] | self.llm | parser_json,
-            'errors_and_corrections': (
-                self.prompt_templates['errors_and_corrections'] | self.llm | parser_str
-            ),
-            'convo_summ_long': self.prompt_templates['convo_summ_long'] | self.llm | parser_str,
-            'convo_summ_short': self.prompt_templates['convo_summ_short'] | self.llm | parser_str,
-            'convo_title': self.prompt_templates['convo_title'] | self.llm | parser_str,
-        }
+        # Create dictionary to store retry-enabled chains for each type of conversation information generation
+        self.chains_with_retry = {}
+        for partial_file_name, parser in self.file_parser_map.items():
+            # Add retry capability to each chain to handle potential API rate limits
+            # Will retry up to stop_after_attempt times if ResourceExhausted error occurs
+            self.chains_with_retry[partial_file_name] = self.chains[partial_file_name].with_retry(
+                retry_if_exception_type=[
+                    ResourceExhausted,  # Google only
+                ],
+                stop_after_attempt=self.stop_after_attempt,
+            )
 
     def _rename_speaker_map(self, speaker_map: JSON) -> JSON:
         """Shows some information from the speaker maps and asks for the names of the speakers so that the speaker map has real names.
@@ -101,11 +118,11 @@ class ConversationSummarizer:
             input_txt += (
                 ' ' + '_' * 82 + ' '
             )  # Workaround to allow visual spacing, in CLI could use """txt"""
-            input_txt += f'Summary [{speaker_map[speaker_id]["summary"]}]'
+            input_txt += f'Summary [{speaker_map[speaker_id]["personal_summary"]}]'
             input_txt += (
                 ' ' + '_' * 82 + ' '
             )  # Workaround to allow visual spacing, in CLI could use """txt"""
-            input_txt += f'Quotes [{speaker_map[speaker_id]["quotes"]}]'
+            input_txt += f'Quotes [{speaker_map[speaker_id]["personal_key_contributions"]}]'
             input_response = input(input_txt)
             while (input_response == '') or (input_response in added_names):
                 if input_response == '':
@@ -129,14 +146,14 @@ class ConversationSummarizer:
 
         return speaker_map
 
-    def speaker_summarize_and_map(
+    def speaker_mapping(
         self, utterances: JSON, speakers_expected: int, force_regen: bool = False
     ) -> JSON:
         """Creates a speaker mapping, it creates a map of each speaker with this information:
         - name
-        - summary
-        - quotes
-        - actions
+        - personal_summary
+        - personal_key_contributions
+        - personal_action_items
 
         Parameters
         ----------
@@ -193,37 +210,29 @@ class ConversationSummarizer:
             speaker_map[speaker] = {}
             speaker_map[speaker]['name'] = speaker
             logging.info('......creating speaker summary.')
-            speaker_map[speaker]['summary'] = (
-                self.chains['summary']
-                .with_retry(stop_after_attempt=self.stop_after_attempt)
-                .invoke({'participation': _df_utter_reduced.iloc[i]['text']})
-            )
+            speaker_map[speaker]['personal_summary'] = self.chains_with_retry[
+                'personal_summary'
+            ].invoke({'participation': _df_utter_reduced.iloc[i]['text']})
             logging.info('......creating speaker contributions.')
-            speaker_map[speaker]['quotes'] = (
-                self.chains['contribs']
-                .with_retry(stop_after_attempt=self.stop_after_attempt)
-                .invoke({'participation': _df_utter_reduced.iloc[i]['text']})
-            )
+            speaker_map[speaker]['personal_key_contributions'] = self.chains_with_retry[
+                'personal_key_contributions'
+            ].invoke({'participation': _df_utter_reduced.iloc[i]['text']})
             logging.info('......creating speaker actions.')
-            speaker_map[speaker]['actions'] = (
-                self.chains['next_steps']
-                .with_retry(stop_after_attempt=self.stop_after_attempt)
-                .invoke({'participation': _df_utter_reduced.iloc[i]['text']})
-            )
-            logging.info('......creating speaker errors and corrections.')
-            speaker_map[speaker]['errors_corrections'] = (
-                self.chains['errors_and_corrections']
-                .with_retry(stop_after_attempt=self.stop_after_attempt)
-                .invoke({'participation': _df_utter_reduced.iloc[i]['text']})
-            )
+            speaker_map[speaker]['personal_action_items'] = self.chains_with_retry[
+                'personal_action_items'
+            ].invoke({'participation': _df_utter_reduced.iloc[i]['text']})
+            # logging.info('......creating speaker errors and corrections.')
+            # speaker_map[speaker]['personal_errors_and_corrections'] = self.chains_with_retry[
+            #     'personal_errors_and_corrections'
+            # ].invoke({'participation': _df_utter_reduced.iloc[i]['text']})
 
             print('*' * 20)
             print(f'speaker[{speaker}]')
             print("speaker_map[speaker]['name']", speaker_map[speaker]['name'])
-            print(speaker_map[speaker]['summary'])
-            print(speaker_map[speaker]['quotes'])
-            print(speaker_map[speaker]['actions'])
-            print(speaker_map[speaker]['errors_corrections'])
+            print(speaker_map[speaker]['personal_summary'])
+            print(speaker_map[speaker]['personal_key_contributions'])
+            print(speaker_map[speaker]['personal_action_items'])
+            # print(speaker_map[speaker]['personal_errors_and_corrections'])
             print(flush=True)
 
         speaker_map = self._rename_speaker_map(speaker_map=speaker_map)
@@ -234,7 +243,7 @@ class ConversationSummarizer:
 
         return speaker_map
 
-    def conversation_summarize(
+    def conversation_summaries(
         self, conversation_script: str, speakers_expected: int, force_regen: bool = False
     ) -> JSON:
         """Creates a summary of the conversation.
@@ -253,7 +262,7 @@ class ConversationSummarizer:
         JSON
             A JSON object containing the summaries (long and short) and the speaker count.
         """
-        path_file_convo_summs = self.path_save_dir.joinpath('conversations_summaries.json')
+        path_file_convo_summs = self.path_save_dir.joinpath('conversation_summaries.json')
 
         logging.info('Creating conversation summaries...')
         if path_file_convo_summs.is_file() and not force_regen:
@@ -276,29 +285,23 @@ class ConversationSummarizer:
             logging.info('...conversation summaries not created, creating.')
 
         logging.info('...creating conversation title.')
-        convo_title = (
-            self.chains['convo_title']
-            .with_retry(stop_after_attempt=self.stop_after_attempt)
-            .invoke({'conversation': conversation_script})
+        convo_title = self.chains_with_retry['conversation_title'].invoke(
+            {'conversation': conversation_script}
         )
         logging.info('...creating conversation short summary.')
-        convo_summ_short = (
-            self.chains['convo_summ_short']
-            .with_retry(stop_after_attempt=self.stop_after_attempt)
-            .invoke({'conversation': conversation_script})
+        convo_summ_short = self.chains_with_retry['conversation_summary_short'].invoke(
+            {'conversation': conversation_script}
         )
         logging.info('...creating conversation long summary.')
-        convo_summ_long = (
-            self.chains['convo_summ_long']
-            .with_retry(stop_after_attempt=self.stop_after_attempt)
-            .invoke({'conversation': conversation_script})
+        convo_summ_long = self.chains_with_retry['conversation_summary_long'].invoke(
+            {'conversation': conversation_script}
         )
 
         summaries = {
             'speaker_count': speakers_expected,
-            'title': convo_title,
-            'short': convo_summ_short,
-            'long': convo_summ_long,
+            'conversation_title': convo_title,
+            'conversation_summary_short': convo_summ_short,
+            'conversation_summary_long': convo_summ_long,
         }
         with open(path_file_convo_summs, 'x', encoding='UTF-8') as file:
             logging.debug('...Saving json to file [%s].', path_file_convo_summs)

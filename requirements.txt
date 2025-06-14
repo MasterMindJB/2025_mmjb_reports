@@ -10,3 +10,4 @@ Pillow  # Fork of PIL (Python Imaging Library)
 plotapi
 python-dotenv  # To load environment variables
 seaborn  # To create plots
+tabulate  # To create markdown tables
