@@ -144,9 +144,9 @@ class MM_PDF(FPDF):
         self.ln(0)
         self.set_font_recall()
 
-    def add_speaker_stats_table(self, nice_stats_data):
+    def add_speaker_stats_table(self, df_nice_stats_data):
         self.set_font_to_recall()
-        col_count = len(nice_stats_data.columns) + 1
+        col_count = len(df_nice_stats_data.columns) + 1
         col_widths = [15] + [85 / col_count for c in range(col_count - 1)]
         text_align = ['left'] + ['CENTER' for c in range(col_count - 1)]
         self.set_font(size=8)
@@ -158,10 +158,12 @@ class MM_PDF(FPDF):
             borders_layout='MINIMAL',
         ) as table:
             row = table.row()
-            titles = ['Name'] + list(nice_stats_data.columns)
+            titles = ['Name'] + list(df_nice_stats_data.columns)
             for title in titles:
                 row.cell(title)
-            for index, rowdata in nice_stats_data.round().astype('int').iterrows():
+            for index, rowdata in df_nice_stats_data.iterrows():
+                # Hack, see https://github.com/pandas-dev/pandas/issues/58543#issuecomment-2101240339
+                rowdata = rowdata.convert_dtypes().astype('object').infer_objects()
                 datamax = max(rowdata)
                 datamin = min(rowdata)
                 row = table.row()
@@ -199,7 +201,7 @@ def create_report(
     gini_reverse_interventions,
     gini_reverse_interactions,
     gini_reverse_interactions_both_wrd_cnt,
-    nice_stats_data,
+    df_nice_stats_data,
     speaker_map,
     link_feedback,
 ):
@@ -349,7 +351,7 @@ def create_report(
     pdf.ln()
     # pdf.add_page()
     pdf.add_title_2(text='Statistics Table')
-    pdf.add_speaker_stats_table(nice_stats_data=nice_stats_data)
+    pdf.add_speaker_stats_table(df_nice_stats_data=df_nice_stats_data)
 
     pdf.add_page()
     pdf.add_title_1(text='Conversation Summary', link_dest=link_convo_summ)
