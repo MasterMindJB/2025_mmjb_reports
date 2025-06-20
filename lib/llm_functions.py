@@ -6,14 +6,16 @@ from typing import TypeAlias
 import pandas as pd
 from langchain_core.language_models.chat_models import BaseChatModel
 
-from langchain.globals import set_debug
+from langchain.globals import set_debug, set_llm_cache
 from langchain_core.output_parsers import JsonOutputParser, StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI
 from google.api_core.exceptions import ResourceExhausted
 from langchain_core.exceptions import OutputParserException
+from langchain_core.caches import InMemoryCache
 
 set_debug(False)  # Set to True to see communication information
+set_llm_cache(InMemoryCache())
 
 JSON: TypeAlias = dict[str, "JSON"] | list["JSON"] | str | int | float | bool | None
 
