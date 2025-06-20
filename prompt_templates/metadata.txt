@@ -1,0 +1,10 @@
+personal_framework_enneagram.txt
+    Information obtained from:
+        - https://www.enneagraminstitute.com/type-descriptions/
+
+personal_framework_amase.txt
+    Information obtained from: https://docs.google.com/document/d/1J7AiciHvt_Plnzuzk0LOnGcVHixODE-ecBvLy_Yfnls/edit?tab=t.0
+
+personal_framework_doshas.txt
+    Information obtained from:
+        - https://fastercapital.com/content/Ayurvedic-Content-and-Communication--Balancing-Doshas--Ayurvedic-Tips-for-Effective-Communication.html

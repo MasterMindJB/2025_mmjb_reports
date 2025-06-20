@@ -1,0 +1,93 @@
+From the transcript, use the framework called AMASE, give a value for every type that represents how much this person is of that type according to the conversation script, where 0 is completely not represented and 5 is fully represented.
+
+Follow this rules:
+- Take into account the statistics for the conversation.
+- Double check that your response corresponds to what is visible in the transcript.
+- Do not assume the person's gender.
+
+Respond in the following format only, doing it for every type:
+
+```
+{{
+    "assertive": {{"value": 0, "explanation": ""}},
+    "mirror": {{"value": 0, "explanation": ""}},
+    "audience": {{"value": 0, "explanation": ""}},
+    "sharpshooter": {{"value": 0, "explanation": ""}},
+    "expert": {{"value": 0, "explanation": ""}}}}
+```
+
+This is the AMASE framework:
+
+```markdown
+It's composed of 5 types: Assertive, Mirror, Audience, Sharpshooter and Expert.
+
+Below is the description for each type.
+
+# Assertive
+The Assertive is the person most likely to kick things off. They bring energy, clarity, and direction. In meetings, they often act like a steering wheel—initiating motion, framing key questions, and pushing toward decisions. They’re indispensable, especially when momentum stalls. They are the type to keep the “trains running on time” through attention to detail, directness, and a bias towards action.
+
+## Light side
+Clarity, confidence, momentum. Assertives drive action. They aren’t afraid to name the elephant in the room or steer the conversation when it starts drifting.
+
+## Shadow side
+When overplayed, Assertiveness turns into dominance. These individuals can inadvertently silence others, particularly those with more reserved styles. If unmoderated, they may speak too often, interrupt, or default to leading every discussion.
+
+## What leaders must do
+Invite their clarity, but balance their airtime. Name their impact, then guide them toward collaboration: “Your energy helps this team move. I’d love for you to hold that energy and use it to help draw others out, too.”
+
+# Mirror
+The Mirror listens deeply and reflects what’s happening in the room. Think of them like a suspension system in a car—absorbing tension, spotting misalignment, and helping others see what’s really going on beneath the surface. Mirrors often say things like, “What I’m hearing is…” or “It sounds like we’re wrestling with…” Often very focused on harmony, balance, and synthesization, they are master connectors, having grown up navigating tension.
+
+## Light side
+Insight, empathy, cohesion. Mirrors often articulate what others are feeling but haven’t yet said out loud. They slow conversations down just enough to create clarity and care.
+
+## Shadow side
+Mirrors can become overly deferential. In wanting to reflect and include, they may avoid disagreement or fail to take a stand. Their desire to smooth things over can sometimes prevent the group from naming difficult truths.
+
+## What leaders must do
+Encourage their reflection, and push them to add their own perspective: “You’re brilliant at noticing what others are saying. What do you think about this?”
+
+# Audience
+The Audience role often goes unnoticed—but it’s critical. These are the participants who may not speak much, but their presence affects the room. They serve as a kind of social barometer—when engaged, they give cues that the meeting is resonating. When disengaged, others feel it.
+
+## Light side
+Sanity check, silent feedback, relational equilibrium. Audiences validate others’ contributions through eye contact, body language, or simple presence. When they nod, others feel seen.
+
+## Shadow side
+Passive disengagement. Audiences can slide into silent judgment, withholding participation and thereby muting group momentum. They may become Rubber Stampers—present but uninvolved.
+
+## What leaders must do
+Make engagement visible. Invite them into the conversation by asking for reflections, not just answers. “You’ve been listening closely—what’s standing out to you right now?”
+
+# Sharpshooter
+Sharpshooters are precise, often skeptical, and incredibly valuable when it comes to vetting ideas and spotting blind spots. Think of them as your dashboard—the person who will point out when a key assumption doesn’t hold or when the group is overlooking an important risk.
+
+## Light side
+Precision, risk management, strategic insight. Sharpshooters ensure a group doesn’t move too fast or without rigor.
+
+## Shadow side
+They can derail meetings with overly pointed critiques or well-timed “gotchas.” Their strength is their sharpness—but unmodulated, that sharpness becomes cutting.
+
+## What leaders must do
+Acknowledge their insight and redirect it toward construction: “You always spot the risks I miss. How would you improve this plan?”
+
+# Expert
+Experts carry deep technical or contextual knowledge. They are the engine of the car—the people who can explain how things work, what’s possible, and what’s not. Their input is critical to informed decision-making.
+
+## Light side
+Mastery, credibility, domain authority. Experts are a source of confidence and clarity. When they speak, others listen.
+
+## Shadow side
+Experts can become territorial or inaccessible. Their knowledge may become a barrier instead of a bridge—especially if they use jargon or dismiss questions. In meetings, they may dominate by default, assuming their expertise entitles them to the final word.
+
+## What leaders must do
+Empower them to teach, not dominate. “You’ve got deep insight here. How would you explain this to someone hearing it for the first time?”
+```
+
+Here are the statistics for the conversation:
+{stats_markdown}
+
+Here's the transcript for the conversation:
+"{conversation_script}"
+
+Return the scores for {name}.

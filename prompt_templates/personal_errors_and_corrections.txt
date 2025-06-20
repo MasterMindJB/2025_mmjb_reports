@@ -1,3 +1,73 @@
-This is the transcript from a conversation, it contains only one participant. Please review it, find errors in language or grammar, lists them and after each error propose a correction. Do not assume the gender of the person speaking.
+From the transcript of a conversation, identify possible conversational missteps made **only by the participant named `{name}`**. For each issue, assign a **gravity score from 0 to 5**, where:
 
-"{participation}"
+- **0** = no issue
+- **5** = severe negative impact on the conversation or other participants
+
+Provide a short observation including quotes as context, and if relevant, a culturally sensitive piece of advice (such as the one a socio-linguist might offer) to improve future interactions.
+
+Everything must be phrased in a nice, neutral, non-judgemental way to avoid offending.
+
+**Important guidelines:**
+- Double-check that your observations correspond exactly to what appears in the transcript.
+- Double-check the sequence of events to avoid confusions.
+- Do **not** make assumptions about the participant’s gender.
+- Only take into account mistakes that either make others feel bad or diminish the quality of the conversation.
+- Always contextualize observations using direct quotes.
+- Offer advice in a culturally considerate and universally empathetic manner.
+- Be aware of possible instances of jokes or sarcasm used to make the conversation lighter or more fun.
+- Double-check the results before returning your results to avoid hallucinations.
+- For every metric evaluated below, more than one issue can be stated, that's why the returned JSON has an array for every metric.
+- Verify the validity of the JSON return.
+
+### Metrics to evaluate (ordered by their potential impact on conversational quality):
+
+- **personal attacks**: Direct, hurtful comments targeting another participant personally.
+- **contempt**: Remarks expressing disdain, mockery, or dismissiveness toward others.
+- **meanness**: Remarks that are unnecessarily unkind or cause discomfort.
+- **lack of empathy**: Comments showing disregard for others' feelings, struggles, or perspectives.
+- **dismissal**: Ignoring, minimizing, or invalidating another participant’s contribution.
+- **rudeness**: Disrespectful or inconsiderate remarks that breach basic conversational politeness.
+- **interruptions**: Cutting someone off before they finish speaking, preventing idea completion.
+- **criticism**: Negative remarks about others' ideas or behaviors. Differentiate between hurtful and constructive criticism.
+- **unwilling to compromise**: Stubborn refusal to engage with alternative viewpoints or ideas.
+- **not paying attention**: Comments that show a lack of engagement or connection with what others just said.
+- **unconnected advice**: Giving unsolicited or irrelevant advice without considering the conversation’s flow or others' needs.
+- **absolutism**: Expressing rigid, black-and-white thinking without nuance or openness.
+- **assuming clarity**: Assuming others understood your point without checking for comprehension.
+- **not good questions**: Asking questions that don’t contribute meaningfully to the discussion.
+- **generic responses**: Offering vague, clichéd, or thoughtless replies lacking substance or engagement.
+- **talking too much**: Domineering the conversation with overly lengthy or verbose interventions.
+- **universal statements**: Making broad, generalized claims not grounded in the conversation’s context.
+- **obvious statements**: Saying things self-evident without adding helpful context or framing.
+
+---
+
+### Return your results in this strict JSON format:
+
+```json
+{{
+  "personal attacks": [{{"gravity": 0, "observation": "", "advice": ""}}, ...],
+  "contempt": [{{"gravity": 0, "observation": "", "advice": ""}}, ...],
+  "meanness": [{{"gravity": 0, "observation": "", "advice": ""}}, ...],
+  "lack of empathy": [{{"gravity": 0, "observation": "", "advice": ""}}, ...],
+  "dismissal": [{{"gravity": 0, "observation": "", "advice": ""}}, ...],
+  "rudeness": [{{"gravity": 0, "observation": "", "advice": ""}}, ...],
+  "interruptions": [{{"gravity": 0, "observation": "", "advice": ""}}, ...],
+  "criticism": [{{"gravity": 0, "observation": "", "advice": ""}}, ...],
+  "unwilling to compromise": [{{"gravity": 0, "observation": "", "advice": ""}}, ...],
+  "not paying attention": [{{"gravity": 0, "observation": "", "advice": ""}}, ...],
+  "unconnected advice": [{{"gravity": 0, "observation": "", "advice": ""}}, ...],
+  "absolutism": [{{"gravity": 0, "observation": "", "advice": ""}}, ...],
+  "assuming clarity": [{{"gravity": 0, "observation": "", "advice": ""}}, ...],
+  "not good questions": [{{"gravity": 0, "observation": "", "advice": ""}}, ...],
+  "generic responses": [{{"gravity": 0, "observation": "", "advice": ""}}, ...],
+  "talking too much": [{{"gravity": 0, "observation": "", "advice": ""}}, ...],
+  "universal statements": [{{"gravity": 0, "observation": "", "advice": ""}}, ...],
+  "obvious statements": [{{"gravity": 0, "observation": "", "advice": ""}}, ...]
+}}
+```
+
+Input conversation:
+```
+{conversation_script}
+```

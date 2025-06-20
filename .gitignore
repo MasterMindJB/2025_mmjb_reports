@@ -1,5 +1,8 @@
 # Avoid the working mail file
-PROD_PROGRAM_from_mail.ipynb
+old files from jason/
+
+# Don't keep track of multiple runs log
+multiple_runs_log.txt
 
 .DS_Store
 

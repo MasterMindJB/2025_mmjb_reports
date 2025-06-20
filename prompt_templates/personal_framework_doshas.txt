@@ -1,0 +1,172 @@
+From the transcript, use the Doshas framework, give a value for every type that represents how much this person is of that type according to the conversation script, where 0 is completely not represented and 5 is fully represented.
+
+Follow this rules:
+- Take into account the statistics for the conversation.
+- Double check that your response corresponds to what is visible in the transcript.
+- Do not assume the person's gender.
+
+Respond in the following format only, doing it for every Dosha type:
+
+```
+{{
+    "Vata": {{"value": 0, "explanation": ""}},
+    "Pitta": {{"value": 0, "explanation": ""}},
+    "Kapha": {{"value": 0, "explanation": ""}}
+}}
+```
+
+This is the Doshas framework:
+
+```markdown
+From https://fastercapital.com/content/Ayurvedic-Content-and-Communication--Balancing-Doshas--Ayurvedic-Tips-for-Effective-Communication.html
+
+# Ayurvedic Content and Communication: Balancing Doshas: Ayurvedic Tips for Effective Communication
+
+## What are doshas and why are they important for communication?
+
+Ayurveda, the ancient science of life, offers a holistic approach to health and well-being. It teaches us how to balance our physical, mental, emotional, and spiritual aspects of ourselves, and how to live in harmony with nature and others. One of the key concepts in Ayurveda is the notion of doshas, which are the three fundamental energies that govern our physiology, psychology, and behavior. The three doshas are:
+
+- **Vata**: The energy of movement, creativity, and spontaneity. Vata is associated with air and space elements, and regulates breathing, circulation, nervous system, and mental activity. Vata people are usually thin, light, agile, enthusiastic, and adaptable, but can also be restless, anxious, indecisive, and erratic.
+
+- **Pitta**: The energy of transformation, digestion, and intelligence. Pitta is associated with fire and water elements, and regulates metabolism, body temperature, vision, and comprehension. Pitta people are usually medium-built, warm, sharp, and courageous, but can also be irritable, impatient, aggressive, and critical.
+
+- **Kapha**: The energy of stability, nourishment, and compassion. Kapha is associated with earth and water elements, and regulates immunity, growth, lubrication, and memory. Kapha people are usually large, heavy, calm, loyal, and caring, but can also be sluggish, dull, attached, and possessive.
+
+Understanding our own dominant dosha and the doshas of others can help us communicate more effectively and harmoniously. By recognizing the strengths and weaknesses of each dosha, we can tailor our message, tone, and style to suit the needs and preferences of our audience. Here are some tips on how to balance the doshas in communication:
+
+- **Vata**: To communicate with vata people, use a friendly, warm, and gentle tone. Avoid being too harsh, rigid, or boring. Provide clear and concise information, and use examples, stories, and humor to keep them engaged. Allow them some space and flexibility to express their ideas and opinions. Appreciate their creativity and enthusiasm, and encourage them to focus and follow through.
+
+- **Pitta**: To communicate with pitta people, use a respectful, rational, and direct tone. Avoid being too emotional, vague, or passive. Provide factual and logical information, and use data, charts, and graphs to support your arguments. Challenge them with intelligent questions and constructive feedback. Acknowledge their intelligence and competence, and motivate them to improve and excel.
+
+- **Kapha**: To communicate with kapha people, use a cheerful, lively, and stimulating tone. Avoid being too fast, loud, or aggressive. Provide practical and relevant information, and use visuals, colors, and sounds to enhance your presentation. Involve them in interactive activities and discussions. Recognize their loyalty and kindness, and inspire them to change and grow.
+
+## Characteristics, strengths, and challenges of vata communicators
+
+According to Ayurveda, the ancient system of holistic medicine from India, there are three types of energy or doshas that govern our physical, mental, and emotional well-being: vata, pitta, and kapha. Each of us has a unique combination of these doshas, which determines our personality, preferences, and tendencies. In this article, we will explore how the doshas influence our communication styles and how we can balance them for more effective and harmonious interactions.
+
+If you are a vata communicator, you are likely to be creative, enthusiastic, and expressive. You enjoy sharing your ideas and insights with others and you are always open to learning new things. You have a quick and agile mind that can grasp complex concepts and make connections easily. You are also adaptable and flexible, able to [adjust to changing situations](https://fastercapital.com/content/Adaptability--Adaptability-and-decision-making--How-to-cope-with-uncertainty-and-adjust-to-changing-situations.html "Adaptability  Adaptability and decision making  How to cope with uncertainty and adjust to changing situations") and environments.
+
+However, being a vata communicator also comes with some challenges. You may sometimes struggle with:
+
+- **Lack of focus and consistency.** You tend to get distracted by multiple stimuli and lose track of your main point. You may also jump from one topic to another without completing your thoughts or following through on your plans. This can make you appear unreliable or disorganized to others.
+
+- **Anxiety and nervousness.** You are prone to worry and stress, especially when you face uncertainty or criticism. You may also have difficulty expressing your emotions or needs clearly, which can lead to misunderstandings or conflicts. You may also experience physical symptoms such as dryness, coldness, or insomnia due to your high energy level and sensitivity.
+
+- **Impatience and impulsiveness.** You are always in a hurry and want to get things done quickly. You may also act on your impulses without thinking of the consequences or the feelings of others. This can make you appear rude or insensitive to others.
+
+To balance your vata dosha and improve your communication skills, you can try the following tips:
+
+1. **practice mindfulness and meditation.** These [techniques can help you calm your mind](https://fastercapital.com/content/Mindful-Productivity--Productive-Meditation-Techniques--Calm-Your-Mind--Boost-Your-Output--Productive-Meditation-Techniques.html "Mindful Productivity  Productive Meditation Techniques  Calm Your Mind  Boost Your Output  Productive Meditation Techniques") and body, reduce your stress and anxiety, and increase your focus and clarity. You can also use breathing exercises, aromatherapy, or music to relax and center yourself before or during a conversation.
+
+2. **Create a structure and routine.** Having a clear and consistent schedule can help you organize your thoughts and actions, and avoid distractions and procrastination. You can also use tools such as calendars, planners, or reminders to keep track of your tasks and deadlines. You can also set realistic and achievable goals and prioritize them according to their importance and urgency.
+
+3. **Listen and empathize.** Being a good listener and empathizer can help you understand the perspectives and feelings of others, and build trust and rapport with them. You can also use positive and constructive feedback, appreciation, and encouragement to motivate and support others. You can also ask open-ended questions, paraphrase, or summarize what others say to show your interest and comprehension.
+
+## Characteristics, strengths, and challenges of pitta communicators
+
+Pitta dosha is the principle of transformation and metabolism in Ayurveda, the ancient system of holistic health "Naturopathy Feedback System  Holistic Health Tech  The Naturopathy Feedback Revolution") and wellness from India. Pitta is composed of fire and water elements, and it governs digestion, intelligence, courage, and willpower. People who have a dominant pitta dosha in their constitution are often sharp, focused, ambitious, and passionate. They can communicate effectively and persuasively, using logic, clarity, and confidence. However, pitta communicators also face some challenges, such as:
+
+- They can be impatient, aggressive, or dominating, especially when they are stressed or frustrated. They may not listen to others' opinions or feelings, and they may interrupt, criticize, or argue with them.
+
+- They can be overly competitive, perfectionist, or self-critical, setting high standards for themselves and others. They may not appreciate or acknowledge their own or others' achievements, and they may compare themselves unfavorably with others.
+
+- They can be prone to anger, resentment, or jealousy, especially when they feel threatened, challenged, or wronged. They may hold grudges, seek revenge, or lash out at others.
+
+To balance their pitta dosha and communicate more harmoniously, pitta communicators can follow these tips:
+
+1. Practice self-awareness and mindfulness. Pitta communicators can benefit from observing their own thoughts, emotions, and reactions, and noticing when they are becoming heated, tense, or irritable. They can use breathing techniques, meditation, or yoga to calm their mind and body, and to cultivate a more positive and peaceful attitude.
+
+2. Seek feedback and collaboration. Pitta communicators can learn to appreciate and respect the diversity and value of other perspectives and styles. They can ask for and listen to constructive feedback, and they can seek to understand and empathize with others' feelings and needs. They can also work with others as partners, rather than as rivals, and they can share credit and appreciation for their joint efforts.
+
+3. Express gratitude and compassion. Pitta communicators can practice being more grateful and compassionate, both towards themselves and others. They can acknowledge and celebrate their own and others' strengths, talents, and achievements, and they can express their appreciation and admiration sincerely and generously. They can also forgive themselves and others for their mistakes, and they can offer support and encouragement when needed.
+
+## Characteristics, strengths, and challenges of kapha communicators
+
+Here is a possible segment that you can use for your article:
+
+According to Ayurveda, the ancient system of holistic medicine from India, there are three types of energy or doshas that govern our physical, mental, and emotional well-being: vata, pitta, and kapha. Each of us has a unique constitution or prakriti, which is determined by the proportion of these doshas in our body and mind. Knowing our prakriti can help us understand our strengths, weaknesses, preferences, and tendencies, and also guide us to make choices that are in harmony with our nature.
+
+In this article, we will focus on the kapha dosha, which is composed of the elements of earth and water. Kapha is responsible for stability, structure, cohesion, and lubrication in our body. People with a dominant kapha dosha tend to have a strong, sturdy, and heavy physique, a calm, steady, and loyal personality, and a sweet, compassionate, and nurturing disposition. They are often good listeners, loyal friends, and supportive partners. However, they may also struggle with inertia, attachment, complacency, and resistance to change. They may have a tendency to overeat, oversleep, and accumulate clutter. They may also find it hard to express their emotions, opinions, and needs, and may avoid confrontation and conflict.
+
+As communicators, kapha types have their own unique characteristics, strengths, and challenges. Here are some tips to help kapha communicators balance their dosha and communicate more effectively:
+
+1. **Be clear about your purpose and intention.** Kapha communicators may sometimes lack direction, motivation, or enthusiasm in their communication. They may communicate out of habit, obligation, or expectation, rather than out of genuine interest, passion, or curiosity. To avoid this, kapha communicators should always have a clear purpose and intention for their communication. They should ask themselves: Why am I communicating? What do I want to achieve? How do I want to make the other person feel? Having a clear purpose and intention will help kapha communicators communicate more confidently, authentically, and persuasively.
+
+2. **Be concise and specific.** Kapha communicators may sometimes be too verbose, vague, or repetitive in their communication. They may use too many words, details, or examples to convey their message, or they may repeat the same point over and over again. This may bore, confuse, or frustrate the other person, and may also dilute the impact of their message. To avoid this, kapha communicators should be concise and specific in their communication. They should use fewer words, but more precise and powerful ones. They should use only relevant and necessary details and examples to support their message, and they should avoid repeating themselves unless it is for emphasis or clarification.
+
+3. **Be assertive and confident.** Kapha communicators may sometimes be too passive, submissive, or accommodating in their communication. They may avoid expressing their opinions, feelings, or needs, or they may agree with others even when they disagree. They may also hesitate to ask for what they want, or to say no to what they don't want. This may make them feel resentful, unappreciated, or taken advantage of, and may also prevent them from achieving their goals or fulfilling their potential. To avoid this, kapha communicators should be assertive and confident in their communication. They should express their opinions, feelings, and needs clearly, respectfully, and firmly. They should also stand up for themselves, their values, and their rights, and they should set healthy boundaries and expectations with others.
+
+4. **Be creative and flexible.** Kapha communicators may sometimes be too rigid, predictable, or conventional in their communication. They may stick to the same format, style, or tone of communication, or they may follow the same rules, norms, or traditions of communication. They may also resist new ideas, perspectives, or approaches to communication, or they may be reluctant to change or adapt their communication according to the situation, audience, or feedback. This may limit their creativity, innovation, or growth, and may also make them miss out on opportunities, connections, or insights. To avoid this, kapha communicators should be creative and flexible in their communication. They should experiment with different formats, styles, or tones of communication, or they should try new rules, norms, or traditions of communication. They should also be open to new ideas, perspectives, or approaches to communication, and they should be willing to change or adapt their communication according to the situation, audience, or feedback.
+
+By following these tips, kapha communicators can balance their dosha and communicate more effectively. They can also leverage their natural strengths of being calm, steady, loyal, sweet, compassionate, and nurturing, and they can overcome their natural challenges of being inert, attached, complacent, and resistant. By doing so, they can enhance their personal and professional relationships, and they can also contribute to the well-being of themselves and others.
+
+## How to balance your dosha and communicate harmoniously with different doshas?
+
+Balancing your dosha is not only important for your physical and mental health, but also for your communication style and effectiveness. According to Ayurveda, the ancient Indian system of medicine, there are three main types of doshas: **vata**, **pitta**, and **kapha**. Each dosha has its own characteristics, strengths, and weaknesses, and influences how you express yourself, listen, and interact with others. By understanding your own dosha and the doshas of the people you communicate with, you can adjust your tone, language, and approach to create harmony and avoid conflict. Here are some tips on how to balance your dosha and communicate harmoniously with different doshas:
+
+- **Vata**: Vata is the dosha of air and space, and it governs movement, creativity, and spontaneity. Vata people are lively, enthusiastic, and imaginative, but they can also be restless, anxious, and forgetful. They tend to speak fast, use gestures, and change topics frequently. They are good at initiating conversations, but they may lose interest or get distracted easily. To balance your vata dosha and communicate effectively with other doshas, you should:
+
+1. **Slow down**: Vata people tend to rush through their words and thoughts, which can make them sound unclear, impatient, or nervous. To improve your clarity and confidence, try to speak slower, pause between sentences, and breathe deeply. This will also help you listen better and show respect to the other person.
+
+2. **Focus**: Vata people have a lot of ideas and opinions, but they may not always organize them well or follow through on them. To avoid confusion and misunderstanding, try to stick to one topic at a time, use examples or facts to support your points, and summarize your main message at the end. This will also help you communicate with pitta and kapha people, who value structure and logic.
+
+3. **Be consistent**: Vata people are flexible and adaptable, but they may also be inconsistent or unreliable. To build trust and rapport with others, try to keep your promises, follow up on your commitments, and be punctual. This will also help you communicate with kapha people, who value stability and loyalty.
+
+- **Pitta**: Pitta is the dosha of fire and water, and it governs transformation, intelligence, and leadership. Pitta people are confident, ambitious, and decisive, but they can also be aggressive, competitive, and critical. They tend to speak assertively, use facts, and challenge others. They are good at solving problems, but they may not always consider the feelings or opinions of others. To balance your pitta dosha and communicate effectively with other doshas, you should:
+
+1. **Calm down**: Pitta people tend to get heated, angry, or defensive when they encounter disagreement or resistance. To avoid conflict and resentment, try to calm your emotions, lower your voice, and avoid harsh words. This will also help you listen better and show empathy to the other person.
+
+2. **Appreciate**: Pitta people tend to focus on the flaws, mistakes, or weaknesses of others, and they may not always acknowledge their strengths, achievements, or contributions. To improve your relationships and morale, try to appreciate the positive aspects of others, give compliments, and express gratitude. This will also help you communicate with kapha people, who value harmony and kindness.
+
+3. **Compromise**: Pitta people are goal-oriented and determined, but they may also be stubborn or domineering. To achieve your objectives and maintain cooperation, try to compromise, negotiate, and collaborate with others. This will also help you communicate with vata people, who value creativity and diversity.
+
+- **Kapha**: Kapha is the dosha of earth and water, and it governs stability, nourishment, and endurance. Kapha people are calm, loyal, and supportive, but they can also be lazy, complacent, and resistant to change. They tend to speak softly, use emotions, and agree with others. They are good at maintaining relationships, but they may not always express their needs or opinions. To balance your kapha dosha and communicate effectively with other doshas, you should:
+
+1. **Wake up**: Kapha people tend to be slow, dull, or sleepy, which can make them seem uninterested, bored, or passive. To improve your energy and enthusiasm, try to wake up early, exercise regularly, and eat light and spicy foods. This will also help you listen better and show curiosity to the other person.
+
+2. **Speak up**: Kapha people tend to avoid confrontation, conflict, or criticism, and they may not always voice their thoughts, feelings, or preferences. To avoid resentment and frustration, try to speak up, assert yourself, and set boundaries. This will also help you communicate with pitta and vata people, who value honesty and feedback.
+
+3. **Change up**: Kapha people are routine-oriented and conservative, but they may also be rigid or stagnant. To avoid boredom and stagnation, try to change up your habits, environment, and activities. This will also help you communicate with vata people, who value novelty and variety.
+
+## Practical tips and examples of ayurvedic communication in different settings and situations
+
+Ayurveda, the ancient science of life, offers a holistic approach to communication that can help us balance our doshas and create harmony in our relationships. According to ayurveda, there are three doshas or bio-energies that govern our physical, mental, and emotional health: vata, pitta, and kapha. Each dosha has its own characteristics, strengths, and weaknesses, and influences how we communicate with ourselves and others. By understanding our own dominant dosha and the dosha of the person we are communicating with, we can tailor our message and tone to suit their needs and preferences, and avoid conflicts and misunderstandings. Here are some practical tips and examples of ayurvedic communication in different settings and situations:
+
+- **At home**: Communication at home is essential for maintaining a healthy and happy family life. Whether it is with your spouse, children, parents, or siblings, you need to communicate with love, respect, and compassion. Here are some tips for communicating with different doshas at home:
+
+- **Vata**: Vata people are creative, enthusiastic, and spontaneous, but they can also be restless, anxious, and forgetful. They need gentle, reassuring, and supportive communication that helps them feel calm and grounded. Avoid being harsh, critical, or impatient with them, as this can aggravate their vata and make them feel insecure and nervous. For example, instead of saying "You always forget to do your chores, you are so irresponsible!", you can say "I know you have a lot of things on your mind, but can you please remember to do your chores? It would really help me out and make our home more organized."
+
+- **Pitta**: Pitta people are intelligent, ambitious, and confident, but they can also be aggressive, competitive, and impatient. They need clear, direct, and honest communication that respects their opinions and achievements. Avoid being vague, ambiguous, or dishonest with them, as this can irritate their pitta and make them feel angry and frustrated. For example, instead of saying "I don't like your attitude, you are always trying to be the boss!", you can say "I appreciate your leadership skills, but sometimes you need to listen to other people's views and compromise."
+
+- **Kapha**: Kapha people are loyal, caring, and compassionate, but they can also be lazy, stubborn, and resistant to change. They need warm, encouraging, and stimulating communication that helps them feel motivated and inspired. Avoid being cold, indifferent, or boring with them, as this can dampen their kapha and make them feel depressed and lethargic. For example, instead of saying "You never do anything new, you are so boring!", you can say "You have so many talents and interests, why don't you try something new and exciting? It would be good for you and make you happy."
+
+- **At work**: Communication at work is crucial for achieving professional goals and building positive relationships with colleagues, clients, and customers. Whether it is with your boss, co-workers, or customers, you need to communicate with competence, respect, and professionalism. Here are some tips for communicating with different doshas at work:
+
+- **Vata**: Vata people are innovative, adaptable, and quick-witted, but they can also be distracted, inconsistent, and disorganized. They need concise, relevant, and engaging communication that captures their attention and sparks their curiosity. Avoid being long-winded, irrelevant, or boring with them, as this can bore their vata and make them lose interest and focus. For example, instead of saying "Here is a 50-page report on the latest market trends, please read it and give me your feedback by tomorrow", you can say "Here are the key points from the report on the latest market trends, please take a look and let me know what you think by tomorrow."
+
+- **Pitta**: Pitta people are analytical, decisive, and goal-oriented, but they can also be arrogant, domineering, and argumentative. They need factual, logical, and respectful communication that acknowledges their expertise and challenges their intellect. Avoid being emotional, illogical, or disrespectful with them, as this can inflame their pitta and make them defensive and confrontational. For example, instead of saying "You are wrong, your idea is stupid and will never work!", you can say "I disagree, your idea has some flaws and needs improvement."
+
+- **Kapha**: Kapha people are reliable, cooperative, and patient, but they can also be complacent, passive, and slow. They need friendly, supportive, and motivational communication that appreciates their efforts and nudges them to action. Avoid being rude, unsupportive, or demotivating with them, as this can depress their kapha and make them withdraw and procrastinate. For example, instead of saying "You are too slow, you need to work faster and harder!", you can say "You are doing a great job, but you need to speed up and finish your task on time.
+
+## Summary, key takeaways, and call to action
+
+In this article, we have explored how Ayurveda can help us communicate more effectively with ourselves and others by understanding and balancing our doshas. We have learned that each dosha has its own strengths and weaknesses in communication, and that we can use various techniques to harmonize them and create more positive and productive interactions. Some of the key takeaways and action steps are:
+
+- Identify your dominant dosha and the dosha of the person you are communicating with. You can use online quizzes, self-assessment tools, or consult an Ayurvedic practitioner to do this.
+
+- Adjust your communication style according to the dosha of the receiver. For example, if you are a vata and you are talking to a kapha, you may need to slow down, be more patient, and use more concrete examples. If you are a pitta and you are talking to a vata, you may need to be more gentle, flexible, and creative.
+
+- Use the five elements of Ayurveda (space, air, fire, water, and earth) to balance your doshas and enhance your communication skills. For example, you can use space to create silence, air to breathe deeply, fire to ignite passion, water to flow with emotions, and earth to ground yourself.
+
+- Practice mindfulness, meditation, and yoga to calm your mind, body, and spirit. These practices can help you reduce stress, increase awareness, and improve your mental and emotional health. They can also help you listen more attentively, speak more clearly, and express more authentically.
+
+- Incorporate Ayurvedic herbs, spices, foods, and drinks into your diet to nourish your doshas and support your communication. For example, you can use ginger, turmeric, cardamom, and cinnamon to stimulate your vata, fennel, mint, rose, and saffron to cool your pitta, and clove, black pepper, mustard, and honey to energize your kapha.
+```
+
+Here are the statistics for the conversation:
+{stats_markdown}
+
+Here's the transcript for the conversation:
+"{conversation_script}"
+
+Return the scores for {name}.
