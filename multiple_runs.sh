@@ -27,6 +27,7 @@ for file_name in ${(k)file_speakers_count}; do
 -p conversation_summaries_force_regen_conversation_summary_short False \
 -p conversation_summaries_force_regen_conversation_summary_long False \
 -p speaker_analysis_force_regen False \
+-p speaker_analysis_force_regen_personal_super_power False \
 -p speaker_analysis_force_regen_personal_framework_amase False \
 -p speaker_analysis_force_regen_personal_framework_enneagram False \
 -p speaker_analysis_force_regen_personal_framework_doshas False \

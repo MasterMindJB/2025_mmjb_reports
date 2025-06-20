@@ -31,6 +31,7 @@ class ConversationSummarizer:
         'personal_summary': parser_str,
         'personal_action_items': parser_json,
         #
+        'personal_super_power': parser_str,
         'personal_errors_and_corrections': parser_json,
         'personal_framework_amase': parser_json,
         'personal_framework_enneagram': parser_json,
@@ -481,6 +482,7 @@ class ConversationSummarizer:
         conversation_script: str,
         speakers_expected: int,
         force_regen: bool = False,
+        force_regen_personal_super_power: bool = False,
         force_regen_personal_errors_and_corrections: bool = False,
         force_regen_personal_framework_amase: bool = False,
         force_regen_personal_framework_enneagram: bool = False,
@@ -494,6 +496,7 @@ class ConversationSummarizer:
 
         The speaker analysis contains the following information for each speaker:
             - name: The speaker's name.
+            - personal_super_power: A summary of the speaker's superpower.
             - personal_framework_amase: Analysis using the AMASE framework.
             - personal_framework_enneagram: Analysis using the Enneagram framework.
             - personal_framework_doshas: Analysis using Ayurvedic doshas framework.
@@ -513,6 +516,8 @@ class ConversationSummarizer:
         force_regen : bool, optional
             If True, forces complete regeneration of all speaker analysis data, ignoring
             existing cached data. Default is False.
+        force_regen_personal_super_power : bool, optional
+            If True, forces regeneration of personal super power analysis. Default is False.
         force_regen_personal_errors_and_corrections : bool, optional
             If True, forces regeneration of personal errors and corrections analysis. Default is False.
         force_regen_personal_framework_amase : bool, optional
@@ -529,6 +534,7 @@ class ConversationSummarizer:
             structure for each speaker:
             {
                 'name': str,
+                'personal_super_power': str,
                 'personal_framework_amase': dict,
                 'personal_framework_enneagram': dict,
                 'personal_framework_doshas': dict,
@@ -575,6 +581,9 @@ class ConversationSummarizer:
                 logging.warning('......speakers_expected differs from what was stored on file.')
                 logging.warning('......forcing regeneration.')
 
+            if force_regen_personal_super_power:
+                return_unchanged = False
+                logging.debug('...forcing personal super power regeneration.')
             if force_regen_personal_errors_and_corrections:
                 return_unchanged = False
                 logging.debug('...forcing personal errors and corrections regeneration.')
@@ -600,6 +609,8 @@ class ConversationSummarizer:
             _tmp_speaker = speaker_analysis.get(speaker_id, {})
 
             # Initialize missing fields to avoid KeyError when individual force flags are True
+            if 'personal_super_power' not in _tmp_speaker:
+                _tmp_speaker['personal_super_power'] = ''
             if 'personal_framework_amase' not in _tmp_speaker:
                 _tmp_speaker['personal_framework_amase'] = {}
             if 'personal_framework_enneagram' not in _tmp_speaker:
@@ -627,6 +638,21 @@ class ConversationSummarizer:
                 ]
                 .to_markdown()
             )
+
+            if generate_all or force_regen_personal_super_power:
+                logging.debug('......creating personal super power.')
+                _tmp_speaker['personal_super_power'] = self.chains_with_retry[
+                    'personal_super_power'
+                ].invoke(
+                    {
+                        'name': speaker,
+                        'conversation_script': conversation_script,
+                    }
+                )
+                logging.info(
+                    'personal_super_power: %s',
+                    _tmp_speaker['personal_super_power'],
+                )
 
             if generate_all or force_regen_personal_framework_amase:
                 logging.debug('......creating personal framework amase.')
@@ -691,6 +717,7 @@ class ConversationSummarizer:
 
             _tmp_speaker_sorted = {}
             _tmp_speaker_sorted['name'] = speaker
+            _tmp_speaker_sorted['personal_super_power'] = _tmp_speaker['personal_super_power']
             _tmp_speaker_sorted['personal_framework_amase'] = _tmp_speaker['personal_framework_amase']
             _tmp_speaker_sorted['personal_framework_enneagram'] = _tmp_speaker['personal_framework_enneagram']
             _tmp_speaker_sorted['personal_framework_doshas'] = _tmp_speaker['personal_framework_doshas']

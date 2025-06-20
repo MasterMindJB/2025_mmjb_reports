@@ -1,0 +1,5 @@
+From the following conversation script, what is the super power for **{name}**? Do not assume the gender of the person speaking. Summarize the power in one sentence.
+
+Here's the conversation script:
+
+{conversation_script}
