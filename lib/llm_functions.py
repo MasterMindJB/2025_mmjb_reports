@@ -485,10 +485,10 @@ class ConversationSummarizer:
         speakers_expected: int,
         force_regen: bool = False,
         force_regen_personal_super_power: bool = False,
-        force_regen_personal_errors_and_corrections: bool = False,
         force_regen_personal_framework_amase: bool = False,
         force_regen_personal_framework_enneagram: bool = False,
         force_regen_personal_framework_doshas: bool = False,
+        force_regen_personal_errors_and_corrections: bool = False,
     ) -> JSON:
         """Creates or updates detailed psychological and behavioral analysis for each speaker.
 
@@ -520,14 +520,14 @@ class ConversationSummarizer:
             existing cached data. Default is False.
         force_regen_personal_super_power : bool, optional
             If True, forces regeneration of personal super power analysis. Default is False.
-        force_regen_personal_errors_and_corrections : bool, optional
-            If True, forces regeneration of personal errors and corrections analysis. Default is False.
         force_regen_personal_framework_amase : bool, optional
             If True, forces regeneration of AMASE framework analysis. Default is False.
         force_regen_personal_framework_enneagram : bool, optional
             If True, forces regeneration of Enneagram framework analysis. Default is False.
         force_regen_personal_framework_doshas : bool, optional
             If True, forces regeneration of Ayurvedic doshas framework analysis. Default is False.
+        force_regen_personal_errors_and_corrections : bool, optional
+            If True, forces regeneration of personal errors and corrections analysis. Default is False.
 
         Returns
         -------
@@ -586,9 +586,6 @@ class ConversationSummarizer:
             if force_regen_personal_super_power:
                 return_unchanged = False
                 logging.debug('...forcing personal super power regeneration.')
-            if force_regen_personal_errors_and_corrections:
-                return_unchanged = False
-                logging.debug('...forcing personal errors and corrections regeneration.')
             if force_regen_personal_framework_amase:
                 return_unchanged = False
                 logging.debug('...forcing personal framework amase regeneration.')
@@ -598,6 +595,9 @@ class ConversationSummarizer:
             if force_regen_personal_framework_doshas:
                 return_unchanged = False
                 logging.debug('...forcing personal framework doshas regeneration.')
+            if force_regen_personal_errors_and_corrections:
+                return_unchanged = False
+                logging.debug('...forcing personal errors and corrections regeneration.')
 
             if return_unchanged:
                 return speaker_analysis
