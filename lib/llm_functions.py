@@ -311,14 +311,16 @@ class ConversationSummarizer:
                 ].invoke({'participation': _df_utter_reduced.iloc[i]['text']})
                 logging.info('personal_action_items: %s', _tmp_speaker['personal_action_items'])
 
-            _tmp_speaker_map_sorted = {}
-            _tmp_speaker_map_sorted['name'] = name
-            _tmp_speaker_map_sorted['personal_summary'] = _tmp_speaker['personal_summary']
-            _tmp_speaker_map_sorted['personal_key_contributions'] = _tmp_speaker['personal_key_contributions']
-            _tmp_speaker_map_sorted['personal_action_items'] = _tmp_speaker['personal_action_items']
+            _speaker_sorted = {}
+            _speaker_sorted['name'] = name
+            _speaker_sorted['personal_summary'] = _tmp_speaker['personal_summary']
+            _speaker_sorted['personal_key_contributions'] = _tmp_speaker[
+                'personal_key_contributions'
+            ]
+            _speaker_sorted['personal_action_items'] = _tmp_speaker['personal_action_items']
 
             # Fusion _tmp_speaker with speaker_map[speaker]
-            speaker_map[speaker] = _tmp_speaker_map_sorted
+            speaker_map[speaker] = _speaker_sorted
 
         with open(path_file_speaker_map, 'w', encoding='UTF-8') as file:
             logging.debug('...saving speaker map to json file [%s]', file.name)
@@ -464,7 +466,7 @@ class ConversationSummarizer:
             summaries['conversation_summary_long'] = self.chains_with_retry[
                 'conversation_summary_long'
             ].invoke({'conversation': conversation_script})
-        
+
         summaries_sorted = {}
         summaries_sorted['speaker_count'] = summaries['speaker_count']
         summaries_sorted['conversation_title'] = summaries['conversation_title']
