@@ -624,22 +624,7 @@ class ConversationSummarizer:
 
             logging.debug('...name: %s.', speaker)
 
-            # TODO: avoid column selection here, do it when calling this function
-            _stats_markdown = (
-                df_nice_stats_data[
-                    [
-                        # 'Action Items',
-                        # 'Idea Generation',
-                        'Questions Asked',
-                        'Speaking Time (%)',
-                        'Total Interactions',
-                        # 'Unique Words % (Idea Density)',
-                        'Word Count',
-                        'Words Per Minute (WPM)',
-                    ]
-                ]
-                .to_markdown()
-            )
+            _nice_stats_data_markdown = df_nice_stats_data.to_markdown()
 
             if generate_all or force_regen_personal_super_power:
                 logging.debug('......creating personal super power.')
@@ -662,7 +647,7 @@ class ConversationSummarizer:
                     'personal_framework_amase'
                 ].invoke(
                     {
-                        'stats_markdown': _stats_markdown,
+                        'stats_markdown': _nice_stats_data_markdown,
                         'name': speaker,
                         'conversation_script': conversation_script,
                     }
@@ -677,13 +662,14 @@ class ConversationSummarizer:
                     'personal_framework_enneagram'
                 ].invoke(
                     {
-                        'stats_markdown': _stats_markdown,
+                        'stats_markdown': _nice_stats_data_markdown,
                         'name': speaker,
                         'conversation_script': conversation_script,
                     }
                 )
                 logging.info(
-                    'personal_framework_enneagram: %s', _tmp_speaker['personal_framework_enneagram']
+                    'personal_framework_enneagram: %s',
+                    _tmp_speaker['personal_framework_enneagram'],
                 )
 
             if generate_all or force_regen_personal_framework_doshas:
@@ -692,7 +678,7 @@ class ConversationSummarizer:
                     'personal_framework_doshas'
                 ].invoke(
                     {
-                        'stats_markdown': _stats_markdown,
+                        'stats_markdown': _nice_stats_data_markdown,
                         'name': speaker,
                         'conversation_script': conversation_script,
                     }
@@ -707,7 +693,6 @@ class ConversationSummarizer:
                     'personal_errors_and_corrections'
                 ].invoke(
                     {
-                        # 'participation': df_speaker_stats.loc[speaker, 'text'],
                         'name': speaker,
                         'conversation_script': conversation_script,
                     }
@@ -717,16 +702,21 @@ class ConversationSummarizer:
                     _tmp_speaker['personal_errors_and_corrections'],
                 )
 
-            _tmp_speaker_sorted = {}
-            _tmp_speaker_sorted['name'] = speaker
-            _tmp_speaker_sorted['personal_super_power'] = _tmp_speaker['personal_super_power']
-            _tmp_speaker_sorted['personal_framework_amase'] = _tmp_speaker['personal_framework_amase']
-            _tmp_speaker_sorted['personal_framework_enneagram'] = _tmp_speaker['personal_framework_enneagram']
-            _tmp_speaker_sorted['personal_framework_doshas'] = _tmp_speaker['personal_framework_doshas']
-            _tmp_speaker_sorted['personal_errors_and_corrections'] = _tmp_speaker['personal_errors_and_corrections']
+            # Created to keep the sorting order
+            _speaker_sorted = {}
+            _speaker_sorted['name'] = speaker
+            _speaker_sorted['personal_super_power'] = _tmp_speaker['personal_super_power']
+            _speaker_sorted['personal_framework_amase'] = _tmp_speaker['personal_framework_amase']
+            _speaker_sorted['personal_framework_enneagram'] = _tmp_speaker[
+                'personal_framework_enneagram'
+            ]
+            _speaker_sorted['personal_framework_doshas'] = _tmp_speaker['personal_framework_doshas']
+            _speaker_sorted['personal_errors_and_corrections'] = _tmp_speaker[
+                'personal_errors_and_corrections'
+            ]
 
             # Fusion _tmp_speaker with speaker_analysis[speaker]
-            speaker_analysis[speaker_id] = _tmp_speaker_sorted
+            speaker_analysis[speaker_id] = _speaker_sorted
 
         with open(path_file_speaker_analysis, 'w', encoding='UTF-8') as file:
             logging.debug('...saving speaker analysis to json file [%s]', file.name)
