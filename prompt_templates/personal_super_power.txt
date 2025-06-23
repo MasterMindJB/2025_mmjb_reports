@@ -1,4 +1,4 @@
-From the following conversation script, what is the super power for **{name}**? Do not assume the gender of the person speaking. Summarize the power in one sentence.
+From the following conversation script, what is the super power for **{name}**? Do not assume the gender of the person speaking. Summarize the power in one sentence. Take into account all that was said by **{name}** and by the other participants about **{name}**.
 
 Here's the conversation script:
 
