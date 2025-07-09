@@ -5,7 +5,7 @@ Follow this rules:
 - Double check that your response corresponds to what is visible in the transcript.
 - Do not assume the person's gender.
 
-Respond in the following format only, doing it for every type, omit "```" from the response:
+You must always return valid JSON fenced by a markdown code block. Do not return any additional text. Respond in the following format:
 
 ```
 {{
@@ -13,7 +13,8 @@ Respond in the following format only, doing it for every type, omit "```" from t
     "mirror": {{"value": 0, "explanation": ""}},
     "audience": {{"value": 0, "explanation": ""}},
     "sharpshooter": {{"value": 0, "explanation": ""}},
-    "expert": {{"value": 0, "explanation": ""}}}}
+    "expert": {{"value": 0, "explanation": ""}}
+}}
 ```
 
 This is the AMASE framework:

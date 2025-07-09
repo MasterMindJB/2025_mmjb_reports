@@ -5,7 +5,7 @@ Follow this rules:
 - Double check that your response corresponds to what is visible in the transcript.
 - Do not assume the person's gender.
 
-Respond in the following format only, doing it for every Enneagram type, omit "```" from the response:
+You must always return valid JSON fenced by a markdown code block. Do not return any additional text. Respond in the following format:
 
 ```
 {{

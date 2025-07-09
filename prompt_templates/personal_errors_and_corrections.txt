@@ -42,9 +42,11 @@ Everything must be phrased in a nice, neutral, non-judgemental way to avoid offe
 
 ---
 
-### Return your results in this strict JSON format:
+### Return your results in strict JSON format
 
-```json
+You must always return valid JSON fenced by a markdown code block. Do not return any additional text. Respond in the following format:
+
+```
 {{
   "personal attacks": [{{"gravity": 0, "observation": "", "advice": ""}}, ...],
   "contempt": [{{"gravity": 0, "observation": "", "advice": ""}}, ...],

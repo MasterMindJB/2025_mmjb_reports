@@ -6,7 +6,11 @@ Extract and paraphrase all **explicit and implicit** action items that the perso
 - No need for in-depth analysis or additional commentary.
 - Do not assume the gender of the person speaking.
 
-Respond in the format [{{"title": a title for action item 1, "action": the extracted and paraphrased action item 1}}, {{"title": a title for action item 2, "action": the extracted and paraphrased action item 2}}]. Do not use variables.
+You must always return valid JSON fenced by a markdown code block. Do not return any additional text. Respond in the following format:
+
+```
+[{{"title": a title for action item 1, "action": the extracted and paraphrased action item 1}}, {{"title": a title for action item 2, "action": the extracted and paraphrased action item 2}}, ... ]
+```
 
 Here's the transcript:
 
