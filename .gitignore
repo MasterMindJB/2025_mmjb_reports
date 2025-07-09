@@ -1,5 +1,5 @@
-# Avoid the working mail file
-old files from jason/
+# Files not to commit
+do_not_commit/
 
 # Don't keep track of multiple runs log
 multiple_runs_log.txt
