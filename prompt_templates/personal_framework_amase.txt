@@ -9,11 +9,11 @@ You must always return valid JSON fenced by a markdown code block. Do not return
 
 ```
 {{
-    "assertive": {{"value": 0, "explanation": ""}},
-    "mirror": {{"value": 0, "explanation": ""}},
-    "audience": {{"value": 0, "explanation": ""}},
-    "sharpshooter": {{"value": 0, "explanation": ""}},
-    "expert": {{"value": 0, "explanation": ""}}
+    "Assertive": {{"value": 0, "explanation": ""}},
+    "Mirror": {{"value": 0, "explanation": ""}},
+    "Audience": {{"value": 0, "explanation": ""}},
+    "Sharpshooter": {{"value": 0, "explanation": ""}},
+    "Expert": {{"value": 0, "explanation": ""}}
 }}
 ```
 
