@@ -5,14 +5,13 @@ logger_matplotlib.setLevel(logging.WARNING)
 
 import io
 import textwrap
+from typing import List, Optional
 
 import matplotlib
 import matplotlib.figure
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-
-# from PIL import Image, ImageFile
 import PIL.Image
 import PIL.ImageFile
 import seaborn as sns
@@ -49,8 +48,8 @@ def gini(values: list | np.ndarray) -> float:
     return float((n + 1 - 2 * (np.sum(cumulative_values) / np.sum(values))) / n)
 
 
-def lorenz_plot(values: list | np.ndarray) -> plt.figure:
-    """Returns the plot of the Lorenz curve used to compute the Gini index alongsize a y=x curve from 0 to 1.
+def lorenz_plot(values: list | np.ndarray) -> matplotlib.figure.Figure:
+    """Returns the plot of the Lorenz curve used to compute the Gini index alongside a y=x curve from 0 to 1.
 
     Parameters
     ----------
@@ -59,7 +58,7 @@ def lorenz_plot(values: list | np.ndarray) -> plt.figure:
 
     Returns
     -------
-    plt.figure
+    matplotlib.figure.Figure
         The figure.
     """
     values = sorted(values)
@@ -77,30 +76,31 @@ def lorenz_plot(values: list | np.ndarray) -> plt.figure:
 
 def barplot(
     data: pd.DataFrame,
-    title: str = None,
-    ylabel: str = None,
-    xlabel: str = None,
+    title: Optional[str] = None,
+    ylabel: Optional[str] = None,
+    xlabel: Optional[str] = None,
     show_mean: bool = True,
     show_mean_value: bool = True,
     show_values: bool = False,
     colors: str | list[tuple[float, float, float]] | None = None,
-) -> plt.figure:
-    """_summary_
+) -> matplotlib.figure.Figure:
+    """
+    Plots a barplot of the data.
 
     Parameters
     ----------
     data : pd.DataFrame
         The data to be plotted. Axis 0 is the metric to be printed and axis 1 are the values for each component.
-    title : str
+    title : Optional[str]
         The title, by default None.
-    ylabel : str, optional
+    ylabel : Optional[str], optional
         The ylabel, by default None.
-    xlabel : str, optional
+    xlabel : Optional[str], optional
         The xlabel, by default None.
-    show_mean : str, optional
-        Wether to show the mean as a line, by default True.
-    show : str, optional
-        When showing the mean add the value of the mean in the legend, by default None.
+    show_mean : bool, optional
+        Whether to show the mean as a line, by default True.
+    show_mean_value : bool, optional
+        When showing the mean add the value of the mean in the legend, by default True.
     show_values : bool, optional
         Whether to show values in plot or not, by default False.
     colors : str | list[tuple[float, float, float]] | None, optional
@@ -108,9 +108,12 @@ def barplot(
 
     Returns
     -------
-    plt.figure
+    matplotlib.figure.Figure
         The figure.
     """
+    if data.empty:
+        raise ValueError('DataFrame is empty.')
+
     if data.index.shape[0] != 1:
         raise ValueError('Data index should be of length 1.')
 
@@ -118,7 +121,7 @@ def barplot(
     ax = sns.barplot(
         data=data,
         palette=colors,
-        saturation=1, # The colors passed are the ones we want, we don't want the saturation to be changed by the default 0.75
+        saturation=1,  # The colors passed are the ones we want, we don't want the saturation to be changed by the default 0.75
     )
 
     if show_mean:
@@ -147,8 +150,94 @@ def barplot(
     return fig
 
 
+def spider_chart_0to5(
+    df: pd.DataFrame,
+    row_names: Optional[List[str]] = None,
+    show_mean: bool = True,
+    title_prefix: str = "",
+) -> matplotlib.figure.Figure:
+    """
+    Plots a spider (radar) chart for the given DataFrame rows, from 0 to 5 as possible values.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame where each row represents an entity and each column represents a category/metric to plot.
+    row_names : Optional[List[str]], optional
+        List of row names (index labels) to plot. If None, all rows are plotted. Defaults to None.
+    show_mean : bool, optional
+        Whether to plot the mean of all rows as an additional line. Defaults to True.
+    title_prefix : str, optional
+        Prefix to add to the chart title. Defaults to "".
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+        The matplotlib Figure object containing the spider chart.
+    """
+
+    if df.empty:
+        raise ValueError("DataFrame is empty")
+
+    previous_interactive_mode = plt.isinteractive()
+
+    try:
+        plt.ioff()  # Turn off interactive mode
+
+        categories = list(df.columns.str.title())
+        N = len(categories)
+        angles = np.linspace(0, 2 * np.pi, N, endpoint=False).tolist()
+        angles += angles[:1]
+
+        if not row_names:
+            row_names = df.index.tolist()
+
+        fig, ax = plt.subplots(figsize=(8, 6), subplot_kw=dict(polar=True))
+
+        ax.spines['polar'].set_zorder(0)
+        ax.spines['polar'].set_color('gray')
+        ax.spines['polar'].set_linewidth(0.5)
+        # ax.spines['polar'].set_visible(False)
+
+        # Draw one axe per variable + add labels
+        ax.set_theta_offset(np.pi / 2)
+        ax.set_theta_direction(-1)
+        plt.xticks(angles[:-1], categories, color='gray', size=10)
+
+        # Draw ylabels
+        ax.set_rlabel_position(0)
+        plt.yticks([0, 1, 2, 3, 4, 5], ["0", "1", "2", "3", "4", "5"], size=9)
+        ax.tick_params(axis='both', zorder=2)
+        plt.ylim(0, 5)
+
+        # Plot each selected row
+        for row_name in row_names:
+            values = df.loc[row_name].tolist()
+            values = values + values[:1]
+            ax.plot(angles, values, linewidth=2, linestyle='solid', label=row_name, zorder=1)
+            ax.fill(angles, values, alpha=0.25, zorder=1)
+
+        # Plot mean if requested
+        if show_mean:
+            mean_values = df.mean(axis=0).tolist()
+            mean = mean_values + mean_values[:1]
+            ax.plot(angles, mean, linewidth=2, linestyle='dashed', label='Average', zorder=1)
+            ax.fill(angles, mean, alpha=0.10, zorder=1)
+
+        plt.title(f"{title_prefix} {', '.join(row_names)}", size=14, y=1.08)
+        plt.legend(loc='upper right', bbox_to_anchor=(1.2, 1.1))
+
+        return fig
+    finally:
+        plt.close(fig)
+        if previous_interactive_mode:
+            plt.ion()
+        else:
+            plt.ioff()
+
+
 def figure_to_image(figure: matplotlib.figure.Figure) -> PIL.ImageFile.ImageFile:
-    """Transorms a figure into a PIL Image.
+    """Transforms a figure into a PIL Image.
 
     Parameters
     ----------
