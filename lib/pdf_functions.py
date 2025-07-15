@@ -1,4 +1,5 @@
 import logging
+import pandas as pd
 
 logger_PIL = logging.getLogger('PIL')
 logger_PIL.setLevel(logging.INFO)
@@ -100,7 +101,7 @@ class MM_PDF(FPDF):
         self.cell(
             0,
             10,
-            text="Give us Feedback",
+            text="Leave a Comment!",
             align='L',
             link=self.link_feedback,
         )
@@ -183,11 +184,6 @@ class MM_PDF(FPDF):
 
 
 def create_report(
-    # image_part_balance: PIL.Image,
-    # image_word_per_min: PIL.Image,
-    # image_action_items: PIL.Image,
-    # image_idea_count: PIL.Image,
-    # image_unique_words: PIL.Image,
     images_barplot: [PIL.Image],
     image_convo_sentiment_evo: PIL.Image,
     image_speaker_sentiment_evo: PIL.Image,
@@ -198,12 +194,12 @@ def create_report(
     path_report_assets: Path,
     path_file: Path,
     summaries: JSON,
-    gini_reverse_interventions,
-    gini_reverse_interactions,
-    gini_reverse_interactions_both_wrd_cnt,
-    df_nice_stats_data,
-    speaker_map,
-    link_feedback,
+    gini_reverse_interventions: float,
+    gini_reverse_interactions: float,
+    gini_reverse_interactions_both_wrd_cnt: float,
+    df_nice_stats_data: pd.DataFrame,
+    speaker_map: dict,
+    link_feedback: str,
 ):
     logging.info('Creating PDF report.')
 
@@ -291,7 +287,7 @@ def create_report(
             style=style_desc,
         )
         row = table.row()
-        row.cell('Words Per Minute Evolution', style=style_link, link=link_convo_evo)
+        row.cell('Words Per Minute Evolution', style=style_link, link=link_wpm_evo)
         row.cell('How the rate of speech evolved throughout the conversation.', style=style_desc)
 
     pdf.add_page()
@@ -432,7 +428,7 @@ def create_report(
             w=0,
             # padding=(0, 10),
             # padding=(0, 0),
-            text=f'{speaker_map[speaker]['personal_summary']}',
+            text=f'{speaker_map[speaker]["personal_summary"]}',
             align='J',
             ln=True,
             markdown=True,
