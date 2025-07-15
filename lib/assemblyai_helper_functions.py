@@ -144,7 +144,7 @@ def _obtain_transcript(
                 raise RuntimeError(f"Transcription failed: {response_get_transcript['error']}")
 
             else:
-                sleep(3)
+                sleep(10)
 
         with open(path_response_transcript_json, 'x', encoding='UTF-8') as file:
             logging.debug('...saving transcript to json file [%s]', path_response_transcript_json)
