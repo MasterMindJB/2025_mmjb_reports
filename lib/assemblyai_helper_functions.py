@@ -87,6 +87,7 @@ def _create_transcript(
             'auto_highlights': True,
             'speaker_labels': True,
             'speakers_expected': speakers_expected,
+            # "disfluencies": True # Adds filler words like um, ah, etc. https://www.assemblyai.com/docs/speech-to-text/pre-recorded-audio/filler-words
         }
         headers = {
             'authorization': os.getenv('ASSEMBLYAI_API_KEY'),
