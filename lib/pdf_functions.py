@@ -183,7 +183,7 @@ class MM_PDF(FPDF):
         self.set_font_recall()
 
 
-def create_report(
+def create_report_group(
     images_barplot: [PIL.Image],
     image_convo_sentiment_evo: PIL.Image,
     image_speaker_sentiment_evo: PIL.Image,
@@ -214,12 +214,14 @@ def create_report(
     pdf.add_page()
     pdf.set_font('KulimPark', '', 12)
 
+    # Document title
     pdf.add_title_document(
         title='Conversation Health Report',
         # subtitle='Feedback & actionable recommendations to **enhance your communication**.',
         subtitle='Feedback & actionable recommendations to enhance your communication.',
     )
 
+    # Introduction, conversation short summary
     pdf.set_font_to_recall()
     pdf.ln(15)
     pdf.multi_cell(w=pdf.epw * 0.5, padding=0, text='', border='B', center=True)
@@ -234,6 +236,7 @@ def create_report(
     pdf.ln(5)
     pdf.set_font_recall()
 
+    # Table of Contents
     link_convo_stats = pdf.add_link()
     link_convo_summ = pdf.add_link()
     link_speaker_stats = pdf.add_link()
@@ -290,6 +293,7 @@ def create_report(
         row.cell('Words Per Minute Evolution', style=style_link, link=link_wpm_evo)
         row.cell('How the rate of speech evolved throughout the conversation.', style=style_desc)
 
+    # Conversation Statistics
     pdf.add_page()
     pdf.add_title_1(text='Conversation Statistics', link_dest=link_convo_stats)
 
@@ -339,6 +343,7 @@ def create_report(
     pdf.ln()
     # pdf.ln(5)
 
+    # Speaker Statistics
     pdf.add_page()
     pdf.add_title_1(text='Speaker Statistics', link_dest=link_speaker_stats)
     pdf.add_title_2(text='Statistics Plots')
@@ -349,6 +354,7 @@ def create_report(
     pdf.add_title_2(text='Statistics Table')
     pdf.add_speaker_stats_table(df_nice_stats_data=df_nice_stats_data)
 
+    # Conversation Summary for each speaker
     pdf.add_page()
     pdf.add_title_1(text='Conversation Summary', link_dest=link_convo_summ)
     pdf.set_font_to_recall()
@@ -356,6 +362,7 @@ def create_report(
     pdf.multi_cell(w=0, text=summaries['conversation_summary_long'], align='J', ln=True)
     pdf.set_font_recall()
 
+    # Key Contributions for each speaker
     pdf.add_page()
     pdf.add_title_1(text='Key Contributions', link_dest=link_key_contribs)
     for speaker, name in sorted(
@@ -388,6 +395,7 @@ def create_report(
             pdf.ln(5)
         pdf.set_font_recall()
 
+    # Action Items for each speaker
     pdf.add_page()
     pdf.add_title_1(text='Action Items', link_dest=link_action_items)
     pdf.image(image_action_items, x='C', w=pdf.epw * 1 / 3)
@@ -418,6 +426,7 @@ def create_report(
             pdf.set_font_recall()
             pdf.ln(5)
 
+    # Participant Summary for each speaker
     pdf.add_page()
     pdf.add_title_1(text='Participant Summary', link_dest=link_participant_summ)
     for speaker, name in sorted(
@@ -435,12 +444,14 @@ def create_report(
         )
         pdf.ln(5)
 
+    # Sentiment Evolution
     pdf.add_page()
     pdf.add_title_1(text='Sentiment Evolution', link_dest=link_convo_evo)
     pdf.image(image_convo_sentiment_evo, x='C', w=pdf.epw)
     pdf.ln(2)
     pdf.image(image_speaker_sentiment_evo, x='C', w=pdf.epw)
 
+    # Words per minute Evolution
     pdf.add_page()
     pdf.add_title_1(text='Words per minute Evolution', link_dest=link_wpm_evo)
     pdf.image(image_convo_wpm, x='C', w=pdf.epw)
