@@ -1,5 +1,11 @@
+import io
 import logging
+from pathlib import Path
+from typing import Optional, TypeAlias
+
 import pandas as pd
+
+from lib.helper_functions import spider_chart_0to5
 
 logger_PIL = logging.getLogger('PIL')
 logger_PIL.setLevel(logging.INFO)
@@ -8,8 +14,6 @@ logger_fontTools.setLevel(logging.WARNING)
 logger_fpdf = logging.getLogger('fpdf')
 logger_fpdf.setLevel(logging.INFO)
 
-from pathlib import Path
-from typing import TypeAlias
 
 import PIL.Image
 from fpdf import FPDF
@@ -241,7 +245,6 @@ def create_report_group(
     # Document title
     pdf.add_title_document(
         title='Conversation Health Report',
-        # subtitle='Feedback & actionable recommendations to **enhance your communication**.',
         subtitle='Feedback & actionable recommendations to enhance your communication.',
     )
 
@@ -486,3 +489,352 @@ def create_report_group(
 
     pdf.output(path_file)
     logging.info('...created pdf [%s].', path_file)
+
+
+def create_report_personal(
+    path_report_assets: Path,
+    path_reports_dir: Path,
+    df_nice_stats_data: pd.DataFrame,  # Used for personal statistics
+    speaker_map: dict,  # Used for(1) personal summary
+    link_feedback: str,
+    speaker_analysis: dict,  # Used for(1) personal super power and (2) Errors and Corrections
+    df_framework_amase_values: pd.DataFrame,
+    df_framework_amase_explanation: pd.DataFrame,
+    df_framework_enneagram_values: pd.DataFrame,
+    df_framework_enneagram_explanation: pd.DataFrame,
+    df_framework_doshas_values: pd.DataFrame,
+    df_framework_doshas_explanation: pd.DataFrame,
+    file_name_prefix: Optional[str] = None,
+):
+    logging.info('Creating personal PDF reports for each speaker.')
+
+    # Create a PDF for each speaker
+    for speaker, speaker_info in speaker_map.items():
+        speaker_name = speaker_info['name']
+
+        # Create PDF filename for this speaker
+        if file_name_prefix:
+            speaker_filename = path_reports_dir.joinpath(f"{file_name_prefix} - {speaker_name}.pdf")
+        else:
+            speaker_filename = path_reports_dir.joinpath(f"{speaker_name}.pdf")
+
+        logging.info(f'Creating personal PDF report for {speaker_name}.')
+
+        # Initialize PDF
+        pdf = MM_PDF(
+            path_report_assets=path_report_assets,
+            orientation='P',
+            unit='mm',
+            format='letter',
+            link_feedback=link_feedback,
+        )
+
+        pdf.add_page()
+        pdf.set_font('KulimPark', '', 12)
+
+        # Title page
+        # pdf.add_title_document(
+        #     title=f'{speaker_name}\'s Personal Report',
+        #     subtitle='Your personal insights and communication patterns.',
+        # )
+        pdf.add_title_document(
+            title=f'{speaker_name}\'s Personal Report',
+            subtitle='Feedback & actionable recommendations to enhance your communication.',
+        )
+
+        # Introduction, conversation short summary
+        pdf.set_font_to_recall()
+        pdf.ln(15)
+        pdf.multi_cell(w=pdf.epw * 0.5, padding=0, text='', border='B', center=True)
+        pdf.ln(0)
+        pdf.set_font('KulimPark', '', 14)
+        pdf.multi_cell(w=0, padding=(8, 10, 0), text=f'Your Personal Super Power', align='C')
+        pdf.ln(0)
+        pdf.set_font('KulimPark-light', '', 12)
+        pdf.multi_cell(
+            w=0, padding=(6, 10, 8), text=speaker_analysis[speaker]['personal_super_power']
+        )
+        pdf.ln(0)
+        pdf.multi_cell(w=pdf.epw * 0.5, padding=0, text='', border='T', center=True)
+        pdf.ln(5)
+        pdf.set_font_recall()
+
+        # Table of Contents
+        link_personal_summary = pdf.add_link()
+        link_statistics = pdf.add_link()
+        link_amase_framework = pdf.add_link()
+        link_enneagram_framework = pdf.add_link()
+        link_doshas_framework = pdf.add_link()
+        # link_errors_corrections = pdf.add_link()
+
+        pdf.set_font('KulimPark', '', 18)
+        pdf.cell(w=0, h=pdf.font_size * 1.5, text='Table of Contents', align='C', ln=True)
+        pdf.ln(h=pdf.font_size * 3 / 4)
+        pdf.set_font('KulimPark', '', 12)
+
+        with pdf.table(
+            width=pdf.epw * 0.8,
+            text_align=['R', 'L'],
+            padding=(2, 2),
+            line_height=pdf.font_size,
+            borders_layout='NONE',
+            first_row_as_headings=False,
+        ) as table:
+            style_link = FontFace(family='KulimPark', emphasis='BOLD', size_pt=12)
+            style_desc = FontFace(family='KulimPark-light', emphasis='ITALICS', size_pt=10)
+            row = table.row()
+            row.cell('Personal Summary', style=style_link, link=link_personal_summary)
+            row.cell('A comprehensive overview of your communication style.', style=style_desc)
+            row = table.row()
+            row.cell('Your Statistics', style=style_link, link=link_statistics)
+            row.cell('Key metrics and data about your speaking patterns.', style=style_desc)
+            row = table.row()
+            row.cell('AMASE Framework Analysis', style=style_link, link=link_amase_framework)
+            row.cell(
+                'Analysis of your communication through the AMASE framework.', style=style_desc
+            )
+            row = table.row()
+            row.cell(
+                'Enneagram Framework Analysis', style=style_link, link=link_enneagram_framework
+            )
+            row.cell(
+                'Understanding your communication through the Enneagram lens.', style=style_desc
+            )
+            row = table.row()
+            row.cell('Doshas Framework Analysis', style=style_link, link=link_doshas_framework)
+            row.cell(
+                'Analysis of your communication through the Doshas framework.', style=style_desc
+            )
+            row = table.row()
+            # row.cell('Errors and Corrections', style=style_link, link=link_errors_corrections)
+            # row.cell(
+            #     'Communication patterns that could be improved and suggestions for better interactions.',
+            #     style=style_desc,
+            # )
+
+        # 1. Personal Summary
+        pdf.add_page()
+        pdf.add_title_1(text='Personal Summary', link_dest=link_personal_summary)
+        pdf.set_font_to_recall()
+        pdf.set_font('KulimPark-light', '', 12)
+        pdf.multi_cell(
+            w=0,
+            text=speaker_info['personal_summary'],
+            align='J',
+            ln=True,
+            markdown=True,
+        )
+        pdf.set_font_recall()
+
+        # 2. Speaker Statistics (only for this speaker)
+        # pdf.add_page() # TODO: Remove comment
+        pdf.add_title_1(text='Your Statistics', link_dest=link_statistics)
+
+        # print(df_nice_stats_data, flush=True) # TODO: Remove
+
+        # Filter stats for this speaker only
+        speaker_stats = (
+            df_nice_stats_data.loc[[speaker_name]]
+            if speaker_name in df_nice_stats_data.index
+            else pd.DataFrame()
+        )
+
+        if not speaker_stats.empty:
+            pdf.add_title_2(text='Statistics Table')
+            pdf.add_speaker_stats_table(df_nice_stats_data=speaker_stats)
+        else:
+            pdf.set_font_to_recall()
+            pdf.set_font('KulimPark-light', '', 12)
+            pdf.multi_cell(
+                w=0,
+                text='No statistics available for this speaker.',
+                align='C',
+                ln=True,
+            )
+            pdf.set_font_recall()
+
+        # 3. Print Framework Analysis for each framework
+
+        for _values_df, _explanation_df, _title, _link in [
+            (
+                df_framework_amase_values,
+                df_framework_amase_explanation,
+                'AMASE Framework',
+                link_amase_framework,
+            ),
+            (
+                df_framework_enneagram_values,
+                df_framework_enneagram_explanation,
+                'Enneagram Framework',
+                link_enneagram_framework,
+            ),
+            (
+                df_framework_doshas_values,
+                df_framework_doshas_explanation,
+                'Doshas Framework',
+                link_doshas_framework,
+            ),
+        ]:
+            # print(_explanation_df, flush=True)
+            pdf.add_page()
+            pdf.add_title_1(text=f'{_title} Analysis', link_dest=_link)
+
+            if speaker_name in _values_df.index:
+                # Create spider chart for this speaker
+                fig = spider_chart_0to5(
+                    _values_df,
+                    row_names=[speaker_name],
+                    show_mean=True,
+                    title_prefix=_title,
+                )
+
+                # Convert figure to PIL Image
+                buf = io.BytesIO()
+                fig.savefig(buf, format='png', bbox_inches='tight', dpi=300)
+                buf.seek(0)
+                spider_image = PIL.Image.open(buf)
+
+                # Add chart to PDF
+                pdf.image(spider_image, x='C', w=pdf.epw * 0.5)
+                pdf.ln(5)
+
+                # Add explanation for each column
+                if speaker_name in _explanation_df.index:
+                    speaker_explanations = _explanation_df.loc[speaker_name]
+
+                    for column_name in _explanation_df.columns:
+                        if column_name in speaker_explanations and pd.notna(
+                            speaker_explanations[column_name]
+                        ):
+                            # Add column title
+                            pdf.add_title_2(text=column_name.title())
+
+                            # Add column content
+                            pdf.set_font_to_recall()
+                            pdf.set_font('KulimPark-light', '', 10)
+                            pdf.multi_cell(
+                                w=0,
+                                text=str(speaker_explanations[column_name]),
+                                align='J',
+                                ln=True,
+                                markdown=True,
+                            )
+                            pdf.set_font_recall()
+                            pdf.ln(3)  # Add some spacing between columns
+            else:
+                pdf.set_font_to_recall()
+                pdf.set_font('KulimPark-light', '', 12)
+                pdf.multi_cell(
+                    w=0,
+                    text='No AMASE framework data available for this speaker.',
+                    align='C',
+                    ln=True,
+                )
+                pdf.set_font_recall()
+
+        # 4. Errors and Corrections
+
+        #         pdf.add_page()
+        #         pdf.add_title_1(text='Errors and Corrections', link_dest=link_errors_corrections)
+
+        #         pdf.add_title_2(text='Friction Factor')
+        #         # pdf.set_text_color((65, 141, 251))
+        #         pdf.set_font_to_recall()
+        #         pdf.set_font('KulimPark-light', '', 8)
+        #         pdf.set_text_color((255, 108, 114))
+        #         pdf.multi_cell(
+        #                     w=0,
+        #                     text='Please note that this section includes subjective observations generated by an AI model. While the suggestions aim to highlight potential friction points or areas for improvement, they may not all be accurate or applicable to your specific context. Use your best judgment, and feel free to disregard any points that don’t resonate with your experience or intent.',
+        #                     align='J',
+        #                     ln=True,
+        #                 )
+        #         pdf.set_font_recall()
+        #         pdf.set_text_color((0, 0, 0))
+        #         pdf.set_text_color((14, 95, 164))
+        #         pdf.set_font('KulimPark', '', 12)
+        #         pdf.multi_cell(
+        #                     w=0,
+        #                     text='''
+        # While we often speak with the best of intentions, the impact of our words can land very differently—especially in high-stakes or emotionally charged conversations. This score is designed to bring awareness to that gap between intent and impact, helping us spot moments where language might unintentionally cause friction, confusion, or harm.
+
+        # For each issue, we assign an **Friction Factor** (0–5) based on its potential to negatively affect the conversation or its participants:
+        # 0. No noticeable impact.
+        # 1. Minor, negligible effect.
+        # 2. Mild tension or confusion.
+        # 3. Noticeable disruption or discomfort.
+        # 4. Strong negative effect, potential to derail or damage trust.
+        # 5. Severe impact, likely to cause harm or major breakdown in communication.
+
+        # Use this score not as a judgment, but as a tool for reflection and refinement.
+        # ''',
+        #                     align='J',
+        #                     markdown=True,
+        #                     ln=True,
+        #                 )
+        #         pdf.set_font_recall()
+        #         pdf.set_text_color((0, 0, 0))
+
+        #         speaker_map_name_to_id = {speaker_map[key]['name']: key for key in speaker_map.keys()}
+
+        #         errors_and_corrections = speaker_analysis[speaker_map_name_to_id[speaker_name]][
+        #             'personal_errors_and_corrections'
+        #         ]
+
+        #         # Loop through each topic in the errors and corrections
+        #         for topic, corrections in errors_and_corrections.items():
+        #             # Only show topics that have corrections (non-empty arrays)
+        #             if corrections and len(corrections) > 0:
+        #                 # Add topic title
+        #                 pdf.add_title_2(text=topic.title())
+
+        #                 # Loop through each correction for this topic
+        #                 for correction in corrections:
+        #                     if (
+        #                         isinstance(correction, dict)
+        #                         and 'observation' in correction
+        #                         and 'friction_factor' in correction
+        #                     ):
+        #                         # Add gravity score
+        #                         gravity_score = correction.get('friction_factor', 0)
+        #                         pdf.set_font('KulimPark', 'b', 11)
+        #                         pdf.multi_cell(
+        #                             w=0,
+        #                             text=f'Friction Factor: {gravity_score}/5',
+        #                             align='L',
+        #                             ln=True,
+        #                         )
+
+        #                         # Add observation
+        #                         if correction.get('observation'):
+        #                             pdf.set_font('KulimPark', '', 11)
+        #                             pdf.multi_cell(
+        #                                 w=0,
+        #                                 text=f"**Observation:** {correction['observation']}",
+        #                                 align='J',
+        #                                 ln=True,
+        #                                 markdown=True,
+        #                             )
+
+        #                         # Add advice if available
+        #                         if correction.get('advice'):
+        #                             pdf.set_font('KulimPark', 'i', 11)
+        #                             pdf.multi_cell(
+        #                                 w=0,
+        #                                 text=f"**Advice:** {correction['advice']}",
+        #                                 align='J',
+        #                                 ln=True,
+        #                                 markdown=True,
+        #                             )
+
+        #                         pdf.ln(3)  # Add spacing between corrections
+
+        #                 pdf.ln(5)  # Add spacing between topics
+
+        #         pdf.set_font_recall()
+
+        # 5. Comments section
+        pdf.add_comments_section()
+
+        # Output the PDF
+        pdf.output(speaker_filename)
+        logging.info(f'...created personal pdf for {speaker_name} [%s].', speaker_filename)
