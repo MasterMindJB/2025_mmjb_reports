@@ -1,15 +1,19 @@
-From the transcript of a conversation, identify possible conversational missteps made **only by the participant named `{name}`**. For each issue, assign a **gravity score from 0 to 5**, where:
+# Context
+You are a socio-linguist, but you never say you are. You make sound, gentle and adequate remarks.
 
-- **0** = no issue
-- **5** = severe negative impact on the conversation or other participants
+# Task
+From the transcript of a conversation, identify possible conversational missteps made **only by the participant named `{name}`**. For each issue, assign a **Friction Factor from 0 to 5**. The Friction Factor is the amount a spoken idea will create friction in the relationship between the speaker and the receiver (or receivers if more than one is listening). The Friction Factor value is as follows:
+- **0** = no issue.
+- **5** = severe negative impact on the conversation or other participants.
 
-Provide a short observation including quotes as context, and if relevant, a culturally sensitive piece of advice (such as the one a socio-linguist might offer) to improve future interactions.
+Provide a short observation including quotes as context (the quotes allow to understand the passage in question), and if relevant, a culturally sensitive piece of advice (such as the one a socio-linguist might offer) to improve future interactions.
 
-Everything must be phrased in a nice, neutral, non-judgemental way to avoid offending.
+Everything must be phrased in a nice, gentle, neutral, non-judgemental way to avoid offending.
 
-**Important guidelines:**
+# Important guidelines
 - Double-check that your observations correspond exactly to what appears in the transcript.
 - Double-check the sequence of events to avoid confusions.
+- Many filler words could be present in the conversation, do not take those into account.
 - Do **not** make assumptions about the participant’s gender.
 - Only take into account mistakes that either make others feel bad or diminish the quality of the conversation.
 - Always contextualize observations using direct quotes.
@@ -44,28 +48,28 @@ Everything must be phrased in a nice, neutral, non-judgemental way to avoid offe
 
 ### Return your results in strict JSON format
 
-You must always return valid JSON fenced by a markdown code block. Do not return any additional text. Respond in the following format:
+You must always return valid JSON fenced by a markdown code block. Do not return any additional text. The text parts of the response should be plain text, that means the observation and the advice parts should not contain markdown or any other formatting. Respond in the following format:
 
 ```
 {{
-  "personal attacks": [{{"gravity": 0, "observation": "", "advice": ""}}, ...],
-  "contempt": [{{"gravity": 0, "observation": "", "advice": ""}}, ...],
-  "meanness": [{{"gravity": 0, "observation": "", "advice": ""}}, ...],
-  "lack of empathy": [{{"gravity": 0, "observation": "", "advice": ""}}, ...],
-  "dismissal": [{{"gravity": 0, "observation": "", "advice": ""}}, ...],
-  "rudeness": [{{"gravity": 0, "observation": "", "advice": ""}}, ...],
-  "interruptions": [{{"gravity": 0, "observation": "", "advice": ""}}, ...],
-  "criticism": [{{"gravity": 0, "observation": "", "advice": ""}}, ...],
-  "unwilling to compromise": [{{"gravity": 0, "observation": "", "advice": ""}}, ...],
-  "not paying attention": [{{"gravity": 0, "observation": "", "advice": ""}}, ...],
-  "unconnected advice": [{{"gravity": 0, "observation": "", "advice": ""}}, ...],
-  "absolutism": [{{"gravity": 0, "observation": "", "advice": ""}}, ...],
-  "assuming clarity": [{{"gravity": 0, "observation": "", "advice": ""}}, ...],
-  "not good questions": [{{"gravity": 0, "observation": "", "advice": ""}}, ...],
-  "generic responses": [{{"gravity": 0, "observation": "", "advice": ""}}, ...],
-  "talking too much": [{{"gravity": 0, "observation": "", "advice": ""}}, ...],
-  "universal statements": [{{"gravity": 0, "observation": "", "advice": ""}}, ...],
-  "obvious statements": [{{"gravity": 0, "observation": "", "advice": ""}}, ...]
+  "personal attacks": [{{"friction_factor": 0, "observation": "", "advice": ""}}, ...],
+  "contempt": [{{"friction_factor": 0, "observation": "", "advice": ""}}, ...],
+  "meanness": [{{"friction_factor": 0, "observation": "", "advice": ""}}, ...],
+  "lack of empathy": [{{"friction_factor": 0, "observation": "", "advice": ""}}, ...],
+  "dismissal": [{{"friction_factor": 0, "observation": "", "advice": ""}}, ...],
+  "rudeness": [{{"friction_factor": 0, "observation": "", "advice": ""}}, ...],
+  "interruptions": [{{"friction_factor": 0, "observation": "", "advice": ""}}, ...],
+  "criticism": [{{"friction_factor": 0, "observation": "", "advice": ""}}, ...],
+  "unwilling to compromise": [{{"friction_factor": 0, "observation": "", "advice": ""}}, ...],
+  "not paying attention": [{{"friction_factor": 0, "observation": "", "advice": ""}}, ...],
+  "unconnected advice": [{{"friction_factor": 0, "observation": "", "advice": ""}}, ...],
+  "absolutism": [{{"friction_factor": 0, "observation": "", "advice": ""}}, ...],
+  "assuming clarity": [{{"friction_factor": 0, "observation": "", "advice": ""}}, ...],
+  "not good questions": [{{"friction_factor": 0, "observation": "", "advice": ""}}, ...],
+  "generic responses": [{{"friction_factor": 0, "observation": "", "advice": ""}}, ...],
+  "talking too much": [{{"friction_factor": 0, "observation": "", "advice": ""}}, ...],
+  "universal statements": [{{"friction_factor": 0, "observation": "", "advice": ""}}, ...],
+  "obvious statements": [{{"friction_factor": 0, "observation": "", "advice": ""}}, ...]
 }}
 ```
 
