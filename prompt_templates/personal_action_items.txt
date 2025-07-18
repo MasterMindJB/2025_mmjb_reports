@@ -1,17 +1,28 @@
-Extract and paraphrase all **explicit and implicit** action items that the person has agreed to complete following these rules:
-- Do not leave out key information to make the action item comprehensible.
-- Present the action items as a **plain bullet-point list** without additional commentary.
-- Keep each action item **short and direct**, ensuring clarity and actionability.
+# Task
+Extract and paraphrase all **explicit and implicit** action items that the person has stated.
+
+## Important
 - Keep only action items that will allow personal growth and aren't superfluous.
+- Do not leave out key information to make the action item comprehensible.
+- Keep each action item **short and direct**, ensuring clarity and actionability.
 - No need for in-depth analysis or additional commentary.
+- Many filler words could be present in the transcript, do not take those into account.
 - Do not assume the gender of the person speaking.
 
+# Return type
 You must always return valid JSON fenced by a markdown code block. Do not return any additional text. Respond in the following format:
 
 ```
-[{{"title": a title for action item 1, "action": the extracted and paraphrased action item 1}}, {{"title": a title for action item 2, "action": the extracted and paraphrased action item 2}}, ... ]
+[{{"title": "", "action": ""}}, {{"title": "", "action": ""}}, ... ]
 ```
 
-Here's the transcript:
+If no action items were found, respond an empty array like this:
+
+```
+[]
+```
+
+# Personal transcript
+Here's the person's transcript:
 
 "{participation}"

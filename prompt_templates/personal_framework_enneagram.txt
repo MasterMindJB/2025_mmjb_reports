@@ -3,6 +3,7 @@ From the transcript, use the Enneagram framework, give a value for every type th
 Follow this rules:
 - Take into account the statistics for the conversation.
 - Double check that your response corresponds to what is visible in the transcript.
+- Many filler words could be present in the conversation, do not take those into account.
 - Do not assume the person's gender.
 
 You must always return valid JSON fenced by a markdown code block. Do not return any additional text. Respond in the following format:

@@ -1,5 +1,12 @@
-From the following conversation script, what is the super power for **{name}**? Do not assume the gender of the person speaking. Summarize the power in one sentence. Take into account all that was said by **{name}** and by the other participants about **{name}**.
+# Task
+From the following conversation script, what is the super power for **{name}**? Summarize the power in one sentence. Take into account all that was said by **{name}** and by the other participants about **{name}**.
 
+## Important
+- Many filler words could be present in the conversation, do not take those into account.
+- Do not assume the gender of the person speaking.
+- Return only plain text.
+
+# Conversation script
 Here's the conversation script:
 
 {conversation_script}

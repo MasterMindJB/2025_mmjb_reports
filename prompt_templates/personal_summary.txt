@@ -1,5 +1,11 @@
-Summarize in one paragraph the following transcript. Do not assume the gender of the person speaking.
+# Task
+Summarize in one paragraph the following transcript.
 
+## Important
+- Many filler words could be present in the transcript, do not take those into account.
+- Do not assume the gender of the person speaking.
+
+# Personal transcript
 Here's the transcript:
 
 "{participation}"
