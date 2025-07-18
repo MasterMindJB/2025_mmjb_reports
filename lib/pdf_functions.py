@@ -182,6 +182,30 @@ class MM_PDF(FPDF):
                     row.cell(str(val), style=style)
         self.set_font_recall()
 
+    def add_comments_section(self):
+        self.add_page()
+        self.set_font_to_recall()
+        self.set_font('KulimPark-light', '', 20)
+        self.multi_cell(
+            w=0,
+            padding=(60, 0, 2.5, 0),
+            text="How can we improve?",
+            align='C',
+            ln=True,
+            markdown=True,
+        )
+        self.set_font('KulimPark-light', 'U', 26)
+        self.multi_cell(
+            w=0,
+            padding=2.5,
+            text="Leave a Comment!",
+            align='C',
+            ln=True,
+            markdown=True,
+            link=self.link_feedback,
+        )
+        self.set_font_recall()
+
 
 def create_report_group(
     images_barplot: [PIL.Image],
@@ -457,6 +481,8 @@ def create_report_group(
     pdf.image(image_convo_wpm, x='C', w=pdf.epw)
     pdf.ln(2)
     pdf.image(image_speaker_wpm, x='C', w=pdf.epw)
+
+    pdf.add_comments_section()
 
     pdf.output(path_file)
     logging.info('...created pdf [%s].', path_file)
