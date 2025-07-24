@@ -214,7 +214,7 @@ def spider_chart_0to5(
         for row_name in row_names:
             values = df.loc[row_name].tolist()
             values = values + values[:1]
-            ax.plot(angles, values, linewidth=2, linestyle='solid', label=row_name, zorder=1)
+            ax.plot(angles, values, linewidth=3, linestyle='solid', label=row_name, zorder=1)
             ax.fill(angles, values, alpha=0.25, zorder=1)
 
         # Plot mean if requested
