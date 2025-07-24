@@ -712,11 +712,14 @@ def create_report_personal(
                             # Add column content
                             pdf.set_font_to_recall()
                             pdf.set_font('KulimPark-light', '', 10)
+                            pdf.cell(text=f'{_values_df.loc[speaker_name, column_name]}/5', w=pdf.epw * 0.05, ln=False, align='R')
+                            pdf.set_font_recall()
+                            pdf.set_font_to_recall()
+                            pdf.set_font('KulimPark-light', '', 10)
                             pdf.multi_cell(
-                                w=0,
+                                w=pdf.epw * 0.95,
                                 text=str(speaker_explanations[column_name]),
                                 align='J',
-                                ln=True,
                                 markdown=True,
                             )
                             pdf.set_font_recall()
