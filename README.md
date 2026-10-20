@@ -24,3 +24,13 @@
 ```shell
 afconvert {filename}.mp4 -o {directory}/{filename}.m4a  -f m4af -d aac
 ```
+
+# Keeping secrets and recordings out of git
+
+Turn on the safety check once per clone:
+
+```shell
+git config core.hooksPath .githooks
+```
+
+It blocks any commit that contains an API key, a notebook with saved outputs (outputs can hold real transcripts), or files from `media/` or `output/`. Keep API keys in `.env`, which git ignores.

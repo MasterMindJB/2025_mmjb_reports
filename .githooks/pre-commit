@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Blocks commits that would leak API keys or conversation data.
+# Turn it on once per clone:  git config core.hooksPath .githooks
+set -euo pipefail
+
+status=0
+staged=$(git diff --cached --name-only --diff-filter=ACM)
+[ -z "$staged" ] && exit 0
+
+# 1. API keys (OpenAI, Google/Gemini, generic long secrets assigned to *_KEY)
+key_pattern='sk-(proj-)?[A-Za-z0-9_-]{20,}|AIza[0-9A-Za-z_-]{30,}|(API_?KEY|api_?key)[[:space:]]*=[[:space:]]*["'"'"'][A-Za-z0-9_-]{16,}'
+if git diff --cached -U0 -- $staged | grep -E '^\+' | grep -qE "$key_pattern"; then
+  echo "BLOCKED: a staged change looks like it contains an API key. Put keys in .env instead."
+  status=1
+fi
+
+# 2. Notebooks with saved outputs (outputs can hold transcripts of real people)
+for f in $staged; do
+  case "$f" in
+    *.ipynb)
+      if git show ":$f" | python3 -c 'import json,sys; nb=json.load(sys.stdin); sys.exit(1 if any(c.get("outputs") for c in nb["cells"] if c["cell_type"]=="code") else 0)'; then :; else
+        echo "BLOCKED: $f has saved outputs. Clear them first:"
+        echo "  jupyter nbconvert --clear-output --inplace \"$f\""
+        status=1
+      fi ;;
+  esac
+done
+
+# 3. Recordings, transcripts and reports never belong in git
+for f in $staged; do
+  case "$f" in
+    media/*|output/*|*.mp3|*.mp4|*.m4a|*.wav)
+      [ "$f" = "media/.gitignore" ] || [ "$f" = "output/.gitignore" ] && continue
+      echo "BLOCKED: $f is a recording or generated output."
+      status=1 ;;
+  esac
+done
+
+exit $status
