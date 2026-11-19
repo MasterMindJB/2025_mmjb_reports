@@ -84,7 +84,7 @@ def before_after(transcript: dict | None, label: str) -> str:
     late = talk_share(buckets[2], label)
     if early == late:
         return ''
-    return f'{early}% in the first third, then {late}% in the last third'
+    return f'{early}% in the first third, then {late}% in the last third.'
 
 
 def halfway_target(current: int, ideal: int) -> int:

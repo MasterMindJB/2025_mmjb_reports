@@ -82,6 +82,23 @@ class MM_PDF(FPDF):
         self.add_font('PoppinsMedium', '', fname=poppins_dir / 'Poppins-Medium.ttf')
         self.brand_canvas = False
         self._brand_pages: set[int] = set()
+        self.content_bottom: dict[int, float] = {}
+
+    def output(self, name: str = '', *args, **kwargs):
+        MM_PDF.latest_ratios = self.page_fill_ratios()
+        return super().output(name, *args, **kwargs)
+
+    def note_y(self) -> None:
+        page = int(self.page)
+        self.content_bottom[page] = max(self.content_bottom.get(page, self.t_margin), self.get_y())
+
+    def page_fill_ratios(self) -> list[float]:
+        self.note_y()
+        usable = max(self.h - self.t_margin - self.b_margin, 1)
+        return [
+            max(0.0, (self.content_bottom.get(page, self.t_margin) - self.t_margin) / usable)
+            for page in range(1, int(self.page) + 1)
+        ]
 
         # Font settings
         self.set_font('Poppins', '', 12)

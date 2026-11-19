@@ -17,12 +17,43 @@ from google.api_core.exceptions import ResourceExhausted
 from langchain_core.exceptions import OutputParserException
 
 from lib.llm_validation import validate_llm_output
+from lib.data_story import signature_card
 
 set_debug(False)  # Set to True to see communication information
 # LLM responses are not cached. A cache would replay an invalid completion and
 # the parser retry would never see a new answer.
 
 JSON: TypeAlias = dict[str, "JSON"] | list["JSON"] | str | int | float | bool | None
+
+
+def _signature_fields(analysis: str, speaker_text: str) -> dict[str, str]:
+    """Accept JSON or the What / So, what / Now, what headings. Log happens at the call site."""
+    from lib.story_validation import quoted_spans, reject_craft_violations
+
+    cleaned = analysis.strip()
+    if cleaned.startswith('```'):
+        cleaned = re.sub(r'^```(?:json)?\s*', '', cleaned)
+        cleaned = re.sub(r'\s*```$', '', cleaned)
+    data = None
+    if cleaned.startswith('{'):
+        data = json.loads(cleaned)
+    if not isinstance(data, dict):
+        data = signature_card(cleaned)
+    fields = {}
+    blob = re.sub(r'[^a-z0-9]+', '', speaker_text.lower())
+    for key in ('what', 'so_what', 'now_what'):
+        value = reject_craft_violations(str(data.get(key) or ''))
+        lowered = value.lower()
+        if 'you' not in lowered and re.search(r'\b(he|she|his|her)\b', lowered):
+            raise ValueError('signature phrase must stay in second person')
+        for span in quoted_spans(value):
+            needle = re.sub(r'[^a-z0-9]+', '', span.lower())
+            if len(needle) >= 4 and needle not in blob:
+                raise ValueError(f'signature example is not this person\'s words: {span}')
+        fields[key] = value
+    if not any(fields.values()):
+        raise ValueError('signature phrase did not include What, So what, or Now what')
+    return fields
 
 
 class ConversationSummarizer:
@@ -160,26 +191,10 @@ class ConversationSummarizer:
                 analysis = ' '.join(str(part) for part in analysis)
             try:
                 analysis = validate_llm_output('personal_signature_phrase', str(analysis))
-                cleaned = analysis.strip()
-                if cleaned.startswith('```'):
-                    cleaned = re.sub(r'^```(?:json)?\s*', '', cleaned)
-                    cleaned = re.sub(r'\s*```$', '', cleaned)
-                data = json.loads(cleaned)
-                if not isinstance(data, dict):
-                    raise ValueError('signature phrase must be an object')
-                fields = {}
-                for key in ('what', 'so_what', 'now_what'):
-                    value = reject_craft_violations(str(data.get(key) or ''))
-                    lowered = value.lower()
-                    if re.search(r'\b(he|she|his|her|they|their|this person)\b', lowered):
-                        raise ValueError('signature phrase must stay in second person')
-                    for span in quoted_spans(value):
-                        if len(span.split()) < 3 or span.lower() not in speaker_text.lower():
-                            raise ValueError('signature example is not this person\'s words')
-                    fields[key] = value
-                parsed = fields
+                parsed = _signature_fields(analysis, speaker_text)
                 break
-            except (OutputParserException, json.JSONDecodeError, ValueError, TypeError):
+            except (OutputParserException, json.JSONDecodeError, ValueError, TypeError) as exc:
+                logging.warning('signature reject: %s', exc)
                 parsed = None
         if parsed is None:
             from lib.story_render import computed_signature

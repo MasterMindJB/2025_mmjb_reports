@@ -191,8 +191,8 @@ def test_other_speakers_quote_is_rejected():
             {'speaker': 'B', 'text': "It's a feeling and an internal GPS.", 'start': 124750, 'end': 128000},
         ]
     }
-    assert 'onboarding' in own_quote('We should try the new onboarding plan.', '0:37', early, 'A')
-    assert 'feeling' in own_quote("It's a feeling and an internal GPS.", '2:04', early, 'B')
+    assert 'onboarding' in own_quote('We should try the new onboarding plan.', '0:38', early, 'A')
+    assert 'feeling' in own_quote("It's a feeling and an internal GPS.", '2:05', early, 'B')
 
 
 def test_paraphrase_is_allowed_and_a_new_noun_is_not():
@@ -282,8 +282,10 @@ def test_one_thing_follows_the_personal_gap():
 
     loud, _why = one_thing_from_gap(share=50, speaker_count=7, questions=2, question_average=1)
     quiet, _other = one_thing_from_gap(share=8, speaker_count=7, questions=0, question_average=1)
+    met, _ignored = one_thing_from_gap(share=20, speaker_count=7, questions=2, question_average=1)
     assert loud.startswith('Pause')
     assert quiet.startswith('Say')
+    assert not met.startswith('Ask')
     assert '1 question' in one_thing_from_gap(share=20, speaker_count=7, questions=1, question_average=1)[1] or True
     from lib.story_render import turns_sentence
 

@@ -7,13 +7,7 @@ import re
 from langchain_core.exceptions import OutputParserException
 
 from lib.story_evidence import before_after, clock, halfway_target
-from lib.story_validation import (
-    BAN_PHRASES,
-    own_quote,
-    reject_craft_violations,
-    unsupported_words,
-    word_count,
-)
+from lib.story_validation import BAN_PHRASES, own_quote, reject_craft_violations, word_count
 
 SCHEMAS = {
     'personal': {
@@ -30,8 +24,7 @@ SCHEMAS = {
         ),
         'resolution': '{"claim": "no digits", "quote": {"text": "", "ts": ""}}',
         'one_thing': (
-            '{"verb": "ask", "verb_phrase": "one question", "trigger": "before your second turn", '
-            '"metric_key": "questions", "target_value": 0}'
+            '{"verb": "ask", "verb_phrase": "one question", "trigger": "before your second turn"}'
         ),
     },
     'group': {
@@ -44,8 +37,7 @@ SCHEMAS = {
         'drama': '{"pattern_note": "one line, no digits, only topics from the transcript"}',
         'resolution': '{"claim": "no digits, only topics from the transcript"}',
         'one_thing': (
-            '{"verb": "ask", "verb_phrase": "one question back", "trigger": "before the next decision", '
-            '"metric_key": "interaction", "target_value": 0}'
+            '{"verb": "ask", "verb_phrase": "one question back", "trigger": "before the next decision"}'
         ),
     },
 }
@@ -68,7 +60,7 @@ TRANSITIONS = {
         'The outcome follows from those turns.',
     ),
     'after_resolution': (
-        'The highest-leverage move is next.',
+        'The single move with the most effect is next.',
         'One change follows from the largest gap.',
     ),
 }
@@ -142,35 +134,92 @@ def clip_clause(text: str, limit: int = 25) -> str:
     return ' '.join(words[:limit]).rstrip(',;:')
 
 
+def choose_gap(
+    *,
+    share: int,
+    speaker_count: int,
+    questions: int,
+    question_average: int,
+    turn_words: float = 0,
+    session_turn_words: float = 0,
+    early: int | None = None,
+    late: int | None = None,
+) -> str:
+    """Largest gap this person does not already meet. Questions are skipped when they are at or above the session average."""
+    average = room_average(speaker_count)
+    options: list[tuple[str, float]] = []
+    if int(questions) < int(question_average):
+        options.append(('questions', int(question_average) - int(questions)))
+    if int(share) > average + 5:
+        options.append(('talk_high', int(share) - average))
+    elif int(share) < average - 5:
+        options.append(('talk_low', average - int(share)))
+    if turn_words and session_turn_words and turn_words > session_turn_words * 1.2:
+        options.append(('turns_long', turn_words - session_turn_words))
+    elif turn_words and session_turn_words and turn_words < session_turn_words * 0.8:
+        options.append(('turns_short', session_turn_words - turn_words))
+    if early is not None and late is not None and abs(int(early) - int(late)) >= 15:
+        options.append(('thirds', abs(int(early) - int(late))))
+    if not options:
+        if int(share) >= average:
+            options.append(('talk_high', max(int(share) - average, 1)))
+        else:
+            options.append(('talk_low', max(average - int(share), 1)))
+    options.sort(key=lambda item: item[1], reverse=True)
+    return options[0][0]
+
+
 def one_thing_from_gap(
     *,
     share: int,
     speaker_count: int,
     questions: int,
     question_average: int,
+    turn_words: float = 0,
+    session_turn_words: float = 0,
+    early: int | None = None,
+    late: int | None = None,
 ) -> tuple[str, str]:
-    """The habit follows this person's largest gap, not one question line for everyone."""
+    """The habit follows this person's largest unmet gap."""
+    kind = choose_gap(
+        share=share,
+        speaker_count=speaker_count,
+        questions=questions,
+        question_average=question_average,
+        turn_words=turn_words,
+        session_turn_words=session_turn_words,
+        early=early,
+        late=late,
+    )
     average = room_average(speaker_count)
-    share_gap = int(share) - average
-    question_gap = max(int(question_average), 1) - int(questions)
-    if share_gap > 5 and share_gap >= question_gap:
-        target = halfway_target(int(share), max(average, 25) if int(share) > 25 else int(share))
-        if target == int(share):
-            target = max(0, int(share) - 1)
-        sentence = f'Pause after the point. Target: {target}% talk time.'
-        why = f'Talk time is {int(share)}%, {share_relation(share, speaker_count)}.'
+    if kind == 'questions':
+        target = halfway_target(int(questions), int(question_average))
+        sentence = f'Ask one question before the second long turn. Target: {count_label(target, "question")}.'
+        why = f'{questions_sentence(questions, question_average)} {count_label(target, "question")} is the halfway step.'
         return sentence, why
-    if share_gap < -5 and -share_gap >= max(question_gap, 0):
+    if kind == 'talk_low':
         target = halfway_target(int(share), average)
         sentence = f'Say one added point before handing the turn on. Target: {target}% talk time.'
         why = f'Talk time is {int(share)}%, {share_relation(share, speaker_count)}.'
         return sentence, why
-    target = halfway_target(int(questions), 3 if int(questions) < 3 else int(questions))
-    sentence = f'Ask one question before the second long turn. Target: {count_label(target, "question")}.'
-    why = (
-        f'{questions_sentence(questions, question_average)} '
-        f'{count_label(target, "question")} is the halfway step.'
-    )
+    if kind == 'turns_long':
+        target = halfway_target(int(turn_words), int(session_turn_words))
+        sentence = f'Pause at the end of the point. Target: {target} words in a turn.'
+        why = f'A turn averages {int(turn_words)} words, against {int(session_turn_words)} for the session.'
+        return sentence, why
+    if kind == 'turns_short':
+        target = halfway_target(int(turn_words), int(session_turn_words))
+        sentence = f'Name one more detail before the turn ends. Target: {target} words in a turn.'
+        why = f'A turn averages {int(turn_words)} words, against {int(session_turn_words)} for the session.'
+        return sentence, why
+    if kind == 'thirds':
+        target = halfway_target(int(late or 0), int(early or 0))
+        sentence = f'Wait until the first third ends before the long story. Target: {target}% in the last third.'
+        why = f'Talk time moves from {int(early or 0)}% in the first third to {int(late or 0)}% in the last.'
+        return sentence, why
+    target = halfway_target(int(share), average if average < int(share) else max(int(share) - 1, 0))
+    sentence = f'Pause after the point. Target: {target}% talk time.'
+    why = f'Talk time is {int(share)}%, {share_relation(share, speaker_count)}.'
     return sentence, why
 
 
@@ -245,16 +294,22 @@ def _prose(
     forbidden_names: list[str] | None = None,
     allowed_numbers: set[str] | None = None,
     speaker_names: list[str] | None = None,
+    transcript: dict | None = None,
+    speaker_label: str | None = None,
 ) -> str:
+    """Prose is free except quotes, digits, named people, and the ban list."""
+    del corpus  # vocabulary overlap is not a grounding rule
     cleaned = _no_digits(text, label, allowed_numbers)
     if not cleaned:
         raise OutputParserException(f'{label} is empty')
-    reject_craft_violations(cleaned, forbidden_names=forbidden_names, allowed_numbers=allowed_numbers)
-    missing = unsupported_words(
-        cleaned, corpus, names=speaker_names, allowed_numbers=allowed_numbers
+    reject_craft_violations(
+        cleaned,
+        transcript=transcript,
+        allowed_numbers=allowed_numbers,
+        forbidden_names=forbidden_names,
+        speaker_label=speaker_label,
+        participant_names=speaker_names,
     )
-    if missing:
-        raise OutputParserException(f'{label} uses words that are not in the transcript: {missing}')
     return cleaned
 
 
@@ -296,6 +351,14 @@ def personal_facts(
             'unit': 'questions',
             'line': f'Target {count_label(target, "question")}',
         },
+    }
+    facts['_meta'] = {
+        'share': int(share),
+        'speaker_count': int(speaker_count),
+        'questions': int(questions),
+        'question_average': int(question_average),
+        'early': early,
+        'late': late,
     }
     if early is not None:
         facts['early_share'] = {
@@ -342,11 +405,12 @@ def group_facts(*, participation: float, interaction: float, word_interaction: f
 
 def facts_prompt(facts: dict, quotes: list[dict], following: list[dict], excerpt: str = '') -> str:
     lines = ['FACTS']
-    for index, key in enumerate(facts, start=1):
-        fact = facts[key]
-        lines.append(
-            f'{index}. key={key} value={fact["value"]} unit={fact["unit"]}'
-        )
+    index = 1
+    for key, fact in facts.items():
+        if not isinstance(fact, dict) or 'value' not in fact:
+            continue
+        lines.append(f'{index}. key={key} value={fact["value"]} unit={fact["unit"]}')
+        index += 1
     if quotes:
         lines.append('OWN QUOTES')
         for quote in quotes:
@@ -397,43 +461,62 @@ def render_numbers(keys: list, facts: dict) -> list[str]:
     return lines
 
 
-def render_one_thing(data: dict, facts: dict, corpus: str, forbidden: list[str] | None) -> tuple[str, str]:
+def render_one_thing(
+    data: dict,
+    facts: dict,
+    corpus: str,
+    forbidden: list[str] | None,
+    *,
+    transcript: dict | None = None,
+    label: str | None = None,
+    names: list[str] | None = None,
+) -> tuple[str, str]:
+    """The model supplies the behavior. The metric and target come from the facts."""
     verb = str(data.get('verb') or '').strip().lower()
     if verb not in VERBS:
         raise OutputParserException(f'one thing verb must be one of {VERBS}')
-    phrase = _prose(str(data.get('verb_phrase') or ''), corpus, 'verb_phrase', forbidden_names=forbidden)
-    trigger = _prose(str(data.get('trigger') or ''), corpus, 'trigger', forbidden_names=forbidden)
-    metric = str(data.get('metric_key') or '')
-    target_key = {'questions': 'target_questions', 'interaction': 'target_interaction'}.get(metric)
-    if target_key is None or target_key not in facts:
-        raise OutputParserException(f'one thing metric is not a fact: {metric}')
-    fact = facts[target_key]
-    try:
-        given = int(data.get('target_value'))
-    except (TypeError, ValueError):
-        raise OutputParserException('target_value must be the halfway number')
-    if given != int(fact['value']):
-        raise OutputParserException(
-            f'target_value {given} is not the halfway value {fact["value"]}'
-        )
-    unit = 'question' if metric == 'questions' and given == 1 else (
-        'questions' if metric == 'questions' else 'percent'
+    numbers = {str(item['value']) for key, item in facts.items() if isinstance(item, dict) and 'value' in item}
+    phrase = _prose(
+        str(data.get('verb_phrase') or ''),
+        corpus,
+        'verb_phrase',
+        forbidden_names=forbidden,
+        allowed_numbers=numbers,
+        speaker_names=names,
+        transcript=transcript,
+        speaker_label=label,
     )
-    if metric == 'interaction' or metric == 'talk_share':
-        sentence = f'{verb.capitalize()} {phrase} {trigger}. Target: {given}%.'
+    trigger = _prose(
+        str(data.get('trigger') or ''),
+        corpus,
+        'trigger',
+        forbidden_names=forbidden,
+        allowed_numbers=numbers,
+        speaker_names=names,
+        transcript=transcript,
+        speaker_label=label,
+    )
+    if word_count(f'{phrase} {trigger}') > 18:
+        raise OutputParserException('one thing behavior is over 18 words')
+    meta = facts.get('_meta') or {}
+    if 'interaction' in facts and 'questions' not in facts:
+        target = int(facts['target_interaction']['value'])
+        sentence = f'{verb.capitalize()} {phrase} {trigger}. Target: {target}% interaction.'
+        why = f"Interaction is {facts['interaction']['value']}%, so {target}% is the halfway step."
     else:
-        sentence = f'{verb.capitalize()} {phrase} {trigger}. Target: {count_label(given, "question")}.'
+        _computed, why = one_thing_from_gap(
+            share=int(meta.get('share', facts['talk_share']['value'])),
+            speaker_count=int(meta.get('speaker_count', 1)),
+            questions=int(meta.get('questions', facts['questions']['value'])),
+            question_average=int(meta.get('question_average', 0)),
+            early=meta.get('early'),
+            late=meta.get('late'),
+        )
+        target_clause = _computed.split('Target:', 1)[-1].strip()
+        sentence = f'{verb.capitalize()} {phrase} {trigger}. Target: {target_clause}'
     sentence = re.sub(r'\s+', ' ', sentence).strip()
-    if word_count(sentence) > 25:
-        raise OutputParserException('rendered one thing is over 25 words')
     if re.search(r'\balso\b', sentence.lower()):
         raise OutputParserException("one thing must not say 'also'")
-    why_unit = unit if metric == 'questions' else 'percent'
-    current = facts.get(metric, fact)['value']
-    if metric == 'questions':
-        why = f'You asked {count_label(current, "question")}, so {count_label(given, "question")} is the halfway step.'
-    else:
-        why = f'The rate is {current}%, so {given}% is the halfway step.'
     return sentence, why
 
 
@@ -502,7 +585,8 @@ def render_personal_section(section: str, data: dict, *, transcript, label: str,
         key = str(data.get('fact_key') or '')
         if key not in facts:
             raise OutputParserException(f'challenge fact_key is not allowed: {key}')
-        return {'challenge': f'{facts[key]["line"]} {claim.rstrip(".")}.'}
+        line = str(facts[key]['line']).rstrip('.')
+        return {'challenge': f'{line}. {claim.rstrip(".")}.'}
     if section == 'drama':
         return {'drama': render_drama(data, transcript, label, corpus, forbidden)}
     if section == 'resolution':
@@ -511,7 +595,9 @@ def render_personal_section(section: str, data: dict, *, transcript, label: str,
         text = own_quote(str(quote.get('text') or ''), str(quote.get('ts') or ''), transcript, label)
         return {'resolution': f'At {quote.get("ts")} you said "{text}". {claim.rstrip(".")}.'}
     if section == 'one_thing':
-        sentence, why = render_one_thing(data, facts, corpus, forbidden)
+        sentence, why = render_one_thing(
+            data, facts, corpus, forbidden, transcript=transcript, label=label
+        )
         return {'one_thing': sentence, 'why': why}
     raise OutputParserException(f'unknown section {section}')
 

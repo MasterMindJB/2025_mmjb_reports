@@ -325,12 +325,11 @@ def test_names_allow_punctuation_and_name_the_speaker():
         assert 'Speaker A' in str(exc)
     else:
         raise AssertionError('a line break in a name should be rejected')
-    try:
-        validate_assignments(['Alex'], [''], ['participant'], ['C'])
-    except ValueError as exc:
-        assert 'Speaker C' in str(exc)
-    else:
-        raise AssertionError('a missing email should name the speaker')
+    unnamed = validate_assignments(['Alex'], [''], ['participant'], ['C'])
+    assert unnamed[0]['name'] == 'Alex'
+    assert unnamed[0]['email'] == ''
+    skipped = validate_assignments([''], [''], ['participant'], ['C'], ['C'])
+    assert skipped[0]['name_status'] == 'skipped'
 
 
 def test_generation_records_progress_and_logs_the_traceback(tmp_path, caplog):

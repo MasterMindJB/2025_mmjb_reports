@@ -103,6 +103,11 @@ class Database:
             columns = {row['name'] for row in conn.execute('PRAGMA table_info(sessions)')}
             if 'progress' not in columns:
                 conn.execute('ALTER TABLE sessions ADD COLUMN progress TEXT')
+            speaker_columns = {row['name'] for row in conn.execute('PRAGMA table_info(speakers)')}
+            if 'name_status' not in speaker_columns:
+                conn.execute(
+                    "ALTER TABLE speakers ADD COLUMN name_status TEXT NOT NULL DEFAULT 'confirmed'"
+                )
             conn.execute('PRAGMA journal_mode=WAL')
 
     def _connect(self) -> sqlite3.Connection:
@@ -191,11 +196,13 @@ class Database:
                 speakers.append(item)
             return speakers
 
-    def update_speaker(self, speaker_id: int, *, name: str, email: str, role: str) -> None:
+    def update_speaker(
+        self, speaker_id: int, *, name: str, email: str, role: str, name_status: str = 'confirmed'
+    ) -> None:
         with self._lock, self._connect() as conn:
             conn.execute(
-                'UPDATE speakers SET name = ?, email = ?, role = ? WHERE id = ?',
-                (name, email, role, speaker_id),
+                'UPDATE speakers SET name = ?, email = ?, role = ?, name_status = ? WHERE id = ?',
+                (name, email, role, name_status, speaker_id),
             )
 
     def update_speaker_samples(self, speaker_id: int, samples: list) -> None:

@@ -90,24 +90,46 @@ def quote_word_count(text: str) -> int:
 
 
 def own_quote(text: str, timestamp: str, transcript: dict | None, label: str) -> str:
-    """Accept a quote only when it is this speaker's, at least 3 words, and inside their turn."""
+    """Accept a quote only when it is this speaker's line and uses that turn's clock."""
+    from lib.story_evidence import clock
+
     cleaned = (text or '').strip().strip('"').strip()
     if quote_word_count(cleaned) < 3:
         _fail('quote is under 3 words and does not count as evidence')
     needle = _normalize(cleaned)
-    moment = clock_to_ms(timestamp)
+    given = str(timestamp or '').strip()
     for row in (transcript or {}).get('utterances') or []:
         if row.get('speaker') != label:
             continue
         if needle not in _normalize(str(row.get('text') or '')):
             continue
-        start = float(row.get('start') or 0)
-        end = float(row.get('end') or start)
-        # A clock rounded to a whole second can sit up to a second outside the turn.
-        if start - 1000 <= moment <= end + 1000:
+        shown = clock(row.get('start'))
+        if given == shown:
             return cleaned
     _fail(f'quote is not inside a turn by {label}: {cleaned}')
     return cleaned
+
+
+def _named_people(text: str) -> list[str]:
+    return re.findall(r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b', text or '')
+
+
+def quotes_belong_to_speaker(text: str, transcript: dict | None, label: str | None) -> None:
+    rows = (transcript or {}).get('utterances') or []
+    if label is None:
+        blobs = [_normalize(str(row.get('text') or '')) for row in rows]
+    else:
+        blobs = [
+            _normalize(str(row.get('text') or ''))
+            for row in rows
+            if row.get('speaker') == label
+        ]
+    for span in quoted_spans(text):
+        needle = _normalize(span)
+        if len(needle) < 4:
+            continue
+        if not any(needle in blob for blob in blobs):
+            _fail(f'quoted span is not in this speaker\'s turn: {span}')
 
 
 GLUE_WORDS = {
@@ -206,6 +228,8 @@ def reject_craft_violations(
     forbidden_names: list[str] | None = None,
     headline: bool = False,
     one_thing: bool = False,
+    speaker_label: str | None = None,
+    participant_names: list[str] | None = None,
 ) -> str:
     """Return the cleaned text, or raise OutputParserException."""
     cleaned = (text or '').strip()
@@ -232,7 +256,18 @@ def reject_craft_violations(
         if extra:
             _fail(f'story text invents numbers: {extra}')
     if transcript is not None:
-        quotes_are_in_transcript(cleaned, transcript)
+        quotes_belong_to_speaker(cleaned, transcript, speaker_label)
+    if participant_names is not None:
+        allowed = {name.casefold() for name in participant_names}
+        allowed.update(
+            part.casefold()
+            for name in participant_names
+            for part in name.split()
+            if len(part) > 2
+        )
+        for person in _named_people(cleaned):
+            if person.casefold() not in allowed and not person.casefold().startswith('speaker '):
+                _fail(f'story text names someone who is not in the session: {person}')
     if headline and word_count(cleaned) > 12:
         _fail(f'headline is {word_count(cleaned)} words; the maximum is 12')
     if one_thing:

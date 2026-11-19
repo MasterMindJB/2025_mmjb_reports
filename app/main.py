@@ -129,37 +129,39 @@ def validate_assignments(
     emails: list[str],
     roles: list[str],
     labels: list[str] | None = None,
+    skips: list[str] | None = None,
 ) -> list[dict]:
     if not (len(names) == len(emails) == len(roles)):
         raise ValueError('The speaker form was incomplete. Save it again.')
     if labels is not None and len(labels) != len(names):
         raise ValueError('The speaker form was incomplete. Save it again.')
+    skipped = set(skips or [])
     cleaned = []
     seen_names = set()
     seen_emails = set()
-    participants = 0
     for index, (raw_name, raw_email, role) in enumerate(zip(names, emails, roles)):
         label = labels[index] if labels else None
         who = f'Speaker {label}: ' if label else ''
+        if role not in ROLES:
+            raise ValueError(f'{who}Choose a role, or mark the label as noise.')
+        email = (raw_email or '').strip()
+        skip = label in skipped or role == 'noise' or not (raw_name or '').strip()
+        if skip:
+            cleaned.append({'name': '', 'email': '', 'role': role, 'name_status': 'ignored' if role == 'noise' else 'skipped'})
+            continue
         name = clean_person_name(raw_name, label)
         if name.casefold() in seen_names:
             raise ValueError(f'{who}{name} is already used for another speaker.')
         seen_names.add(name.casefold())
-        if role not in ROLES:
-            raise ValueError(f'{who}Each speaker is a participant, facilitator, or actor.')
-        email = (raw_email or '').strip()
-        if role == 'participant':
-            if not EMAIL_RE.fullmatch(email):
-                raise ValueError(f'{who}Enter an email address for {name}.')
-            if email.casefold() in seen_emails:
-                raise ValueError(f'{who}{email} is already used. Each participant needs their own inbox.')
-            seen_emails.add(email.casefold())
-            participants += 1
-        elif email and not EMAIL_RE.fullmatch(email):
+        if email and not EMAIL_RE.fullmatch(email):
             raise ValueError(f'{who}The email for {name} is not valid.')
-        cleaned.append({'name': name, 'email': email, 'role': role})
-    if participants < 1:
-        raise ValueError('At least one speaker must be a participant who receives a report.')
+        if email and email.casefold() in seen_emails:
+            raise ValueError(f'{who}{email} is already used. Each report needs its own inbox.')
+        if email:
+            seen_emails.add(email.casefold())
+        cleaned.append({'name': name, 'email': email, 'role': role, 'name_status': 'confirmed'})
+    if not cleaned:
+        raise ValueError('The speaker form was incomplete. Save it again.')
     return cleaned
 
 
@@ -375,6 +377,15 @@ def create_app(
     def session_page(request: Request, session_id: int):
         session = _session_or_404(request, session_id)
         speakers = request.app.state.db.list_speakers(session_id)
+        suggestions = {}
+        if session.get('transcript_path'):
+            from pathlib import Path
+            import json as _json
+            from lib.naming import suggest_names
+
+            path = Path(session['transcript_path'])
+            if path.is_file():
+                suggestions = suggest_names(_json.loads(path.read_text(encoding='utf-8')))
         reports = request.app.state.db.list_reports(session_id)
         emails = request.app.state.db.list_emails(session_id)
         return render(
@@ -382,6 +393,7 @@ def create_app(
             'session.html',
             session=session,
             speakers=speakers,
+            suggestions=suggestions,
             reports=reports,
             emails=emails,
         )
@@ -396,6 +408,7 @@ def create_app(
         name: list[str] = Form(default=[]),
         email: list[str] = Form(default=[]),
         role: list[str] = Form(default=[]),
+        skip: list[str] = Form(default=[]),
     ):
         session = _session_or_404(request, session_id)
         if session['status'] not in {'naming', 'error'}:
@@ -407,7 +420,7 @@ def create_app(
             flash(request, 'The speaker list changed. Review it and save again.')
             return RedirectResponse(f'/sessions/{session_id}', status_code=303)
         try:
-            cleaned = validate_assignments(name, email, role, label)
+            cleaned = validate_assignments(name, email, role, label, skip)
         except ValueError as exc:
             flash(request, str(exc))
             return RedirectResponse(f'/sessions/{session_id}', status_code=303)
@@ -417,6 +430,7 @@ def create_app(
                 name=assignment['name'],
                 email=assignment['email'],
                 role=assignment['role'],
+                name_status=assignment['name_status'],
             )
         if action == 'generate':
             db.update_session(session_id, status='generating', error_message=None)

@@ -102,16 +102,17 @@ class GeminiAnalysis:
             speaker_map[label]['name'] for label in labels if label in participant_labels
         ]
         if not participant_names:
-            raise RuntimeError('At least one participant is required before reports can be generated.')
-        df_participants = tables.df_speaker_stats.loc[participant_names]
-        nice = tables.df_nice_stats_data[LLM_COLUMNS]
-        speaker_analysis = summarizer.speaker_analysis(
-            df_speaker_stats=df_participants,
-            df_nice_stats_data=nice,
-            conversation_script=tables.conversation_script,
-            speakers_expected=len(participant_names),
-            force_regen=True,
-        )
+            speaker_analysis = {}
+        else:
+            df_participants = tables.df_speaker_stats.loc[participant_names]
+            nice = tables.df_nice_stats_data[LLM_COLUMNS]
+            speaker_analysis = summarizer.speaker_analysis(
+                df_speaker_stats=df_participants,
+                df_nice_stats_data=nice,
+                conversation_script=tables.conversation_script,
+                speakers_expected=len(participant_names),
+                force_regen=True,
+            )
         stories = generate_report_stories(
             llm,
             transcript=transcript,

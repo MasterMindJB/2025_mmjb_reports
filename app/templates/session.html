@@ -44,7 +44,7 @@
 <section class="panel">
   <p class="eyebrow">Step 2 of 4</p>
   <h2>Name the speakers</h2>
-  <p class="lede">Match each detected voice to a person. Participants receive a report. Facilitators and actors are part of the recording and do not receive one.</p>
+  <p class="lede">A name is optional. Leave it blank or choose Skip and the voice stays Speaker A, Host, or Audience member 3. A personal report is created only when a speaker has both a confirmed name and an email. Noise is left out of the report.</p>
   <form method="post" action="/sessions/{{ session.id }}/speakers?csrf_token={{ csrf_token }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     {% for speaker in speakers %}
@@ -60,10 +60,14 @@
         <li>No sample lines were stored for this speaker.</li>
         {% endfor %}
       </ul>
+      {% set suggestion = suggestions.get(speaker.label) if suggestions is defined else none %}
+      {% if suggestion and not speaker.name %}
+      <p class="note">Suggested from the transcript: {{ suggestion }}. Accept it, edit it, or skip.</p>
+      {% endif %}
       <div class="grid">
         <div>
           <label for="name-{{ speaker.label }}">Name</label>
-          <input id="name-{{ speaker.label }}" name="name" value="{{ speaker.name or '' }}" required>
+          <input id="name-{{ speaker.label }}" name="name" value="{{ speaker.name or suggestion or '' }}" placeholder="Optional">
         </div>
         <div>
           <label for="email-{{ speaker.label }}">Email</label>
@@ -72,10 +76,14 @@
         <div>
           <label for="role-{{ speaker.label }}">Role</label>
           <select id="role-{{ speaker.label }}" name="role">
-            {% for option in ['participant', 'facilitator', 'actor'] %}
+            {% for option in ['participant', 'facilitator', 'actor', 'host', 'audience', 'noise'] %}
             <option value="{{ option }}" {% if speaker.role == option %}selected{% endif %}>{{ option }}</option>
             {% endfor %}
           </select>
+        </div>
+        <div>
+          <label for="skip-{{ speaker.label }}">Skip</label>
+          <input id="skip-{{ speaker.label }}" type="checkbox" name="skip" value="{{ speaker.label }}" {% if speaker.name_status == 'skipped' %}checked{% endif %}>
         </div>
       </div>
     </article>
@@ -126,10 +134,12 @@
   <h2>Who receives what</h2>
   <ul class="recipients">
     {% for speaker in speakers %}
-      {% if speaker.role == 'participant' %}
+      {% if speaker.role == 'participant' and speaker.name and speaker.email %}
       <li><strong>{{ speaker.name }}</strong> ({{ speaker.email }}) receives {{ speaker.name }}.pdf and group.pdf.</li>
+      {% elif speaker.role == 'noise' %}
+      <li>Speaker {{ speaker.label }} is noise and is left out of the report.</li>
       {% else %}
-      <li><strong>{{ speaker.name }}</strong> is marked {{ speaker.role }} and does not receive a report.</li>
+      <li><strong>{{ speaker.name or 'Speaker ' ~ speaker.label }}</strong> is in the group report and does not receive a report.</li>
       {% endif %}
     {% endfor %}
   </ul>

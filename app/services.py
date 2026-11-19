@@ -12,7 +12,7 @@ from app.config import Settings
 from app.db import Database
 from app.interfaces import OutgoingEmail
 
-ROLES = {'participant', 'facilitator', 'actor'}
+ROLES = {'participant', 'facilitator', 'actor', 'host', 'audience', 'noise'}
 REPORT_ROLES = {'participant'}
 
 
@@ -123,12 +123,23 @@ def generate_session(
         return
     try:
         speakers = db.list_speakers(session_id)
-        participants = [speaker for speaker in speakers if speaker['role'] in REPORT_ROLES]
-        if not participants:
-            raise RuntimeError('Mark at least one speaker as a participant.')
-        speaker_names = {speaker['label']: speaker['name'] for speaker in speakers}
-        participant_labels = {speaker['label'] for speaker in participants}
+        from lib.naming import assign_display_names
+
+        assigned = assign_display_names(speakers)
+        included = [speaker for speaker in assigned if speaker['include']]
+        if not included:
+            raise RuntimeError('Mark at least one speaker to include. Noise labels are left out.')
+        speaker_names = {speaker['label']: speaker['display_name'] for speaker in included}
+        recipients = [speaker for speaker in included if speaker['receives_report']]
+        participant_labels = {speaker['label']: speaker for speaker in recipients}
+        participant_labels = set(participant_labels)
         transcript = _load_transcript(session)
+        noise = {speaker['label'] for speaker in assigned if not speaker['include']}
+        if noise:
+            for key in ('utterances', 'sentiment_analysis_results'):
+                transcript[key] = [
+                    item for item in (transcript.get(key) or []) if item.get('speaker') not in noise
+                ]
         work_dir = session_root(settings, session_id) / 'work'
 
         def note(message: str) -> None:

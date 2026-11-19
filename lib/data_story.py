@@ -229,7 +229,10 @@ def personal_story(
     else:
         goal = 'Inferred from the turns in this session.'
     question_line = questions_sentence(question_count, session_question_average)
-    challenge = f'{early_late} {question_line}'.strip() if early_late else question_line
+    if early_late:
+        challenge = f'{early_late.rstrip(".")}. {question_line}'
+    else:
+        challenge = question_line
     if opening_bit and later_bit:
         drama = (
             f'At {opening_bit[1]} you said "{opening_bit[0]}". '
@@ -314,11 +317,16 @@ def personal_story(
 def _meeting_topics(transcript: dict | None, limit: int = 3) -> list[str]:
     from lib.story_validation import GLUE_WORDS
 
+    filler = GLUE_WORDS | {
+        'think', 'thing', 'thats', "that's", 'just', 'like', 'know', 'yeah', 'really',
+        'gonna', 'wanna', 'something', 'anything', 'everything', 'nothing', 'please',
+        'thank', 'thanks', 'hello', 'right', 'well', 'okay', 'okay',
+    }
     counts: dict[str, int] = {}
     for utterance in (transcript or {}).get('utterances') or []:
         for word in re.findall(r"[A-Za-z']{5,}", str(utterance.get('text') or '')):
-            token = word.lower()
-            if token in GLUE_WORDS:
+            token = word.lower().replace("'", '')
+            if token in filler:
                 continue
             counts[token] = counts.get(token, 0) + 1
     ranked = sorted(counts, key=lambda item: (-counts[item], item))

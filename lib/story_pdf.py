@@ -72,6 +72,8 @@ def _body(pdf, text: str, size: int = 11) -> None:
     pdf.set_text_color(20, 33, 74)
     pdf.multi_cell(w=0, text=text)
     pdf.ln(1)
+    if hasattr(pdf, 'note_y'):
+        pdf.note_y()
 
 
 def _transition(pdf, text: str) -> None:
@@ -182,6 +184,8 @@ def _image(pdf, path: Path | None, width: float = 0.72) -> None:
     _room(pdf, 32)
     pdf.image(str(path), x='C', w=pdf.epw * width)
     pdf.ln(1)
+    if hasattr(pdf, 'note_y'):
+        pdf.note_y()
 
 
 def write_personal_report(pdf, story: dict, chart_dir: Path) -> None:
@@ -213,8 +217,14 @@ def write_personal_report(pdf, story: dict, chart_dir: Path) -> None:
     _body(pdf, 'Your signature phrase:')
     if card.get('phrase'):
         _body(pdf, f'You said "{card["phrase"]}" {card.get("count") or 0} times.')
+    from lib.story_render import clip_clause
+
+    shown = 0
     for quote in card.get('quotes') or []:
-        _body(pdf, quote)
+        if shown >= 2:
+            break
+        _body(pdf, clip_clause(str(quote), 25))
+        shown += 1
     _image(pdf, _phrase_chart(story, chart_dir), width=0.55)
     for label, key in (('What?', 'what'), ('So, what?', 'so_what'), ('Now, what?', 'now_what')):
         if card.get(key):
@@ -231,6 +241,29 @@ def write_personal_report(pdf, story: dict, chart_dir: Path) -> None:
         _body(pdf, f'{name}: {line}')
 
 
+def _place_chord(pdf, chord_path, chord_pairs) -> None:
+    """Keep the diagram and its pair table together, on this page when it still has room."""
+    rows = max(1, len(chord_pairs or []))
+    needed = 90 + rows * 8
+    if pdf.h - pdf.get_y() - pdf.b_margin < needed:
+        pdf.add_page()
+    _body(
+        pdf,
+        'Who spoke right after whom. A wider ribbon means those two followed each other more often. '
+        'Color is the person who spoke first.',
+    )
+    if chord_path and Path(chord_path).is_file():
+        pdf.image(str(chord_path), x='C', w=pdf.epw * 0.92)
+        pdf.ln(1)
+        if hasattr(pdf, 'note_y'):
+            pdf.note_y()
+    from lib.pdf_functions import _add_direction_table
+
+    _add_direction_table(pdf, chord_pairs or [])
+    if hasattr(pdf, 'note_y'):
+        pdf.note_y()
+
+
 def write_group_story(pdf, story: dict, chord_path, chord_pairs) -> None:
     pdf.add_page()
     pdf.set_text_color(20, 33, 74)
@@ -242,26 +275,12 @@ def write_group_story(pdf, story: dict, chord_path, chord_pairs) -> None:
     _transition(pdf, (story.get('transitions') or {}).get('after_character'))
     _heading(pdf, 'Goal')
     _body(pdf, story['goal'])
-    _transition(pdf, (story.get('transitions') or {}).get('after_goal'))
+    _place_chord(pdf, chord_path, chord_pairs)
     _heading(pdf, 'Challenge')
     _body(pdf, story['challenge'])
     _transition(pdf, (story.get('transitions') or {}).get('after_challenge'))
     _heading(pdf, 'Drama')
     _body(pdf, story.get('drama') or '')
-    _body(
-        pdf,
-        'Who spoke right after whom. A wider ribbon means those two followed each other more often. '
-        'Color is the person who spoke first.',
-    )
-    rows = max(1, len(chord_pairs or []))
-    if pdf.h - pdf.get_y() - pdf.b_margin < 90 + rows * 8:
-        pdf.add_page()
-    if chord_path and Path(chord_path).is_file():
-        pdf.image(str(chord_path), x='C', w=pdf.epw * 0.92)
-        pdf.ln(1)
-    from lib.pdf_functions import _add_direction_table
-
-    _add_direction_table(pdf, chord_pairs or [])
     _transition(pdf, (story.get('transitions') or {}).get('after_drama'))
     _heading(pdf, 'Resolution')
     _body(pdf, story['resolution'])
