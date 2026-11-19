@@ -141,11 +141,11 @@ def test_question_target_moves_up_and_talk_target_respects_the_norm():
     assert '18%' not in even[0]
     assert '% talk time' not in even[0]
     louder = one_thing_from_gap(share=10, speaker_count=4, questions=3, question_average=1)
-    assert 'Target: 25% talk time.' in louder[0]
+    assert 'Target: 25% of the hour.' in louder[0]
     assert louder[0].startswith('Say')
     loud = one_thing_from_gap(share=50, speaker_count=4, questions=3, question_average=1)
     assert loud[0].startswith('Pause after the point')
-    assert 'Target: 25% talk time.' in loud[0]
+    assert 'Target: 25% of the hour.' in loud[0]
     person = {
         'share': 50, 'speaker_count': 7, 'questions': 0, 'question_average': 2,
         'turn_words': 0, 'session_turn_words': 0, 'early': None, 'late': None,
@@ -1270,7 +1270,11 @@ def test_group_big_thing_tells_a_story_without_a_metric_dump():
     assert 'talk time' not in personal.lower()
     assert 'What it costs you' not in personal
     assert '?' in personal
-    assert 'hand off' in asked
+    assert asked.index('opened') < asked.index('0:04')
+    assert 'budget' in asked.lower()
+    assert 'hand off one turn sooner' not in asked.lower()
+    from lib.story_render import big_thing_order_problems
+    assert big_thing_order_problems(asked) == []
     assert narrative_problems(asked, big=True) == []
 
 
@@ -1285,7 +1289,8 @@ def test_a_goal_that_already_starts_with_a_verb_is_not_prefixed_with_share():
     )
     assert 'share prioritize' not in goal_line('prioritize the work for the team', personal=True)
     fixed = goal_line('feel rather than a rigid plan for the room', personal=True)
-    assert fixed.startswith('Your aim: a flexible aim rather than')
+    assert fixed.startswith('Your aim: flexibility rather than')
+    assert 'aim rather' not in fixed.lower()
     assert 'share a flexible' not in fixed
     assert 'to feel rather than' not in fixed
     assert lead_sentence('you advocate for the next voice.').startswith('You advocate')

@@ -90,6 +90,8 @@ class FakeLLM(BaseChatModel):
             return 'GROUP_SHORT_TOKEN'
         if 'summarizing recount' in text:
             return 'GROUP_LONG_TOKEN'
+        if 'PROPOSAL_TURNS' in text:
+            return json.dumps({'turns': [0]})
         raise AssertionError('FakeLLM saw an unexpected prompt')
 
 

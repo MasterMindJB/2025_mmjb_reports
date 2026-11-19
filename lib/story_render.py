@@ -316,7 +316,8 @@ def verb_phrase(claim: str) -> str:
         if len(words_out) > 20:
             phrase = ' '.join(words_out[:20])
         if re.match(r'^(?:feel|live) rather than\b', phrase, re.I):
-            return 'AIM:' + 'a flexible aim rather than ' + phrase.split('rather than', 1)[1].strip()
+            rest = phrase.split('rather than', 1)[1].strip()
+            return 'AIM:flexibility rather than ' + rest
         return phrase
     phrase = text.strip().rstrip('.')
     if phrase[:1].isupper():
@@ -578,8 +579,8 @@ def _habit(kind: str, *, share, speaker_count, questions, question_average, turn
         return sentence, why
     if kind == 'talk_low':
         target = improve_toward(int(share), average, increase=True)
-        sentence = f'Say one more detail before you stop. Target: {target}% talk time.'
-        why = f'You are at {int(share)}% talk time, below an even share of {average}%.'
+        sentence = f'Say one more detail before you stop. Target: {target}% of the hour.'
+        why = 'Next time, make that handoff one short point.'
         return sentence, why
     if kind == 'turns_short':
         target = improve_toward(int(turn_words), int(session_turn_words), increase=True)
@@ -600,15 +601,12 @@ def _habit(kind: str, *, share, speaker_count, questions, question_average, turn
         if not increase and target >= end:
             target = max(1, end - 1)
         sentence = f'Wait through the opening before the long story. Target: {target}% in the last third.'
-        why = (
-            f'Talk time moves from {start}% in the first third to {end}% in the last. '
-            f'The even third is {norm}%.'
-        )
+        why = f'The even third is {norm}%.'
         return sentence, why
     if kind == 'talk_high':
         target = improve_toward(int(share), average, increase=False)
-        sentence = f'Pause after the point and hand the turn on. Target: {target}% talk time.'
-        why = f'You are at {int(share)}% talk time, above an even share of {average}%.'
+        sentence = f'Pause after the point and hand the turn on. Target: {target}% of the hour.'
+        why = 'Next time, pause after one point so someone else can speak.'
         return sentence, why
     if kind == 'beat':
         if facilitator:
@@ -791,17 +789,121 @@ def questions_sentence(count: int, average: int) -> str:
 
 
 def turns_sentence(count: int, median: int | None = None) -> str:
-    label = count_label(count, 'turn')
-    if median is None:
-        if int(count) == 1:
-            return f'{label}: you came in once.'
-        return f'{label}: you came in {int(count)} times.'
-    gap = int(count) - int(median)
-    if gap == 0:
-        return f'{label}: the same as the room median of {int(median)}.'
-    if gap > 0:
-        return f'{label}: {gap} above the room median of {int(median)}.'
-    return f'{label}: {abs(gap)} below the room median of {int(median)}.'
+    """The room median is the comparator. A missing median uses this person's own count."""
+    counted = int(count)
+    middle = counted if median is None else int(median)
+    turn_word = 'turn' if counted == 1 else 'turns'
+    median_word = 'turn' if middle == 1 else 'turns'
+    if counted > middle:
+        judge = 'That is more than most people in the room.'
+        take = 'Next time, leave one of those turns for someone else.'
+    elif counted < middle:
+        judge = 'That is less than most people in the room.'
+        take = 'Next time, take one more turn before the close.'
+    else:
+        judge = 'That matches the middle of the room.'
+        take = 'Next time, use one of those turns to ask a question.'
+    return (
+        f'You took {counted} {turn_word}. The room median was {middle} {median_word}. '
+        f'{judge} {take}'
+    )
+
+
+def talk_number_line(share: int, speaker_count: int) -> str:
+    """Talk share against an even split of the people in the room."""
+    even = room_average(speaker_count)
+    gap = int(share) - even
+    if abs(gap) <= 2:
+        judge = 'That is close to an even split of the hour.'
+        take = 'Next time, keep your turn about this long.'
+    elif gap > 0:
+        judge = 'That is more than an even split of the hour, so this was a lot of the talking.'
+        take = 'Next time, stop after one point and let someone else speak.'
+    else:
+        judge = 'That is less than an even split of the hour.'
+        take = 'Next time, add one short point before you stop.'
+    return f'You spoke for {int(share)}% of the hour. {judge} {take}'
+
+
+def question_number_line(count: int, average: int) -> str:
+    """Questions against the session's own typical count."""
+    asked = int(count)
+    typical = int(average)
+    if asked > typical:
+        judge = 'That is more than the typical person here.'
+        take = 'Next time, leave one question for someone else to answer.'
+    elif asked < typical:
+        judge = 'That is less than the typical person here.'
+        take = 'Next time, ask one question before you add a point.'
+    else:
+        judge = 'That matches the typical person here.'
+        take = 'Next time, keep one of those questions open for someone else.'
+    asked_word = 'question' if asked == 1 else 'questions'
+    typical_word = 'question' if typical == 1 else 'questions'
+    return (
+        f'You asked {asked} {asked_word}. The typical person asked {typical} {typical_word}. '
+        f'{judge} {take}'
+    )
+
+
+def group_plain_numbers(interaction_pct: int, participation_pct: int, speaker_count: int) -> list[str]:
+    """Each rate in plain words, judged against a number this session can compute."""
+    people = max(int(speaker_count or 0), 0)
+    moved = int(interaction_pct)
+    if people > 1:
+        even = int(round(100 * (people - 1) / people))
+        if moved + 10 < even:
+            judge = (
+                'That is low. If the next turn were just as likely to be any other person, '
+                'more turns would move. Most of the time the same few people kept trading turns, '
+                'so most of the room listened.'
+            )
+        elif moved >= even:
+            judge = 'That is high. Turns moved to a new person as often as an even mix.'
+        else:
+            judge = 'That is close to an even mix, where any other person is just as likely to speak next.'
+    else:
+        judge = 'This shows how often the next voice was a new person.'
+    handoff = (
+        f'{moved}% of turns moved to someone new. {judge} '
+        'Next time, after you answer, pass the question to someone who has not spoken.'
+    )
+    spoke = int(participation_pct)
+    if spoke >= 100:
+        room = 'That is a strength. Everyone here took a turn.'
+        invite = 'Next time, keep passing the turn so it stays that way.'
+    else:
+        room = 'That is low next to everyone in the room.'
+        invite = 'Next time, invite one quiet person in before you close.'
+    people_line = f'{spoke}% of the people here spoke. {room} {invite}'
+    return [handoff, people_line]
+
+
+def group_pattern_why(portrait: dict) -> str:
+    """Why the pattern matters. Not a restatement of the meeting topic."""
+    pair = (portrait or {}).get('pair') or ()
+    least = (portrait or {}).get('least') or 'the quiet person'
+    if len(pair) >= 2 and pair[0] and pair[1]:
+        return (
+            f'When {pair[0]} and {pair[1]} do most of the talking, {least} cannot change the choice. '
+            f'Next time, ask {least} before you decide.'
+        )
+    return (
+        f'When a few people do most of the talking, {least} cannot change the choice. '
+        f'Next time, ask {least} before you decide.'
+    )
+
+
+def group_caveat(portrait: dict) -> str:
+    """One caveat. No quote, and no count of who followed whom."""
+    pair = (portrait or {}).get('pair') or ()
+    least = (portrait or {}).get('least') or 'the quiet person'
+    if len(pair) >= 2 and pair[0] and pair[1]:
+        return (
+            f'A point can end with {pair[0]} and {pair[1]} before {least} speaks. '
+            f'Next time, stop and ask {least}.'
+        )
+    return f'A point can end before {least} speaks. Next time, stop and ask {least}.'
 
 
 def rate_sentence(value: int, name: str) -> str:
@@ -840,6 +942,11 @@ def group_headline_is_personal(text: str) -> bool:
     return bool(_PERSON_HEADLINE.search(text or ''))
 
 
+SHORTHAND = (
+    'the room handed the turn',
+    'interaction rate',
+    'participation',
+)
 _NARRATIVE_JARGON = re.compile(r'\b(interaction|participation|talk time)\b', re.I)
 _NARRATIVE_FILLER = re.compile(r'\bthose rates describe this session\b', re.I)
 
@@ -857,6 +964,18 @@ def narrative_problems(text: str, *, big: bool = False) -> list[str]:
         problems.append('filler')
     if _NARRATIVE_JARGON.search(prose):
         problems.append('metric jargon')
+    lowered = prose.lower()
+    if any(phrase in lowered for phrase in SHORTHAND):
+        problems.append('shorthand')
+    if prose.count('"') % 2:
+        problems.append('open quote')
+    for span in re.findall(r'"([^"]*)"', text or ''):
+        body = span.lstrip('…').strip()
+        if body and not body.endswith(('.', '!', '?')):
+            problems.append('truncated quote')
+        pieces = [part for part in re.split(r'(?<=[.!?])\s+', body) if part.strip()]
+        if len(pieces) > 1:
+            problems.append('spliced quote')
     used = 0
     for sentence in re.split(r'(?<=[.!?])\s+', (text or '').strip()):
         count = len(re.findall(r'\d+\s*%', _outside_quotes(sentence)))
@@ -868,6 +987,10 @@ def narrative_problems(text: str, *, big: bool = False) -> list[str]:
         problems.append('more than two percentages in the section')
     if big and '?' not in prose:
         problems.append('no question')
+    if big:
+        problems.extend(big_thing_order_problems(text or ''))
+    if re.search(r"\b(I|I'll|I'm|I've|I'd)\b", prose):
+        problems.append('unquoted first person')
     return problems
 
 
@@ -888,7 +1011,15 @@ def narrative_text(text: str, *, big: bool = False) -> str:
         kept.append(sentence)
     result = ' '.join(kept).strip()
     if big and '?' not in _outside_quotes(result):
-        result = (result.rstrip('.') + '. ' if result else '') + 'Next time, who will draw that voice in earlier?'
+        result = (result.rstrip('.') + '. ' if result else '') + 'Next time, who else should speak?'
+    from lib.readability import reading_grade
+
+    if result and reading_grade(result) >= 6:
+        result = (
+            'You made one clear move. Next time, who else should speak?'
+            if big
+            else 'This is the part to change. Next time, try one small step.'
+        )
     return result
 
 
@@ -898,44 +1029,113 @@ def group_character_copy(facts: dict) -> str:
     pair = portrait.get('pair') or ()
     least = portrait.get('least') or 'the quietest voice'
     if len(pair) >= 2 and pair[0] and pair[1]:
-        pattern = f'Most of the talk ran between {pair[0]} and {pair[1]}, while {least} spoke least.'
+        pattern = f'{pair[0]} and {pair[1]} did most of the talking, and {least} spoke the least.'
     else:
-        pattern = f'The talk stayed with a few voices, while {least} spoke least.'
+        pattern = f'A few people did most of the talking, and {least} spoke the least.'
     closing = facts.get('_closing') or {}
     name = str(closing.get('name') or '').strip()
     quote = str(closing.get('text') or '').strip()
     if name and quote:
-        mattered = f'{name} still delivered the line that closed the session: "{quote}".'
+        mattered = f'{name} said the last line: "{quote}".'
     elif name:
-        mattered = f'{name} still delivered the line that closed the session.'
+        mattered = f'{name} said the last line.'
     else:
-        mattered = 'The last voice still had to land the point the room had been circling.'
-    invite = f'Next time, who will draw {least} in earlier?'
+        mattered = 'The last line still had to land.'
+    invite = f'Next time, who will ask {least} to speak sooner?'
     return f'{pattern} {mattered} {invite}'
 
 
+_MOMENT_SKIP = {
+    'could', 'would', 'should', 'about', 'there', 'their', 'which', 'where', 'while',
+    'being', 'other', 'every', 'still', 'those', 'first', 'check', 'after', 'before',
+}
+
+
+def _split_sentences(text: str) -> list[str]:
+    """Split on sentence ends that are not inside a quote."""
+    quotes: list[str] = []
+
+    def _hold(match: re.Match) -> str:
+        quotes.append(match.group(0))
+        return f'\x00{len(quotes) - 1}\x00'
+
+    masked = re.sub(r'"[^"]*"', _hold, text or '')
+    parts = [part.strip() for part in re.split(r'(?<=[.!?])\s+', masked) if part.strip()]
+
+    def _back(match: re.Match) -> str:
+        return quotes[int(match.group(1))]
+
+    restored = [re.sub(r'\x00(\d+)\x00', _back, part) for part in parts]
+    refined = []
+    for part in restored:
+        match = re.match(r'^(.*"[^"]*"[.!?]?)\s+(\S.*)$', part)
+        if match:
+            refined.append(match.group(1).strip())
+            refined.append(match.group(2).strip())
+        else:
+            refined.append(part)
+    return refined
+
+
+def _moment_word(sentence: str) -> str:
+    spans = re.findall(r'"([^"]+)"', sentence or '')
+    words = re.findall(r"[A-Za-z']+", spans[0] if spans else '')
+    best = ''
+    for word in words:
+        token = word.lower()
+        if len(token) > 4 and token not in _MOMENT_SKIP and len(token) > len(best):
+            best = token
+    return best
+
+
 def personal_big_thing(drama: str) -> str:
-    """Pattern, the moment it showed up, and an invitation. One question, no metric names."""
-    kept = []
-    used_percents = 0
-    for sentence in re.split(r'(?<=[.!?])\s+', (drama or '').strip()):
+    """Pattern, then the quote, then a question about that moment."""
+    pattern = ''
+    moment = ''
+    for sentence in _split_sentences(drama or ''):
+        outside = _outside_quotes(sentence)
         if not sentence or 'What it costs you' in sentence:
             continue
-        if _NARRATIVE_JARGON.search(sentence) or _NARRATIVE_FILLER.search(sentence):
+        if _NARRATIVE_JARGON.search(outside) or _NARRATIVE_FILLER.search(outside):
             continue
-        count = len(re.findall(r'\d+\s*%', sentence))
-        if used_percents + count > 2:
+        if '"' in sentence and not moment:
+            moment = sentence
             continue
-        used_percents += count
-        kept.append(sentence)
-        if len(kept) == 2:
-            break
-    text = ' '.join(kept).strip()
-    if not text:
-        text = 'You made one move the room could hear.'
-    if '?' not in _outside_quotes(text):
-        text = text.rstrip('.') + '. Next time, what would you hand off one turn sooner?'
-    return text
+        if not pattern and '?' not in outside:
+            pattern = sentence
+    if not pattern:
+        pattern = 'You made one clear move.'
+    word = _moment_word(moment)
+    if word:
+        question = f'Next time, who else should speak about {word}?'
+    else:
+        question = 'Next time, who else should speak on that point?'
+    parts = [pattern]
+    if moment:
+        parts.append(moment)
+    parts.append(question)
+    return ' '.join(parts)
+
+
+def big_thing_order_problems(text: str) -> list[str]:
+    """1 big thing is the pattern, then the quote, then one question about that moment."""
+    problems = []
+    sentences = _split_sentences(text or '')
+    if not sentences or '?' not in _outside_quotes(sentences[-1]):
+        problems.append('question is not last')
+    quote_at = next((index for index, sentence in enumerate(sentences) if '"' in sentence), None)
+    pattern_at = next(
+        (
+            index for index, sentence in enumerate(sentences)
+            if '"' not in sentence and '?' not in _outside_quotes(sentence)
+        ),
+        None,
+    )
+    if quote_at is not None and pattern_at is not None and quote_at < pattern_at:
+        problems.append('quote before the pattern')
+    if re.search(r'hand off one turn sooner', text or '', re.I):
+        problems.append('generic question')
+    return problems
 
 
 def _no_digits(text: str, label: str, allowed: set[str] | None = None) -> str:
@@ -1267,12 +1467,9 @@ def render_one_thing(
         raise OutputParserException('one thing behavior is over 18 words')
     meta = facts.get('_meta') or {}
     if 'interaction' in facts and 'questions' not in facts:
-        current = int(facts['interaction']['value'])
-        participation = int((facts.get('participation') or {}).get('value') or current)
-        words = int((facts.get('word_interaction') or {}).get('value') or current)
-        target, norm, name = group_halfway_target(current, participation, words)
-        sentence = f'Name one reply before the next decision. Target: {target}% interaction.'
-        why = f'Interaction is {current}%, halfway toward {norm}% {name}.'
+        least = (facts.get('_portrait') or {}).get('least') or 'one quiet person'
+        sentence = f'Ask {least} to speak before the next choice.'
+        why = f'Next time, leave one reply for {least}.'
         return sentence, why
     sentence, why = one_thing_from_gap(
         share=int(meta.get('share', facts['talk_share']['value'])),

@@ -31,7 +31,6 @@ from lib.helper_functions import barplot, figure_to_image, gini
 
 NICE_STATS_COL_NAME = {
     'action_items_count': 'Action Items',
-    'idea_count': 'Idea Generation',
     'question_count': 'Questions Asked',
     'talk_time_pct': 'Speaking Time (%)',
     'interaction_count': 'Total Interactions',
@@ -42,7 +41,6 @@ NICE_STATS_COL_NAME = {
 
 NICE_STATS_COL_APPLY_OP = {
     'action_items_count': lambda x: int(x),
-    'idea_count': lambda x: int(x),
     'question_count': lambda x: int(x),
     'talk_time_pct': lambda x: round(x, 1),
     'interaction_count': lambda x: int(x),

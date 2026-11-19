@@ -241,6 +241,63 @@ def _talk_share(story: dict, folder: Path) -> Path:
     return _save_chart(figure, folder, 'talk-share.png')
 
 
+def _ranked_bars(pairs, folder: Path, filename: str, title: str, *, value_labels: bool = False) -> Path | None:
+    """Top bar is navy with a bold label. The other bars are gray."""
+    rows = [(str(name), float(value or 0)) for name, value in (pairs or []) if str(name) != 'Average']
+    if not rows:
+        return None
+    ranked = sorted(rows, key=lambda item: (-item[1], item[0]))
+    ordered = list(reversed(ranked))
+    top_value = ranked[0][1]
+    labels = [name for name, _value in ordered]
+    values = [value for _name, value in ordered]
+    colors = [NAVY if value == top_value else '#C5CDD8' for value in values]
+    figure, axis = plt.subplots(figsize=(5.4, max(1.8, 0.42 * len(labels) + 0.7)), facecolor=LIGHT)
+    axis.set_facecolor(LIGHT)
+    bars = axis.barh(labels, values, color=colors, height=0.55)
+    if value_labels:
+        axis.bar_label(
+            bars,
+            labels=[f'{int(value)}' if float(value).is_integer() else f'{value:g}' for value in values],
+            padding=3,
+            color=INK,
+            fontproperties=load_poppins('regular'),
+            fontsize=8,
+        )
+    axis.set_title(title, color=INK, fontproperties=load_poppins('semibold'), fontsize=11, loc='left')
+    axis.tick_params(colors=INK, labelsize=8)
+    for tick in axis.get_yticklabels():
+        weight = 'bold' if float(dict(ordered).get(tick.get_text(), -1)) == top_value else 'regular'
+        tick.set_fontproperties(load_poppins(weight))
+    for tick in axis.get_xticklabels():
+        tick.set_fontproperties(load_poppins('regular'))
+    for spine in axis.spines.values():
+        spine.set_color(LINE)
+    figure.tight_layout()
+    return _save_chart(figure, folder, filename)
+
+
+def _top_person(pairs) -> str:
+    ranked = sorted(
+        [(str(name), float(value or 0)) for name, value in (pairs or [])],
+        key=lambda item: (-item[1], item[0]),
+    )
+    if not ranked or ranked[0][1] <= 0:
+        return ''
+    return ranked[0][0]
+
+
+def _footnote(pdf, text: str) -> None:
+    pdf.set_x(pdf.l_margin)
+    pdf.set_font('Poppins', '', 9)
+    pdf.set_text_color(85, 98, 138)
+    pdf.multi_cell(w=0, h=pdf.font_size * 1.3, text=text, align='L')
+    pdf.ln(1)
+    pdf.set_text_color(20, 33, 74)
+    if hasattr(pdf, 'note_y'):
+        pdf.note_y()
+
+
 def _clock_label(seconds: float) -> str:
     from lib.story_evidence import format_clock_seconds
 
@@ -541,8 +598,7 @@ def _chord_hero(pdf, chord_path, pairs=None) -> None:
             px_w, px_h = image.size
         if px_w and px_h:
             height = width * px_h / px_w
-            # Leave the story on this page. The pair table no longer fills a second page.
-            cap = max(70, min(100, _remaining(pdf) - 140))
+            cap = max(120, min(160, _remaining(pdf) - 48))
             if height > cap:
                 width = width * cap / height
     except (OSError, ValueError):
@@ -560,8 +616,8 @@ def write_group_story(pdf, story: dict, chord_path, chord_pairs, *, gap: float =
     pdf.add_page()
     pdf.set_text_color(20, 33, 74)
     headline = str(story.get('headline') or '')
-    if len(headline.split()) > 6:
-        headline = 'The room handed the turn.'
+    if headline.strip().lower() in {'the room handed the turn.', 'the room handed the turn'}:
+        headline = 'A few people did most of the talking.'
     pdf.set_font('Poppins', 'b', 16)
     pdf.multi_cell(w=0, h=pdf.font_size * 1.2, text=headline, align='L')
     pdf.ln(1)
@@ -575,18 +631,49 @@ def write_group_story(pdf, story: dict, chord_path, chord_pairs, *, gap: float =
     _heading(pdf, 'By the numbers')
     for line in story.get('numbers') or []:
         _body(pdf, line)
+    folder = Path(chord_path).parent if chord_path else Path('.')
+    shares = story.get('shares') or []
+    if shares:
+        talker = _top_person(shares)
+        _image(
+            pdf,
+            _ranked_bars(
+                shares,
+                folder,
+                'who-talked.png',
+                f'{talker} talked the most.' if talker else 'No one talked.',
+            ),
+        )
+    questions = story.get('question_counts') or []
+    if questions:
+        from lib.questions import QUESTION_FOOTNOTE
+
+        asker = _top_person(questions)
+        _image(
+            pdf,
+            _ranked_bars(
+                questions,
+                folder,
+                'who-asked.png',
+                f'{asker} asked the most questions.' if asker else 'No one asked a question.',
+            ),
+        )
+        _footnote(pdf, QUESTION_FOOTNOTE)
+    # The proposal chart is only the bars. No finding sentence and no footnote.
+    proposals = story.get('proposal_counts')
+    if proposals:
+        _image(
+            pdf,
+            _ranked_bars(proposals, folder, 'ideas.png', 'Ideas put forward', value_labels=True),
+        )
     if hasattr(pdf, 'note_y'):
         pdf.note_y()
     _heading(pdf, 'Why it matters')
-    _body(pdf, narrative_text(story['goal']))
+    _body(pdf, narrative_text(story.get('pattern_why') or story['goal']))
     _heading(pdf, 'Yes, but')
-    _body(pdf, narrative_text(story['challenge']))
-    if story.get('drama'):
-        _body(pdf, narrative_text(story['drama']))
-    if story.get('resolution'):
-        _body(pdf, narrative_text(story['resolution']))
+    _body(pdf, narrative_text(story.get('caveat') or story['challenge']))
     _heading(pdf, 'Your next rep')
-    _body(pdf, story['one_thing'])
+    _body(pdf, narrative_text(story['one_thing']))
     if story.get('why'):
-        _body(pdf, story['why'])
+        _body(pdf, narrative_text(story['why']))
     _flush_heading(pdf)

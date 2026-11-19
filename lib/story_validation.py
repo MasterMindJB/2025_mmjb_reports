@@ -128,27 +128,37 @@ def quote_word_count(text: str) -> int:
     return len(re.findall(r"[A-Za-z0-9']+", text or ''))
 
 
-def _quote_in_turn(quote: str, raw: str) -> str | None:
-    """Return the transcript's own casing, with a leading ellipsis when the quote starts mid-turn.
-
-    A trimmed leading word still matches. The rendered words keep the turn's case.
-    """
-    if not quote or not raw:
+def complete_quote(fragment: str, source: str) -> str | None:
+    """The one sentence that holds the fragment. Never a later sentence, and never a cut-off end."""
+    fragment = (fragment or '').strip().strip('"').lstrip('…').strip()
+    source = source or ''
+    if not fragment or not source:
         return None
+    index = source.casefold().find(fragment.casefold())
+    if index < 0:
+        source = re.sub(r'\s+', ' ', source).strip()
+        fragment = re.sub(r'\s+', ' ', fragment).strip()
+        index = source.casefold().find(fragment.casefold())
+    if index < 0:
+        return None
+    container = None
+    for match in re.finditer(r'[^.!?]*[.!?]', source):
+        if match.start() <= index < match.end():
+            container = match
+            break
+    if container is None:
+        return None
+    if index > container.start() and source[container.start():index].strip():
+        shown = source[index:container.end()].strip()
+        if shown[:1].isupper():
+            shown = shown[0].lower() + shown[1:]
+        return '…' + shown
+    return source[container.start():container.end()].strip()
 
-    def _shown(source: str, needle: str) -> str | None:
-        index = source.casefold().find(needle.casefold())
-        if index < 0:
-            return None
-        prefix = '…' if source[:index].strip() else ''
-        return prefix + source[index:index + len(needle)]
 
-    exact = _shown(raw, quote)
-    if exact is not None:
-        return exact
-    squashed = re.sub(r'\s+', ' ', raw).strip()
-    squashed_quote = re.sub(r'\s+', ' ', quote).strip()
-    return _shown(squashed, squashed_quote)
+def _quote_in_turn(quote: str, raw: str) -> str | None:
+    """A quote ends on a sentence boundary. A mid-sentence start keeps a leading ellipsis."""
+    return complete_quote(quote, raw)
 
 
 def _same_clock(given: str, shown: str) -> bool:

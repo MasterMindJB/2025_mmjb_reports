@@ -289,7 +289,9 @@ def personal_story(
         one_thing_from_gap,
         pick_transitions,
         questions_sentence,
+        question_number_line,
         share_sentence,
+        talk_number_line,
         turns_sentence,
     )
 
@@ -324,8 +326,8 @@ def personal_story(
         else:
             turn_median = int(round((ordered[mid - 1] + ordered[mid]) / 2))
     numbers = [
-        share_sentence(share_pct, speaker_count),
-        questions_sentence(question_count, session_question_average),
+        talk_number_line(share_pct, speaker_count),
+        question_number_line(question_count, session_question_average),
         turns_sentence(turn_count, turn_median),
     ]
     def _substantive(event) -> bool:
@@ -608,8 +610,14 @@ def group_story(
             'The meeting closed with the exchange still inside the same voices, '
             'so the last turn did not have to travel to a new voice.'
         )
-    one_thing = f'Name one reply before the next decision. Target: {target}% interaction.'
-    why = f'Interaction is {interaction_pct}%, halfway toward {norm}% {norm_name}.'
+    from lib.questions import question_counts
+    from lib.story_render import group_caveat, group_pattern_why, group_plain_numbers
+
+    speaker_count = len(shares or []) or len({
+        row.get('speaker') for row in (transcript or {}).get('utterances') or [] if row.get('speaker')
+    })
+    one_thing = 'Ask one quiet person to speak before the next choice.'
+    why = 'Next time, leave that reply for them.'
     from lib.story_render import pick_transitions
 
     transitions = pick_transitions('group', group=True)
@@ -623,10 +631,15 @@ def group_story(
     challenge = draft.get('challenge') or challenge
     drama = draft.get('drama') or drama
     resolution = draft.get('resolution') or resolution
-    one_thing = draft.get('one_thing') or one_thing
-    why = draft.get('why') or why
+    draft_one = str(draft.get('one_thing') or '')
+    draft_why = str(draft.get('why') or '')
+    if draft_one and not narrative_problems(draft_one):
+        one_thing = draft_one
+    if draft_why and not narrative_problems(draft_why):
+        why = draft_why
     if draft.get('transitions'):
         transitions = draft['transitions']
+    portrait = facts.get('_portrait') or {}
     return {
         'headline': headline,
         'character': character,
@@ -636,9 +649,11 @@ def group_story(
         'resolution': resolution,
         'one_thing': one_thing,
         'why': why,
+        'pattern_why': group_pattern_why(portrait),
+        'caveat': group_caveat(portrait),
         'transitions': transitions,
-        'numbers': [
-            f'Interaction is how often a turn moved to someone new: {interaction_pct}%.',
-            f'Participation is the share of people who spoke: {participation_pct}%.',
-        ],
+        'numbers': group_plain_numbers(interaction_pct, participation_pct, speaker_count),
+        'shares': list(shares or []),
+        'question_counts': question_counts(transcript, names),
+        'proposal_counts': draft.get('proposal_counts'),
     }

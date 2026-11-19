@@ -50,6 +50,7 @@ PARTICIPANT_COLORS = (
     '#9BB8D4',
 )
 
+HOW_TO_READ_PT = 9
 HOW_TO_READ = (
     'Each colored arc is one person. A bigger arc means more back-and-forth.',
     'A ribbon connects two people. Wider means they spoke right after each other more often.',
@@ -852,7 +853,7 @@ def _draw_guide(figure, caption: str) -> None:
             card_y + card_h - 0.046 - index * 0.022,
             line,
             fontproperties=regular,
-            fontsize=8.3,
+            fontsize=HOW_TO_READ_PT,
             color=INK,
             ha='left',
             va='center',
@@ -972,6 +973,16 @@ def _record_layout_boxes(figure, axis, sink: dict) -> None:
             sink['legend'].append(_window_box(artist, renderer))
 
 
+def chord_finding(names: list[str], arcs: list[int]) -> str:
+    """The chart title is the person the exchanges ran through."""
+    if not names or not arcs:
+        return 'Who spoke right after whom'
+    index = max(range(len(names)), key=lambda item: (int(arcs[item] or 0), str(names[item])))
+    if int(arcs[index] or 0) <= 0:
+        return 'Who spoke right after whom'
+    return f'Most exchanges ran through {names[index]}.'
+
+
 def save_chord_diagram(
     sequence: list[str],
     path: Path,
@@ -984,6 +995,8 @@ def save_chord_diagram(
     roles = roles or {}
     names, directed = directed_follows(sequence, names)
     _roster, ribbon, arcs = transition_ribbons(sequence, names)
+    if not title or title == 'Who talks with whom':
+        title = chord_finding(names, arcs)
     count = len(names)
     spans = _arc_layout(arcs)
     colors = [_color_for(position) for position in range(count)]

@@ -295,7 +295,8 @@ def test_one_thing_follows_the_personal_gap():
     assert '1 question' in one_thing_from_gap(share=20, speaker_count=7, questions=1, question_average=1)[1] or True
     from lib.story_render import turns_sentence
 
-    assert turns_sentence(1) == '1 turn: you came in once.'
+    assert turns_sentence(1) == 'You took 1 turn. The room median was 1 turn. That matches the middle of the room. Next time, use one of those turns to ask a question.'
+    assert 'you came in once' not in turns_sentence(1)
     assert '1 turns' not in turns_sentence(1)
 
 

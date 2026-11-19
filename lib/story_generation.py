@@ -512,6 +512,9 @@ def generate_report_stories(
         personal[label]['one_thing'] = sentence
         personal[label]['why'] = why
     _unique_short_headlines(personal)
+    from lib.proposals import classify_proposals
+
+    proposal_counts = classify_proposals(llm, transcript, progress_dir)
     group = generate_group_draft(
         llm,
         transcript=transcript,
@@ -522,6 +525,8 @@ def generate_report_stories(
         progress_dir=progress_dir,
     )
     fallbacks.extend(f'group:{section}' for section in group.get('fallback_sections') or [])
+    if proposal_counts is not None:
+        group['proposal_counts'] = proposal_counts
     reasons = {}
     for label, draft in personal.items():
         for section, reason in (draft.get('rejection_reasons') or {}).items():
