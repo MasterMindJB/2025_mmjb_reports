@@ -10,6 +10,7 @@ PROMPT_DIR = RULES_PATH.parent
 # Which numbered blocks from story_craft_rules.md each section receives.
 SECTION_BLOCKS = {
     'character': ('0', '1', '3', '5', '6'),
+    'group_character': ('0', '3', '5', '6'),
     'goal': ('0', '3', '5'),
     'challenge': ('0', '3', '5', '6'),
     'drama': ('0', '2', '3', '5'),
@@ -52,7 +53,12 @@ def craft_for(section: str) -> str:
 
 def render_section_prompt(*, audience: str, section: str, evidence: str) -> str:
     """Fill one section template with its craft blocks and the computed evidence."""
-    craft_key = 'group_drama' if audience == 'group' and section == 'drama' else section
+    if audience == 'group' and section == 'character':
+        craft_key = 'group_character'
+    elif audience == 'group' and section == 'drama':
+        craft_key = 'group_drama'
+    else:
+        craft_key = section
     name = f'story_{audience}_{section}.txt'
     template = (PROMPT_DIR / name).read_text(encoding='utf-8')
     craft = craft_for(craft_key)

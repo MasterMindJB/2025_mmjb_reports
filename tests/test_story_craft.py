@@ -28,6 +28,9 @@ def test_each_prompt_receives_only_its_blocks():
     drama = craft_for('drama')
     one_thing = craft_for('one_thing')
     group_drama = craft_for('group_drama')
+    group_character = craft_for('group_character')
+    assert 'CHARACTER headline (max 12 words)' not in group_character
+    assert 'leverage, synergy, actionable insights' in group_character
     assert 'Every behavioral claim must point to something checkable' in character
     assert 'CHARACTER headline (max 12 words)' in character
     assert 'leverage, synergy, actionable insights' in character

@@ -133,7 +133,13 @@ def generate_session(
         recipients = [speaker for speaker in included if speaker['receives_report']]
         participant_labels = {speaker['label']: speaker for speaker in recipients}
         participant_labels = set(participant_labels)
-        transcript = _load_transcript(session)
+        from lib.session_window import apply_session_window
+
+        transcript = apply_session_window(
+            _load_transcript(session),
+            session.get('window_start_ms'),
+            session.get('window_end_ms'),
+        )
         noise = {speaker['label'] for speaker in assigned if not speaker['include']}
         if noise:
             for key in ('utterances', 'sentiment_analysis_results'):

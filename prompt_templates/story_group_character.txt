@@ -2,9 +2,10 @@
 
 Section: character
 Audience: group
-Write the CHARACTER headline for the whole conversation, 12 words or fewer, then one short paragraph.
+Write the CHARACTER headline for the whole room, 12 words or fewer. Describe the group, not one person.
+Do not use a role noun. Do not say you, creative, professional, or the speaker.
 Use the interaction score and the comparison in the evidence. Do not invent a rate.
-Do not write digits. Rates are percents, never a count of events. The JSON schema after the evidence is the only output.
+Do not write digits. Do not write utilize or communication style. The JSON schema after the evidence is the only output.
 
 Evidence:
 {evidence}

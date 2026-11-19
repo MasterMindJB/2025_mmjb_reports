@@ -6,7 +6,7 @@ from typing import Optional, TypeAlias
 import pandas as pd
 
 from lib.data_story import group_story, personal_story
-from lib.story_pdf import write_group_story, write_personal_report
+from lib.story_pdf import fit_personal_report, write_group_story
 
 logger_PIL = logging.getLogger('PIL')
 logger_PIL.setLevel(logging.INFO)
@@ -613,15 +613,18 @@ def create_report_personal(
             },
             draft=(story_drafts or {}).get(speaker),
         )
-        pdf = MM_PDF(
-            path_report_assets=path_report_assets,
-            orientation='P',
-            unit='mm',
-            format='letter',
-            link_feedback=link_feedback,
-        )
         chart_dir = path_reports_dir / '_story' / pdf_filename_for(speaker_name).replace('.pdf', '')
-        write_personal_report(pdf, story, chart_dir)
+
+        def make_pdf():
+            return MM_PDF(
+                path_report_assets=path_report_assets,
+                orientation='P',
+                unit='mm',
+                format='letter',
+                link_feedback=link_feedback,
+            )
+
+        pdf = fit_personal_report(story, chart_dir, make_pdf)
         if pdf.link_feedback:
             pdf.add_comments_section()
         pdf.output(speaker_filename)

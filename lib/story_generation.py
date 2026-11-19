@@ -178,16 +178,17 @@ def _batch_prompt(audience: str, sections: tuple[str, ...], evidence: str, feedb
             'and do not treat that story as the reader\'s own life. '
             'A quote must be an exact substring of that speaker\'s turn, with its original capitalization. '
             'Do not drop or recapitalize a leading word. '
-            'Banned words include their inflections, such as leveraging, leveraged, and empowering. '
+            'Banned words include utilize and communication style, and inflections such as leveraging. '
         )
     else:
         voice = (
             'Write about the room. Do not address a reader as you. '
-            'The headline must describe the group, not one person. '
+            'The character headline describes the room, not one person and not a role. '
+            'Do not say creative, professional, you, or the speaker. '
             'Character and challenge each need at least one rate fact, not all three. '
             'Challenge uses words. The rate is already in the facts. '
             'Resolution names who said the closing line, inside quote marks. '
-            'Banned words include their inflections, such as leveraging, leveraged, and empowering. '
+            'Banned words include utilize and communication style, and inflections such as leveraging. '
         )
     rejected = ''
     if feedback:
@@ -251,6 +252,11 @@ def _fill_sections(llm, *, audience, sections, evidence, render, progress_path, 
             _store_progress(progress_path, draft)
         pending = still
     draft['fallback_sections'] = [section for section in sections if section not in (draft.get('accepted') or [])]
+    draft['rejection_reasons'] = {
+        section: reasons[section]
+        for section in draft['fallback_sections']
+        if reasons.get(section)
+    }
 
 
 def _parse_safely(llm, prompt: str):
@@ -460,4 +466,22 @@ def generate_report_stories(
         progress_dir=progress_dir,
     )
     fallbacks.extend(f'group:{section}' for section in group.get('fallback_sections') or [])
-    return {'personal': personal, 'group': group, 'fallbacks': fallbacks}
+    reasons = {}
+    for label, draft in personal.items():
+        for section, reason in (draft.get('rejection_reasons') or {}).items():
+            reasons[f'{label}:{section}'] = reason
+    for section, reason in (group.get('rejection_reasons') or {}).items():
+        reasons[f'group:{section}'] = reason
+    write_fallback_reasons(progress_dir, reasons)
+    return {'personal': personal, 'group': group, 'fallbacks': fallbacks, 'rejection_reasons': reasons}
+
+
+def write_fallback_reasons(progress_dir, reasons: dict) -> None:
+    """The last rejection for each section that still fell back."""
+    if not progress_dir:
+        return
+    from pathlib import Path
+
+    directory = Path(progress_dir)
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / 'fallbacks.json').write_text(json.dumps(reasons, indent=2), encoding='utf-8')

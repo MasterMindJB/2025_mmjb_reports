@@ -17,6 +17,7 @@ BAN_PHRASES = (
     'journey',
     'unlock',
     'empower',
+    'utilize',
     'best practices',
     'communication style',
     'stakeholder alignment',

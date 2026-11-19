@@ -363,6 +363,35 @@ def test_generation_records_progress_and_logs_the_traceback(tmp_path, caplog):
     assert session['progress'] == 'Writing speaker summaries'
 
 
+def test_upload_form_accepts_an_optional_session_window(tmp_path):
+    app, _transcription = build_client(tmp_path)
+    with TestClient(app) as client:
+        login(client)
+        page = client.get('/upload')
+        assert 'name="session_start"' in page.text
+        assert 'name="session_end"' in page.text
+        created = client.post(
+            '/sessions',
+            params={'csrf_token': current_csrf(client)},
+            data={
+                'client': 'Northwind',
+                'group_name': 'Cohort A',
+                'session_name': 'Take a Position',
+                'session_date': '2026-11-18',
+                'speakers_expected': '3',
+                'consent': 'yes',
+                'session_start': '0:30',
+                'session_end': '1:48:00',
+            },
+            files={'recording': ('session.wav', b'RIFFfake-audio', 'audio/wav')},
+            follow_redirects=False,
+        )
+        assert created.status_code == 303
+        stored = app.state.db.get_session(1)
+        assert stored['window_start_ms'] == 30_000
+        assert stored['window_end_ms'] == (1 * 3600 + 48 * 60) * 1000
+
+
 def test_samples_are_clipped_to_200_characters():
     from app.services import speaker_previews
 

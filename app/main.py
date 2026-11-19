@@ -303,6 +303,8 @@ def create_app(
         session_date: str = Form(''),
         speakers_expected: str = Form(''),
         consent: str = Form(''),
+        session_start: str = Form(''),
+        session_end: str = Form(''),
         recording: UploadFile | None = None,
     ):
         try:
@@ -322,6 +324,22 @@ def create_app(
                 expected = int(speakers_expected.strip())
                 if expected < 1 or expected > 25:
                     raise ValueError('Expected speakers must be between 1 and 25, or left blank.')
+            from lib.session_window import parse_clock_ms
+
+            window_start = None
+            window_end = None
+            if session_start.strip():
+                try:
+                    window_start = parse_clock_ms(session_start)
+                except ValueError as exc:
+                    raise ValueError('Session start must be a clock time like 0:00 or 1:05:00.') from exc
+            if session_end.strip():
+                try:
+                    window_end = parse_clock_ms(session_end)
+                except ValueError as exc:
+                    raise ValueError('Session end must be a clock time like 1:48:00.') from exc
+            if window_start is not None and window_end is not None and window_end <= window_start:
+                raise ValueError('Session end has to be after the session start.')
             if recording is None or not recording.filename:
                 raise ValueError('Choose a recording to upload.')
             suffix = Path(recording.filename).suffix.lower()
@@ -340,6 +358,8 @@ def create_app(
             recording_path='',
             recording_filename=Path(recording.filename).name,
             created_at=iso(utcnow()),
+            window_start_ms=window_start,
+            window_end_ms=window_end,
         )
         root = session_root(settings, session_id)
         root.mkdir(parents=True, exist_ok=True)

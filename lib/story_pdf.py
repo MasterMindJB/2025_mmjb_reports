@@ -86,7 +86,14 @@ def _paragraph_height(pdf, text: str, size: int) -> float:
     return max(lines, 1) * pdf.font_size * 1.45
 
 
+def _gap(pdf) -> float:
+    return float(getattr(pdf, '_story_gap', 1.0) or 1.0)
+
+
 def _body(pdf, text: str, size: int = 11) -> None:
+    from lib.story_render import capitalize_sentences
+
+    text = capitalize_sentences(text)
     if not text:
         _flush_heading(pdf)
         return
@@ -100,7 +107,7 @@ def _body(pdf, text: str, size: int = 11) -> None:
     pdf.set_font('Poppins', '', size)
     pdf.set_text_color(20, 33, 74)
     pdf.multi_cell(w=0, text=text)
-    pdf.ln(1)
+    pdf.ln(1 * _gap(pdf))
     if hasattr(pdf, 'note_y'):
         pdf.note_y()
 
@@ -231,7 +238,53 @@ def _image(pdf, path: Path | None, width: float = 0.72) -> None:
         pdf.note_y()
 
 
-def write_personal_report(pdf, story: dict, chart_dir: Path) -> None:
+APPENDIX_FONT_FLOOR = 8
+GAP_FLOOR = 0.7
+
+
+def _appendix_block(pdf, lines: list[str], size: int, columns: int) -> None:
+    _flush_heading(pdf)
+    pdf.ln(2 * _gap(pdf))
+    pdf.set_x(pdf.l_margin)
+    pdf.set_font('Poppins', 'b', 14)
+    pdf.set_text_color(20, 33, 74)
+    pdf.cell(w=0, h=8, text='Appendix: style lenses', ln=True)
+    pdf.set_font('Poppins', '', size)
+    pdf.multi_cell(w=0, text='Top result for each lens.', align='L')
+    if columns >= 2 and len(lines) > 1:
+        col_w = (pdf.epw - 6) / 2
+        midpoint = (len(lines) + 1) // 2
+        left, right = lines[:midpoint], lines[midpoint:]
+        start = pdf.get_y()
+        for line in left:
+            pdf.set_x(pdf.l_margin)
+            pdf.multi_cell(w=col_w, text=line, align='L')
+        left_end = pdf.get_y()
+        pdf.set_y(start)
+        for line in right:
+            pdf.set_x(pdf.l_margin + col_w + 6)
+            pdf.multi_cell(w=col_w, text=line, align='L')
+        pdf.set_y(max(left_end, pdf.get_y()))
+    else:
+        for line in lines:
+            pdf.set_x(pdf.l_margin)
+            pdf.multi_cell(w=0, text=line, align='L')
+    if hasattr(pdf, 'note_y'):
+        pdf.note_y()
+
+
+def write_personal_report(
+    pdf,
+    story: dict,
+    chart_dir: Path,
+    *,
+    gap: float = 1.0,
+    appendix_font: int = 10,
+    appendix_first: bool = False,
+    columns: int = 1,
+) -> None:
+    pdf._story_gap = max(GAP_FLOOR, float(gap))
+    appendix_font = max(APPENDIX_FONT_FLOOR, int(appendix_font))
     pdf.add_page()
     pdf.set_font('Poppins', '', 11)
     pdf.set_text_color(20, 33, 74)
@@ -280,29 +333,41 @@ def write_personal_report(pdf, story: dict, chart_dir: Path) -> None:
     _body(pdf, story['resolution'])
     _transition(pdf, (story.get('transitions') or {}).get('after_resolution'))
     appendix = [f'{name}: {line}' for name, line in (story.get('appendix') or {}).items()]
-    usable = pdf.h - pdf.t_margin - pdf.b_margin
-    appendix_h = 12 + 5 * (1 + len(appendix))
-    together = 36 + appendix_h
-    # A short appendix must not land alone on a page under 15% full.
-    if appendix_h / usable < 0.15 and _remaining(pdf) < together:
-        pdf.add_page()
-    _heading(pdf, 'One thing')
-    _callout(pdf, story['one_thing'], story['why'])
-    _flush_heading(pdf)
-    if _remaining(pdf) < appendix_h and appendix_h / usable >= 0.15:
-        pdf.add_page()
-    pdf.ln(2)
-    pdf.set_x(pdf.l_margin)
-    pdf.set_font('Poppins', 'b', 14)
-    pdf.set_text_color(20, 33, 74)
-    pdf.cell(w=0, h=8, text='Appendix: style lenses', ln=True)
-    pdf.set_font('Poppins', '', 10)
-    pdf.multi_cell(w=0, text='Top result for each lens.', align='L')
-    for line in appendix:
-        pdf.set_x(pdf.l_margin)
-        pdf.multi_cell(w=0, text=line, align='L')
-    if hasattr(pdf, 'note_y'):
-        pdf.note_y()
+
+    def _one_thing() -> None:
+        _heading(pdf, 'One thing')
+        _callout(pdf, story['one_thing'], story['why'])
+        _flush_heading(pdf)
+
+    if appendix_first:
+        _appendix_block(pdf, appendix, appendix_font, columns)
+        _one_thing()
+    else:
+        _one_thing()
+        _appendix_block(pdf, appendix, appendix_font, columns)
+
+
+def fit_personal_report(story: dict, chart_dir: Path, make_pdf):
+    """Re-render when the last page is under 15% full.
+
+    Tighter spacing and a smaller appendix font come first, down to a floor.
+    If the page is still thin, the appendix moves ahead of One Thing, then into two columns.
+    """
+    plans = (
+        {'gap': 1.0, 'appendix_font': 10, 'appendix_first': False, 'columns': 1},
+        {'gap': 0.75, 'appendix_font': 9, 'appendix_first': False, 'columns': 1},
+        {'gap': GAP_FLOOR, 'appendix_font': APPENDIX_FONT_FLOOR, 'appendix_first': True, 'columns': 1},
+        {'gap': GAP_FLOOR, 'appendix_font': APPENDIX_FONT_FLOOR, 'appendix_first': False, 'columns': 2},
+    )
+    chosen = None
+    for plan in plans:
+        pdf = make_pdf()
+        write_personal_report(pdf, story, chart_dir, **plan)
+        ratios = pdf.page_fill_ratios()
+        chosen = pdf
+        if len(ratios) <= 1 or ratios[-1] >= 0.15:
+            break
+    return chosen
 
 
 def _chord_hero(pdf, chord_path) -> None:

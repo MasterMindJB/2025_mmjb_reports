@@ -30,7 +30,9 @@ CREATE TABLE IF NOT EXISTS sessions (
     transcript_deleted_at TEXT,
     assemblyai_deleted_at TEXT,
     assemblyai_delete_error TEXT,
-    sent_at TEXT
+    sent_at TEXT,
+    window_start_ms INTEGER,
+    window_end_ms INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS speakers (
@@ -84,6 +86,8 @@ SESSION_FIELDS = {
     'sent_at',
     'speakers_expected',
     'progress',
+    'window_start_ms',
+    'window_end_ms',
 }
 
 
@@ -103,6 +107,9 @@ class Database:
             columns = {row['name'] for row in conn.execute('PRAGMA table_info(sessions)')}
             if 'progress' not in columns:
                 conn.execute('ALTER TABLE sessions ADD COLUMN progress TEXT')
+            for column in ('window_start_ms', 'window_end_ms'):
+                if column not in columns:
+                    conn.execute(f'ALTER TABLE sessions ADD COLUMN {column} INTEGER')
             speaker_columns = {row['name'] for row in conn.execute('PRAGMA table_info(speakers)')}
             if 'name_status' not in speaker_columns:
                 conn.execute(
@@ -127,14 +134,17 @@ class Database:
         recording_path: str,
         recording_filename: str,
         created_at: str,
+        window_start_ms: int | None = None,
+        window_end_ms: int | None = None,
     ) -> int:
         with self._lock, self._connect() as conn:
             cursor = conn.execute(
                 """
                 INSERT INTO sessions (
                     client, group_name, session_name, session_date, consent_confirmed,
-                    speakers_expected, status, recording_path, recording_filename, created_at
-                ) VALUES (?, ?, ?, ?, 1, ?, 'transcribing', ?, ?, ?)
+                    speakers_expected, status, recording_path, recording_filename, created_at,
+                    window_start_ms, window_end_ms
+                ) VALUES (?, ?, ?, ?, 1, ?, 'transcribing', ?, ?, ?, ?, ?)
                 """,
                 (
                     client,
@@ -145,6 +155,8 @@ class Database:
                     recording_path,
                     recording_filename,
                     created_at,
+                    window_start_ms,
+                    window_end_ms,
                 ),
             )
             return int(cursor.lastrowid)

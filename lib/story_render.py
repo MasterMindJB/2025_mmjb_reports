@@ -150,10 +150,25 @@ def _strip_stated_by(text: str) -> str:
 
 
 def _topic_phrase(claim: str) -> str:
-    """A topic noun phrase. Drop a leading 'The group seeks to' so it is not glued on twice."""
+    """A topic noun phrase. Drop a leading wrapper or infinitive so it is not glued on twice."""
     text = (claim or '').strip().rstrip('.')
-    text = re.sub(r'^(the turns keep returning to)\s+', '', text, flags=re.I)
-    text = re.sub(r'^(the group seeks to)\s+', '', text, flags=re.I)
+    text = re.sub(
+        r'^(the turns keep returning to|the group seeks to|the primary objective involves)\s+',
+        '',
+        text,
+        flags=re.I,
+    )
+    previous = None
+    while previous != text:
+        previous = text
+        text = re.sub(r'^(returning to|to)\s+', '', text, flags=re.I)
+        text = re.sub(r'^identifying\s+', '', text, flags=re.I)
+        text = re.sub(
+            r'^(identify|identifying)\s+(?=(where|when|what|how|why)\b)',
+            '',
+            text,
+            flags=re.I,
+        )
     if text[:1].isupper():
         text = text[0].lower() + text[1:]
     return text
@@ -167,11 +182,29 @@ def _cap_sentence(text: str) -> str:
 
 
 _QUESTION_OPENERS = {'what', 'why', 'how', 'when', 'where', 'who', 'which', 'so'}
-_LOGISTICS = ('photo', 'photos', 'eventbrite', 'picture', 'pictures', 'headshot', 'signup', 'sign up')
+_LOGISTICS_PHRASES = (
+    'photo', 'photos', 'picture', 'pictures', 'headshot', 'smile',
+    'eventbrite', 'signup', 'sign up',
+    'thank you', 'thanks', 'goodbye', 'good bye',
+    'packing up', 'pack up', 'packed up',
+    'they closed', 'closed about', 'closed at',
+)
 
 
 def _word_count(text: str) -> int:
     return len(re.findall(r"[A-Za-z']+", text or ''))
+
+
+def is_logistics(text: str) -> bool:
+    """Photos, smiles, venue hours, thanks, and packing up are not the closer."""
+    lowered = (text or '').lower()
+    count = _word_count(text)
+    if count == 0 or count > 16:
+        return False
+    if any(phrase in lowered for phrase in _LOGISTICS_PHRASES):
+        return True
+    words = re.findall(r"[a-z']+", lowered)
+    return 'present' in words
 
 
 def substantive_line(text: str) -> bool:
@@ -187,16 +220,21 @@ def substantive_line(text: str) -> bool:
 
 
 def closing_clip(text: str, limit: int = 18) -> str | None:
-    """clip_clause must not leave the closer under six words."""
-    clipped = clip_clause(text, limit)
-    if _word_count(clipped) < 6:
-        words = (text or '').split()
-        if _word_count(' '.join(words)) < 6:
-            return None
-        clipped = ' '.join(words[: max(limit, 6)])
-    if _word_count(clipped) < 6 or not substantive_line(clipped):
+    """The closer is the first complete sentence, at least six words, never cut mid-clause.
+
+    'good sign. If Stan if stands, that's' is rejected: the first sentence is too short
+    to borrow the next fragment, and that fragment does not finish a clause.
+    """
+    del limit  # a word cap would cut the clause
+    raw = (text or '').strip()
+    if not raw:
         return None
-    return clipped
+    first = re.split(r'(?<=[.!?])\s+', raw)[0].strip()
+    if _word_count(first) < 6 or not first.endswith(('.', '!', '?')):
+        return None
+    if not substantive_line(first):
+        return None
+    return first
 
 
 def discussion_rows(rows: list) -> list:
@@ -204,9 +242,8 @@ def discussion_rows(rows: list) -> list:
     usable = [row for row in rows or [] if str(row.get('text') or '').strip()]
     while len(usable) > 1:
         text = str(usable[-1].get('text') or '')
-        lowered = text.lower()
         fragment = closing_clip(text) is None
-        if any(token in lowered for token in _LOGISTICS) or fragment:
+        if is_logistics(text) or fragment:
             usable.pop()
             continue
         break
@@ -221,12 +258,18 @@ def last_substantive_utterance(rows: list) -> dict | None:
 
 
 def capitalize_sentences(text: str) -> str:
-    """'average. you struggle' becomes 'average. You struggle'."""
-    return re.sub(
-        r'([.!?])(\s+)([a-z])',
-        lambda match: match.group(1) + match.group(2) + match.group(3).upper(),
-        text or '',
-    )
+    """Capitalize the first letter after a sentence end, including a closing quote.
+
+    'questions. you struggle' becomes 'questions. You struggle'.
+    'form.". integrate' becomes 'form." Integrate'. A stray '.".' collapses to '."'.
+    """
+    cleaned = re.sub(r'([.!?])"\.', r'\1"', text or '')
+    cleaned = re.sub(r'([.!?])”\.', r'\1”', cleaned)
+
+    def _upper(match: re.Match) -> str:
+        return match.group(1) + match.group(2).upper()
+
+    return re.sub(r'((?:[.!?]["”]?)\s+)([a-z])', _upper, cleaned)
 
 
 def clip_clause(text: str, limit: int = 25) -> str:
@@ -342,10 +385,10 @@ def _habit(kind: str, *, share, speaker_count, questions, question_average, turn
     if kind == 'beat':
         if facilitator:
             sentence = 'Pause after a point and hand the turn on. Target: 1 handoff before the next stretch.'
-            why = 'You are running the room, so the useful change is how you hand the turn on.'
+            why = 'You are running the room, so the useful change is one handoff before the next stretch.'
             return sentence, why
         sentence = 'Pause once before you take the next turn. Target: 1 pause before the second point.'
-        why = f'You are at {int(share)}% talk time, near an even share of {room_average(speaker_count)}%.'
+        why = 'The next change is one pause before the second point.'
         return sentence, why
     target = improve_toward(int(turn_words or 1), int(session_turn_words or 1), increase=False)
     sentence = f'Stop once the point is made. Target: {target} words in a turn.'
@@ -412,7 +455,7 @@ def unique_habits(people: list[dict]) -> dict[str, tuple[str, str]]:
     """One habit sentence per person. The largest real gap is claimed first."""
     def ranked_for(person: dict) -> list[tuple[str, float]]:
         average = person.get('question_average', person.get('session_question_average', 0))
-        return ranked_kinds(
+        kinds = ranked_kinds(
             share=person['share'],
             speaker_count=person['speaker_count'],
             questions=person['questions'],
@@ -423,6 +466,9 @@ def unique_habits(people: list[dict]) -> dict[str, tuple[str, str]]:
             late=person.get('late'),
             facilitator=_runs_agenda(person, people),
         )
+        if not any(kind == 'beat' for kind, _size in kinds):
+            kinds.append(('beat', 0))
+        return kinds
 
     used: set[str] = set()
     assigned: dict[str, tuple[str, str]] = {}
@@ -449,30 +495,27 @@ def unique_habits(people: list[dict]) -> dict[str, tuple[str, str]]:
                 placed = True
                 break
         if not placed:
-            sentence, why = _habit(
-                kinds[0][0],
-                share=person['share'],
-                speaker_count=person['speaker_count'],
-                questions=person['questions'],
-                question_average=person.get('question_average', person.get('session_question_average', 0)),
-                turn_words=person.get('turn_words') or 0,
-                session_turn_words=person.get('session_turn_words') or 0,
-                early=person.get('early'),
-                late=person.get('late'),
-                facilitator=_runs_agenda(person, people),
-            )
-            sentence = (
-                f'Pause after your point and hand the turn on. '
-                f'This one is for {label}. Target: 1 handoff.'
-            )
+            sentence, why = _habit('beat', **{
+                'share': person['share'],
+                'speaker_count': person['speaker_count'],
+                'questions': person['questions'],
+                'question_average': person.get('question_average', person.get('session_question_average', 0)),
+                'turn_words': person.get('turn_words') or 0,
+                'session_turn_words': person.get('session_turn_words') or 0,
+                'early': person.get('early'),
+                'late': person.get('late'),
+                'facilitator': _runs_agenda(person, people),
+            })
+            for alternate in (
+                sentence,
+                'Wait for one answer before you add the next point. Target: 1 pause before the second point.',
+                'Hand the turn on after one point. Target: 1 handoff before the next stretch.',
+            ):
+                if alternate not in used:
+                    sentence = alternate
+                    break
             used.add(sentence)
             assigned[label] = (sentence, why)
-    seen: set[str] = set()
-    for label, (sentence, why) in list(assigned.items()):
-        if sentence in seen:
-            sentence = f'{sentence} This one is for {label}.'
-        seen.add(sentence)
-        assigned[label] = (sentence, why)
     return assigned
 
 
@@ -908,7 +951,9 @@ def render_personal_section(section: str, data: dict, *, transcript, label: str,
         )
         quote = data.get('quote') if isinstance(data.get('quote'), dict) else {}
         text = own_quote(str(quote.get('text') or ''), str(quote.get('ts') or ''), transcript, label)
-        return {'goal': f'Inferred from what you said: {claim.rstrip(".")}. At {quote.get("ts")} you said "{text}".'}
+        return {'goal': capitalize_sentences(
+            f'Inferred from what you said: {claim.rstrip(".")}. At {quote.get("ts")} you said "{text}".'
+        )}
     if section == 'challenge':
         claim = _prose(
             str(data.get('claim') or ''), corpus, 'claim',
@@ -918,7 +963,7 @@ def render_personal_section(section: str, data: dict, *, transcript, label: str,
         if key not in facts:
             raise OutputParserException(f'challenge fact_key is not allowed: {key}')
         line = str(facts[key]['line']).rstrip('.')
-        return {'challenge': f'{line}. {claim.rstrip(".")}.'}
+        return {'challenge': capitalize_sentences(f'{line}. {claim.rstrip(".")}.')}
     if section == 'drama':
         return {'drama': render_drama(data, transcript, label, corpus, forbidden)}
     if section == 'resolution':
@@ -928,7 +973,9 @@ def render_personal_section(section: str, data: dict, *, transcript, label: str,
         )
         quote = data.get('quote') if isinstance(data.get('quote'), dict) else {}
         text = own_quote(str(quote.get('text') or ''), str(quote.get('ts') or ''), transcript, label)
-        return {'resolution': f'At {quote.get("ts")} you said "{text}". {claim.rstrip(".")}.'}
+        return {'resolution': capitalize_sentences(
+            f'At {quote.get("ts")} you said "{text}". {claim.rstrip(".")}.'
+        )}
     if section == 'one_thing':
         sentence, why = render_one_thing(
             data, facts, corpus, forbidden, transcript=transcript, label=label
@@ -937,19 +984,35 @@ def render_personal_section(section: str, data: dict, *, transcript, label: str,
     raise OutputParserException(f'unknown section {section}')
 
 
+def _room_headline(candidate: str, facts: dict) -> str:
+    """Keep a room headline. A personal, numbered, or over-long one is replaced, not fatal."""
+    interaction = int((facts.get('interaction') or {}).get('value') or 0)
+    fallback = (
+        'The turns stayed with a few voices'
+        if interaction < 50
+        else 'The room kept handing the turn across'
+    )
+    try:
+        headline = _prose(candidate, '', 'headline')
+    except OutputParserException:
+        return fallback
+    if word_count(headline) > 12 or group_headline_is_personal(headline):
+        return fallback
+    return headline
+
+
 def render_group_section(section: str, data: dict, *, transcript, facts: dict, cast: str) -> dict:
     corpus = corpus_text(transcript, None)
     if section == 'character':
-        headline = _prose(str(data.get('headline') or ''), corpus, 'headline')
-        if word_count(headline) > 12:
-            raise OutputParserException('headline is over 12 words')
-        if group_headline_is_personal(headline):
-            raise OutputParserException(
-                'group headline must describe the room, not one person: ' + headline
-            )
         if 'interaction' not in facts and 'participation' not in facts:
             raise OutputParserException('group character needs at least one rate fact')
-        return {'headline': headline, 'character': group_character_copy(facts)}
+        # The paragraph is computed from the facts. A personal or over-long headline
+        # used to reject the whole section on every run, so the report fell back.
+        headline = _room_headline(str(data.get('headline') or ''), facts)
+        return {
+            'headline': headline,
+            'character': capitalize_sentences(group_character_copy(facts)),
+        }
     if section in ('goal', 'resolution'):
         claim = _prose(_strip_stated_by(str(data.get('claim') or '')), corpus, section)
         closing_row = last_substantive_utterance((transcript or {}).get('utterances') or [])
@@ -984,7 +1047,7 @@ def render_group_section(section: str, data: dict, *, transcript, facts: dict, c
             )
         line = str(facts[key]['line']).rstrip('.')
         return {
-            'challenge': (
+            'challenge': capitalize_sentences(
                 f'{line}. {claim.rstrip(".")}. '
                 'A turn could finish without an answer from across the room.'
             )

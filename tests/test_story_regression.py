@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from langchain_core.exceptions import OutputParserException
 
@@ -377,23 +379,25 @@ def test_voice_post_fix_and_unquoted_first_person():
 def test_group_headline_and_halfway_target_are_about_the_room():
     from lib.story_render import group_halfway_target, render_group_section
 
-    with pytest.raises(OutputParserException):
-        render_group_section(
-            'character',
-            {'headline': 'A determined creative professional'},
-            transcript=synthetic_transcript(),
-            facts={
-                'interaction': {'value': 20, 'unit': 'percent', 'line': '20% interaction'},
-                'participation': {'value': 80, 'unit': 'percent', 'line': '80% participation'},
-                '_portrait': {
-                    'pair': ('Alex Rivera', 'Blake Chen'),
-                    'least': 'Leslie',
-                    'low_share': 6,
-                    'high_share': 40,
-                },
+    replaced = render_group_section(
+        'character',
+        {'headline': 'A determined creative professional'},
+        transcript=synthetic_transcript(),
+        facts={
+            'interaction': {'value': 20, 'unit': 'percent', 'line': '20% interaction'},
+            'participation': {'value': 80, 'unit': 'percent', 'line': '80% participation'},
+            '_portrait': {
+                'pair': ('Alex Rivera', 'Blake Chen'),
+                'least': 'Leslie',
+                'low_share': 6,
+                'high_share': 40,
             },
-            cast='Who talks to whom.',
-        )
+        },
+        cast='Who talks to whom.',
+    )
+    assert 'creative' not in replaced['headline'].lower()
+    assert '20% interaction' in replaced['character']
+    assert 'Alex Rivera and Blake Chen' in replaced['character']
     target, norm, name = group_halfway_target(20, 80, 40)
     assert target == 50
     assert norm == 80
@@ -515,7 +519,7 @@ def test_closing_line_skips_fragments_and_the_next_sentence_is_capitalized():
         facts=facts,
         cast='',
     )
-    assert '. You told' in rendered['resolution']
+    assert '." You told' in rendered['resolution']
     assert 'as stated by' not in rendered['resolution'].lower()
     with pytest.raises(OutputParserException):
         render_group_section(
@@ -665,3 +669,177 @@ def test_stock_pipeline_puts_the_facilitator_role_on_the_speaker_map():
     apply_speaker_roles(speaker_map, {'A': 'facilitator', 'B': 'participant'}, {'B'})
     assert speaker_map['A']['role'] == 'facilitator'
     assert speaker_map['B']['role'] == 'participant'
+
+
+def test_closer_rejects_a_mid_clause_cut_and_the_window_drops_logistics():
+    from lib.session_window import apply_session_window, parse_clock_ms
+    from lib.story_render import closing_clip, last_substantive_utterance
+
+    broken = "good sign. If Stan if stands, that's"
+    assert closing_clip(broken) is None
+    rows = [
+        {'speaker': 'A', 'text': 'We should settle the budget and the timeline before we leave.', 'start': 0, 'end': 4000},
+        {'speaker': 'B', 'text': broken, 'start': 4000, 'end': 8000},
+        {'speaker': 'A', 'text': 'Smile for the photo.', 'start': 8000, 'end': 9000},
+        {'speaker': 'B', 'text': 'They closed about 9.', 'start': 9000, 'end': 10000},
+        {'speaker': 'A', 'text': 'Thanks, goodbye.', 'start': 10000, 'end': 11000},
+        {'speaker': 'C', 'text': 'Present for the picture.', 'start': 11000, 'end': 12000},
+        {'speaker': 'B', 'text': 'We are packing up now.', 'start': 12000, 'end': 13000},
+    ]
+    chosen = last_substantive_utterance(rows)
+    assert chosen['text'].startswith('We should settle')
+    trimmed = apply_session_window({'utterances': rows, 'sentiment_analysis_results': rows})
+    assert [row['text'] for row in trimmed['utterances']] == [rows[0]['text']]
+    assert trimmed['session_window']['auto_end'] is True
+    explicit = apply_session_window({'utterances': rows}, start_ms=0, end_ms=parse_clock_ms('0:04'))
+    assert explicit['utterances'][0]['text'].startswith('We should settle')
+    assert all(row['start'] <= 4000 for row in explicit['utterances'])
+    import json
+    from pathlib import Path
+
+    from lib.session_window import main
+
+    folder = Path(__import__('tempfile').mkdtemp())
+    source = folder / 'transcript.json'
+    source.write_text(json.dumps({'utterances': rows}), encoding='utf-8')
+    output = folder / 'trimmed.json'
+    assert main(['--session-start', '0:00', '--session-end', '0:04', str(source), '--output', str(output)]) == 0
+    saved = json.loads(output.read_text(encoding='utf-8'))
+    assert saved['utterances'][0]['text'].startswith('We should settle')
+
+
+def test_render_capitalizes_after_a_quote_and_collapses_a_stray_period():
+    from lib.story_render import capitalize_sentences
+
+    assert capitalize_sentences('questions. you struggle') == 'questions. You struggle'
+    assert capitalize_sentences('form.". integrate') == 'form." Integrate'
+    assert capitalize_sentences('form.".') == 'form."'
+
+
+def test_habits_do_not_leak_diarization_letters_and_the_why_matches():
+    from lib.story_render import unique_habits
+
+    shared = {
+        'share': 8, 'speaker_count': 14, 'questions': 4, 'question_average': 2,
+        'turn_words': 20, 'session_turn_words': 20, 'early': 10, 'late': 70, 'role': 'participant',
+    }
+    habits = unique_habits([
+        {'label': 'N', **shared},
+        {'label': 'H', **shared},
+        {'label': 'Corey', **shared},
+    ])
+    for label, (sentence, why) in habits.items():
+        assert 'This one is for N.' not in sentence
+        assert 'This one is for H.' not in sentence
+        assert 'This one is for' not in sentence
+        if 'last third' in sentence:
+            assert 'third' in why.lower()
+        elif 'question' in sentence.lower():
+            assert 'question' in why.lower()
+        elif 'talk time' in sentence:
+            assert 'talk time' in why.lower()
+        else:
+            assert 'pause' in why.lower() or 'handoff' in why.lower()
+            assert 'third' not in why.lower()
+    assert len({item[0] for item in habits.values()}) == 3
+
+
+def test_utilize_and_communication_style_are_banned_in_story_prose():
+    with pytest.raises(OutputParserException):
+        reject_craft_violations('You utilize the opening to set the plan for the room.')
+    with pytest.raises(OutputParserException):
+        reject_craft_violations('That communication style showed up in the first turn of the hour.')
+
+
+def test_goal_strips_a_leading_infinitive_down_to_the_noun_phrase():
+    from lib.story_render import _topic_phrase, render_group_section
+
+    assert _topic_phrase('returning to identify where value breaks') == 'where value breaks'
+    assert _topic_phrase('the primary objective involves identifying the break') == 'the break'
+    rendered = render_group_section(
+        'goal',
+        {'claim': 'returning to identify where value breaks when the client leaves'},
+        transcript=synthetic_transcript(),
+        facts={'interaction': {'value': 20, 'line': '20% interaction', 'unit': 'percent'}},
+        cast='',
+    )
+    assert rendered['goal'] == 'The turns keep returning to where value breaks when the client leaves.'
+
+
+def test_group_character_keeps_the_facts_when_the_headline_is_personal(tmp_path):
+    from lib.story_generation import _fill_sections, write_fallback_reasons
+    from lib.story_render import render_group_section
+
+    facts = {'interaction': {'value': 42, 'line': '42% interaction', 'unit': 'percent'}, 'participation': {'value': 80}}
+    rendered = render_group_section(
+        'character',
+        {'headline': 'A determined creative professional'},
+        transcript=synthetic_transcript(),
+        facts=facts,
+        cast='',
+    )
+    assert 'creative' not in rendered['headline'].lower()
+    assert '42% interaction' in rendered['character']
+
+    class PersonalHeadline:
+        def invoke(self, prompt):
+            return type('Reply', (), {'content': '{"character": {"headline": "A determined creative professional"}}'})()
+
+    draft = {'accepted': []}
+    _fill_sections(
+        PersonalHeadline(),
+        audience='group',
+        sections=('character',),
+        evidence='FACTS',
+        render=lambda section, data: render_group_section(
+            section, data, transcript=synthetic_transcript(), facts=facts, cast=''
+        ),
+        progress_path=None,
+        draft=draft,
+    )
+    assert 'character' not in draft.get('fallback_sections') or []
+    assert '42% interaction' in draft['character']
+    write_fallback_reasons(tmp_path, {'group:character': 'group headline must describe the room'})
+    saved = json.loads((tmp_path / 'fallbacks.json').read_text(encoding='utf-8'))
+    assert saved['group:character'] == 'group headline must describe the room'
+
+
+def test_annie_like_seven_person_report_compacts_a_thin_last_page(tmp_path):
+    from lib.pdf_functions import MM_PDF
+    from lib.story_pdf import fit_personal_report, write_personal_report
+
+    # Eden, Stephanie, and Jrick each finished on a page under 15% full.
+    names = ['Annie', 'Corey', 'Eden', 'Stephanie', 'Jrick', 'Leslie', 'Noah']
+    short = 'You set one point down and the next voice answered it before the hour moved on.'
+    story = {
+        'headline': 'You came in and set a point down',
+        'numbers': [
+            '8% talk time: below the room average.',
+            '1 question: below the session average of 4 questions.',
+            '6 turns: you came in 6 times.',
+        ],
+        'character_body': short,
+        'share': 8,
+        'goal': short,
+        'challenge': short,
+        'drama': short,
+        'resolution': short,
+        'one_thing': 'Ask one question before you add another point. Target: 4 questions.',
+        'why': ' '.join(['The question count is the gap this session can measure next time.'] * 12),
+        'transitions': {},
+        'signature': {'phrase': '', 'count': 0, 'quotes': [], 'what': '', 'so_what': '', 'now_what': ''},
+        'lines': [],
+        'session_end_ms': 0,
+        'appendix': {name: 'One line for the lens.' for name in ('AMASE', 'Enneagram', 'Doshas')},
+    }
+    assert len(names) == 7
+
+    def make_pdf():
+        return MM_PDF(path_report_assets=__import__('pathlib').Path('report_assets'))
+
+    plain = make_pdf()
+    write_personal_report(plain, story, tmp_path / 'charts')
+    plain_ratios = plain.page_fill_ratios()
+    assert plain_ratios[-1] < 0.15
+    fitted = fit_personal_report(story, tmp_path / 'fitted', make_pdf)
+    assert fitted.page_fill_ratios()[-1] >= 0.15

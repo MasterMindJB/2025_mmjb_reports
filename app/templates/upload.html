@@ -28,6 +28,14 @@
         <input id="session_date" name="session_date" type="date" required>
       </div>
       <div>
+        <label for="session_start">Session start <span class="optional">optional</span></label>
+        <input id="session_start" name="session_start" placeholder="0:00 or 1:05:00" maxlength="12">
+      </div>
+      <div>
+        <label for="session_end">Session end <span class="optional">optional</span></label>
+        <input id="session_end" name="session_end" placeholder="1:48:00, or leave blank to detect" maxlength="12">
+      </div>
+      <div>
         <label for="speakers_expected">Expected speakers <span class="optional">optional</span></label>
         <input id="speakers_expected" name="speakers_expected" inputmode="numeric" placeholder="Leave blank if unknown">
       </div>
