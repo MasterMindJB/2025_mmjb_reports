@@ -134,22 +134,63 @@ def _legacy_tail(usable: list) -> list:
     return rows
 
 
+def substantive_body(text: str) -> str:
+    """Drop a trailing thanks so 'Last word. Thank you all for coming.' keeps the substance."""
+    parts = [part.strip() for part in re.split(r'(?<=[.!?])\s+', (text or '').strip()) if part.strip()]
+    while len(parts) > 1 and is_closing_cue(parts[-1]):
+        parts.pop()
+    return ' '.join(parts).strip()
+
+
+def _key_count(text: str, keys: set[str]) -> int:
+    if not keys:
+        return 0
+    return len(set(content_words(text)) & keys)
+
+
+def _later_turn_counts(text: str, keys: set[str]) -> bool:
+    """After a closing cue, only a long panel turn with three topic keys can move the end."""
+    from lib.story_render import _word_count
+
+    return _word_count(text) >= 15 and _key_count(text, keys) >= 3
+
+
+def _last_substantive_index(usable: list, keys: set[str]) -> int | None:
+    from lib.story_render import _word_count, closing_clip, is_logistics
+
+    last = None
+    after_close = False
+    for index, row in enumerate(usable):
+        text = str(row.get('text') or '')
+        if is_closing_cue(text):
+            after_close = True
+        if not _panel_voice(row):
+            continue
+        body = substantive_body(text)
+        mixed = bool(body) and body != text.strip() and not is_closing_cue(body)
+        content = body if mixed else text
+        if is_logistics(text) and not mixed:
+            continue
+        if is_closing_cue(content) or not content:
+            continue
+        if _word_count(content) < 6 or closing_clip(content) is None:
+            continue
+        counts = _later_turn_counts(content, keys) if after_close and not mixed else on_topic(content, keys)
+        if not counts:
+            continue
+        last = index
+        if mixed:
+            after_close = True
+    return last
+
+
 def window_through_closing(rows: list) -> list:
-    """Last on-topic panel turn, then the closing cues, then cut."""
+    """Last substantive turn, then the first closing-cue block, then cut."""
     usable = [row for row in rows or [] if str(row.get('text') or '').strip()]
     if not usable:
         return []
     keys = topic_keys(usable)
-    last_on = None
-    if len(keys) >= 2:
-        from lib.story_render import is_logistics
-
-        for index, row in enumerate(usable):
-            text = str(row.get('text') or '')
-            if is_closing_cue(text) or is_logistics(text) or not _panel_voice(row):
-                continue
-            if on_topic(text, keys):
-                last_on = index
+    last_on = _last_substantive_index(usable, keys) if len(keys) >= 2 else None
     if last_on is None:
         return _legacy_tail(usable)
     end = last_on
@@ -161,21 +202,25 @@ def window_through_closing(rows: list) -> list:
 
 
 def closer_turn(rows: list) -> dict | None:
-    """The last substantive on-topic turn before the closing cues."""
-    from lib.story_render import closing_clip, is_logistics
-
+    """The last substantive on-topic turn. Trailing thanks in that turn are removed."""
     usable = [row for row in rows or [] if str(row.get('text') or '').strip()]
     keys = topic_keys(usable)
-    window = window_through_closing(usable)
-    for row in reversed(window):
-        text = str(row.get('text') or '')
-        if is_closing_cue(text) or is_logistics(text):
-            continue
-        if len(keys) >= 2 and not on_topic(text, keys):
-            continue
-        if closing_clip(text):
-            return row
-    return None
+    last_on = _last_substantive_index(usable, keys) if len(keys) >= 2 else None
+    if last_on is None:
+        from lib.story_render import closing_clip, is_logistics
+
+        for row in reversed(_legacy_tail(usable)):
+            text = substantive_body(str(row.get('text') or ''))
+            if is_closing_cue(text) or is_logistics(text):
+                continue
+            if closing_clip(text):
+                chosen = dict(row)
+                chosen['text'] = text
+                return chosen
+        return None
+    chosen = dict(usable[last_on])
+    chosen['text'] = substantive_body(str(chosen.get('text') or ''))
+    return chosen
 
 
 def apply_session_window(transcript: dict, start_ms: int | None = None, end_ms: int | None = None) -> dict:
