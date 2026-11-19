@@ -161,15 +161,15 @@ def _same_clock(given: str, shown: str) -> bool:
         return False
 
 
-def own_quote(text: str, timestamp: str, transcript: dict | None, label: str) -> str:
-    """Accept a quote only when it is this speaker's line, in that turn's own words and clock."""
+def own_quote_turn(text: str, timestamp: str, transcript: dict | None, label: str) -> tuple[str, str]:
+    """The quote and the turn id. Two clips of one turn share an id."""
     from lib.story_evidence import clock
 
     cleaned = (text or '').strip().strip('"').strip()
     if quote_word_count(cleaned) < 3:
         _fail('quote is under 3 words and does not count as evidence')
     given = str(timestamp or '').strip()
-    for row in (transcript or {}).get('utterances') or []:
+    for index, row in enumerate((transcript or {}).get('utterances') or []):
         if row.get('speaker') != label:
             continue
         shown = _quote_in_turn(cleaned, str(row.get('text') or ''))
@@ -177,9 +177,16 @@ def own_quote(text: str, timestamp: str, transcript: dict | None, label: str) ->
             continue
         shown_clock = clock(row.get('start'))
         if given == shown_clock or _same_clock(given, shown_clock):
-            return shown
+            turn_id = str(row.get('start') if row.get('start') is not None else index)
+            return shown, turn_id
     _fail(f'quote is not inside a turn by {label}: {cleaned}')
-    return cleaned
+    return cleaned, ''
+
+
+def own_quote(text: str, timestamp: str, transcript: dict | None, label: str) -> str:
+    """Accept a quote only when it is this speaker's line, in that turn's own words and clock."""
+    shown, _turn_id = own_quote_turn(text, timestamp, transcript, label)
+    return shown
 
 
 def _named_people(text: str) -> list[str]:
@@ -337,7 +344,38 @@ def normalize_mid_sentence_capitals(text: str, names: list[str] | None = None) -
 
 
 def _outside_quotes(text: str) -> str:
-    return re.sub(r'("[^"]*"|“[^”]*”)', ' ', text or '')
+    masked = re.sub(r'("[^"]*"|“[^”]*”)', ' ', text or '')
+    return re.sub(r"(?<![A-Za-z])'([^']+)'(?![A-Za-z])", ' ', masked)
+
+
+_KEEP_NAME = {
+    'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday',
+    'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August',
+    'September', 'October', 'November', 'December',
+    'The', 'This', 'That', 'These', 'Those', 'There', 'When', 'Where', 'After',
+    'Before', 'During', 'Every', 'Your', 'Here', 'Then', 'With', 'From', 'Into',
+    'Over', 'About', 'Group', 'Room', 'Turns', 'Meeting', 'What', 'Which',
+    'You', 'Identify', 'Maintain', 'Keep', 'Build', 'Find', 'Name', 'Show',
+    'Make', 'Give', 'Hold', 'Share', 'Stop', 'Start', 'Test', 'Move', 'Ask',
+    'Pause', 'Wait', 'Set', 'Use',
+}
+
+
+def unconfirmed_personal_name(text: str, confirmed: list[str] | None) -> str | None:
+    """A capitalized name that is not one of the confirmed speaker names."""
+    if not confirmed:
+        return None
+    allowed = set()
+    for name in confirmed:
+        allowed.add(name.casefold())
+        allowed.update(part.casefold() for part in re.findall(r"[A-Za-z']+", name) if len(part) > 1)
+    allowed.update(word.casefold() for word in _KEEP_NAME)
+    for match in re.finditer(r'\b([A-Z][a-z]{2,})\b', text or ''):
+        word = match.group(1)
+        if word.casefold() in allowed:
+            continue
+        return word
+    return None
 
 
 _RELAY = re.compile(
@@ -384,6 +422,7 @@ def reject_craft_violations(
     one_thing: bool = False,
     speaker_label: str | None = None,
     participant_names: list[str] | None = None,
+    confirmed_names: list[str] | None = None,
     skip_bans: tuple[str, ...] = (),
     personal_voice: bool = False,
 ) -> str:
@@ -426,13 +465,17 @@ def reject_craft_violations(
         for person in _named_people(cleaned):
             if person.casefold() not in allowed and not person.casefold().startswith('speaker '):
                 _fail(f'story text names someone who is not in the session: {person}')
+    stray = unconfirmed_personal_name(cleaned, confirmed_names)
+    if stray:
+        _fail(f'story text names {stray}, who is not a confirmed speaker')
     if personal_voice or speaker_label is not None:
         outside = _outside_quotes(cleaned)
         outside_lower = outside.lower()
         if re.search(r'\b(the speaker|the student|the participant|the individual)\b', outside_lower):
             _fail('personal story must say you, not a role label')
-        if re.search(r'\b(he|she|his|her|they)\b', outside_lower):
-            _fail('personal story must stay in second person')
+        voice_hit = re.search(r'\b(he|she|his|her|they)\b', outside_lower)
+        if voice_hit:
+            _fail(f'personal story must stay in second person: {voice_hit.group(0)!r}')
         if re.search(r"\b(I|I'll|I'm|I've|I'd)\b", outside):
             _fail('personal story uses first person outside a quote')
         relay = reported_speech_problem(cleaned, transcript, speaker_label)

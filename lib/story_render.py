@@ -7,7 +7,7 @@ import re
 from langchain_core.exceptions import OutputParserException
 
 from lib.story_evidence import before_after, clock
-from lib.story_validation import BAN_PHRASES, own_quote, reject_craft_violations, word_count
+from lib.story_validation import BAN_PHRASES, own_quote, own_quote_turn, reject_craft_violations, word_count
 
 SCHEMAS = {
     'personal': {
@@ -236,6 +236,15 @@ def verb_phrase(claim: str) -> str:
     """A goal is a verb phrase. The first kept token is a base verb, never 'the'."""
     text = _strip_stated_by(claim).strip().rstrip('.')
     text = re.sub(r'^(?:the room|you)\s+set out to\s+', '', text, flags=re.I)
+    previous = None
+    while previous != text:
+        previous = text
+        text = re.sub(
+            r'^(?:i want to|we need to|the goal is to|to|you)\s+',
+            '',
+            text,
+            flags=re.I,
+        )
     words = text.split()
     for index, word in enumerate(words):
         if word.lower() == 'the':
@@ -736,6 +745,15 @@ def group_character_copy(facts: dict) -> str:
 def _no_digits(text: str, label: str, allowed: set[str] | None = None) -> str:
     cleaned = (text or '').strip()
     extra = [number for number in re.findall(r'\d+', cleaned) if not allowed or number not in allowed]
+    if label == 'cost' and extra:
+        def _keep(match: re.Match) -> str:
+            number = re.search(r'\d+', match.group(0))
+            if number and allowed and number.group(0) in allowed:
+                return match.group(0)
+            return ''
+
+        cleaned = re.sub(r'\b\d+\s*[A-Za-z%]*', _keep, cleaned)
+        return re.sub(r'\s{2,}', ' ', cleaned).strip(' ,;')
     if extra and allowed is None:
         raise OutputParserException(f'{label} must not contain a digit; facts supply the numbers')
     if extra and allowed is not None:
@@ -751,6 +769,7 @@ def _prose(
     forbidden_names: list[str] | None = None,
     allowed_numbers: set[str] | None = None,
     speaker_names: list[str] | None = None,
+    confirmed_names: list[str] | None = None,
     transcript: dict | None = None,
     speaker_label: str | None = None,
 ) -> str:
@@ -766,6 +785,7 @@ def _prose(
         forbidden_names=forbidden_names,
         speaker_label=speaker_label,
         participant_names=speaker_names,
+        confirmed_names=confirmed_names,
     )
     return capitalize_sentences(cleaned)
 
@@ -1022,24 +1042,40 @@ def render_one_thing(
     return sentence, why
 
 
-def render_drama(data: dict, transcript, label: str, corpus: str, forbidden: list[str] | None) -> str:
+def render_drama(
+    data: dict,
+    transcript,
+    label: str,
+    corpus: str,
+    forbidden: list[str] | None,
+    facts: dict | None = None,
+) -> str:
     patterns = data.get('patterns')
     if not isinstance(patterns, list) or not patterns or len(patterns) > 2:
         raise OutputParserException('drama needs one or two patterns')
     sentences = []
     mights = 0
     seen_quotes: set[str] = set()
+    seen_turns: set[str] = set()
+    allowed_numbers = {
+        str(item['value'])
+        for item in (facts or {}).values()
+        if isinstance(item, dict) and 'value' in item
+    }
     for pattern in patterns:
         quotes = pattern.get('quotes') if isinstance(pattern, dict) else None
         if not isinstance(quotes, list) or not quotes or len(quotes) > 3:
             raise OutputParserException('each pattern needs 1 to 3 quotes')
         rendered_quotes = []
         for item in quotes:
-            text = own_quote(str(item.get('text') or ''), str(item.get('ts') or ''), transcript, label)
+            text, turn_id = own_quote_turn(
+                str(item.get('text') or ''), str(item.get('ts') or ''), transcript, label
+            )
             if _word_count(text) < 6:
                 raise OutputParserException('drama quote is under 6 words')
             rendered_quotes.append((str(item.get('ts')).strip(), text))
             seen_quotes.add(_normalize_quote(text))
+            seen_turns.add(turn_id)
         pattern_text = _prose(
             str(pattern.get('pattern') or ''), corpus, 'pattern',
             forbidden_names=forbidden, transcript=transcript, speaker_label=label,
@@ -1050,7 +1086,8 @@ def render_drama(data: dict, transcript, label: str, corpus: str, forbidden: lis
         )
         cost = _prose(
             str(pattern.get('cost') or ''), corpus, 'cost',
-            forbidden_names=forbidden, transcript=transcript, speaker_label=label,
+            forbidden_names=forbidden, allowed_numbers=allowed_numbers,
+            transcript=transcript, speaker_label=label,
         )
         gift = _prose(
             str(pattern.get('gift') or ''), corpus, 'gift',
@@ -1069,13 +1106,13 @@ def render_drama(data: dict, transcript, label: str, corpus: str, forbidden: lis
     exception = data.get('exception') if isinstance(data.get('exception'), dict) else None
     if not exception:
         raise OutputParserException('drama needs an exception')
-    exception_quote = own_quote(
+    exception_quote, exception_turn = own_quote_turn(
         str(exception.get('quote') or ''), str(exception.get('ts') or ''), transcript, label
     )
     if _word_count(exception_quote) < 6:
         raise OutputParserException('drama quote is under 6 words')
-    if _normalize_quote(exception_quote) in seen_quotes:
-        raise OutputParserException('drama counter-moment must be a different quote from the evidence')
+    if exception_turn in seen_turns:
+        raise OutputParserException('drama counter-moment must come from a different turn')
     happened = _prose(
         str(exception.get('what_happened') or ''), corpus, 'what_happened',
         forbidden_names=forbidden, transcript=transcript, speaker_label=label,
@@ -1098,8 +1135,7 @@ def _normalize_quote(text: str) -> str:
 
 
 def foreign_phrase(text: str, transcript, label: str) -> str | None:
-    """A run of the headline that belongs to someone else's turn."""
-    words = re.findall(r"[A-Za-z']+", text or '')
+    """A headline phrase that belongs to someone else's turn, not this speaker's."""
     own = ' '.join(
         str(row.get('text') or '')
         for row in (transcript or {}).get('utterances') or []
@@ -1110,6 +1146,14 @@ def foreign_phrase(text: str, transcript, label: str) -> str | None:
         for row in (transcript or {}).get('utterances') or []
         if row.get('speaker') != label
     ]
+    content = [word for word in re.findall(r"[A-Za-z']+", text or '') if len(word) >= 4]
+    for index in range(len(content) - 1):
+        pair = f'{content[index]} {content[index + 1]}'.lower()
+        if pair in own:
+            continue
+        if any(pair in other for other in others):
+            return pair
+    words = re.findall(r"[A-Za-z']+", text or '')
     for size in (6, 5, 4):
         if len(words) < size:
             continue
@@ -1132,8 +1176,10 @@ def render_personal_section(section: str, data: dict, *, transcript, label: str,
             str(data.get('headline') or ''), corpus, 'headline',
             forbidden_names=forbidden, transcript=transcript, speaker_label=label,
         )
-        if word_count(headline) > 12:
-            raise OutputParserException('headline is over 12 words')
+        if headline[:1].islower():
+            headline = headline[0].upper() + headline[1:]
+        if word_count(headline) > 14:
+            raise OutputParserException('headline is over 14 words')
         leaked = foreign_phrase(headline, transcript, label)
         if leaked:
             raise OutputParserException(f'headline uses another speaker\'s line: {leaked}')
@@ -1158,7 +1204,7 @@ def render_personal_section(section: str, data: dict, *, transcript, label: str,
         line = str(facts[key]['line']).rstrip('.')
         return {'challenge': capitalize_sentences(f'{line}. {claim.rstrip(".")}.')}
     if section == 'drama':
-        return {'drama': render_drama(data, transcript, label, corpus, forbidden)}
+        return {'drama': render_drama(data, transcript, label, corpus, forbidden, facts)}
     if section == 'resolution':
         claim = _prose(
             str(data.get('claim') or ''), corpus, 'claim',
@@ -1207,7 +1253,13 @@ def render_group_section(section: str, data: dict, *, transcript, facts: dict, c
             'character': capitalize_sentences(group_character_copy(facts)),
         }
     if section in ('goal', 'resolution'):
-        claim = _prose(_strip_stated_by(str(data.get('claim') or '')), corpus, section)
+        claim = _prose(
+            _strip_stated_by(str(data.get('claim') or '')),
+            corpus,
+            section,
+            speaker_names=list(facts.get('_names') or []) or None,
+            confirmed_names=list(facts.get('_names') or []) or None,
+        )
         closing_row = last_substantive_utterance((transcript or {}).get('utterances') or [])
         closing = clip_clause(str(closing_row.get('text') or ''), 18) if closing_row else ''
         if section == 'goal':
@@ -1220,6 +1272,13 @@ def render_group_section(section: str, data: dict, *, transcript, facts: dict, c
         if spoken and _word_count(spoken) < 6:
             spoken = ''
         claim = _strip_stated_by(claim)
+        if re.search(r'\bthe session begins with\b', claim, re.I):
+            raise OutputParserException("resolution must not say 'The session begins with'")
+        from lib.story_validation import unconfirmed_personal_name
+
+        stray = unconfirmed_personal_name(claim, list(facts.get('_names') or []))
+        if stray:
+            raise OutputParserException(f'resolution names {stray}, who is not a confirmed speaker')
         follow = _cap_sentence(claim.rstrip('.'))
         if spoken:
             landed = f'The meeting closed on {speaker}, who said "{spoken}". '

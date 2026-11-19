@@ -312,8 +312,8 @@ def personal_story(
         said = closing_clip(evidence_event['text']) or clip_clause(evidence_event['text'], 18)
         when = evidence_event['time']
         goal = (
-            f'You came in to move the work. At {when} you said "{said}", '
-            f'and that line is the aim the later turns keep testing.'
+            f'At {when} you said "{said}". '
+            f'That line is the aim the later turns keep testing.'
         )
         if thin:
             drama = (
@@ -327,7 +327,7 @@ def personal_story(
                 f'That line does a job for you: it starts the point, and it also costs the room a reply.'
             )
     else:
-        goal = 'You came in to move the work, and the later turns keep testing that aim.'
+        goal = 'No turn of yours is long enough to quote as the aim.'
         drama = (
             f'You held {share_pct}% of the talk time. '
             'The pattern is how little of the exchange waited for a longer line from you.'

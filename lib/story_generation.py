@@ -413,6 +413,7 @@ def generate_group_draft(
         portrait['low_share'] = min(item[1] for item in shares)
         portrait['high_share'] = max(item[1] for item in shares)
     facts['_portrait'] = portrait
+    facts['_names'] = [info.get('name') for info in speaker_map.values() if info.get('name')]
     from lib.story_render import closing_clip, last_substantive_utterance
 
     closing_row = last_substantive_utterance(transcript.get('utterances') or [])
