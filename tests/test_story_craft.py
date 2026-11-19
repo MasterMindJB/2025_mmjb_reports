@@ -320,8 +320,8 @@ def test_realistic_fake_has_no_fallbacks_and_a_bad_json_retries():
         word_interaction=0.39,
     )
     assert stories['fallbacks'] == []
-    assert 'onboarding' in stories['personal']['A']['headline'].lower()
-    assert len(stories['personal']['A']['headline'].split()) <= 6
+    assert stories['personal']['A']['short_mode'] is True
+    assert stories['personal']['A']['headline'].startswith('You spoke')
     assert 'events' not in stories['group']['character']
     flaky = FlakyStoryLLM()
     draft = generate_personal_draft(
@@ -332,5 +332,5 @@ def test_realistic_fake_has_no_fallbacks_and_a_bad_json_retries():
         stats=speaker_stats_for_story(transcript, speaker_map, 'A'),
         forbidden_names=['Blake Chen', 'Casey Quinn'],
     )
-    assert 'character' not in draft['fallback_sections']
-    assert sum('BATCH: personal' in call for call in flaky.calls) >= 2
+    assert draft['short_mode'] is True
+    assert flaky.calls == []

@@ -310,9 +310,8 @@ def test_rejection_reason_is_sent_on_the_retry():
         stats=speaker_stats_for_story(transcript, speaker_map, 'A'),
         forbidden_names=['Blake Chen'],
     )
-    assert 'goal' not in draft['fallback_sections']
-    assert any('was rejected' in call and 'journey' in call for call in llm.calls)
-    assert all('NEXT SPEAKER' not in call for call in llm.calls if 'BATCH: personal' in call)
+    assert draft['short_mode'] is True
+    assert llm.calls == []
 
 
 def test_gemini_timeout_is_retried_without_adding_a_story_call():

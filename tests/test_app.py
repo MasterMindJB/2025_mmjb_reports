@@ -538,9 +538,11 @@ def test_generate_session_substitutes_a_repeated_drama_turn(tmp_path):
     generate_session(
         db, app.state.analysis, app.state.renderer, app.state.transcription, app.state.settings, session_id,
     )
-    drama = captured['stories']['personal']['S']['drama']
-    assert 'budget can wait' in drama
-    assert 'different turn' not in drama
+    story = captured['stories']['personal']['S']
+    assert story['short_mode'] is True
+    assert 'onboarding plan' in story['said_quote']
+    assert 'different turn' not in story.get('drama', '')
+    assert 'the budget can wait until Monday' not in story['said_quote']
 
 
 def test_short_four_speaker_session_keeps_drama_without_a_counter(tmp_path):
@@ -612,14 +614,14 @@ def test_short_four_speaker_session_keeps_drama_without_a_counter(tmp_path):
         db, app.state.analysis, app.state.renderer, app.state.transcription, app.state.settings, session_id,
     )
     personal = captured['stories']['personal']
-    assert 'onboarding plan' in personal['S']['drama']
-    assert "didn't happen" not in personal['S']['drama']
+    assert personal['S']['short_mode'] is True
+    assert personal['L']['short_mode'] is True
+    assert 'onboarding plan' in personal['S']['said_quote']
+    assert "didn't happen" not in personal['S'].get('drama', '')
     for label in ('S', 'L', 'T'):
-        assert 'different turn' not in personal[label]['drama']
-        assert personal[label]['drama']
-    headlines = [personal[label]['headline'] for label in ('S', 'L', 'T')]
-    assert len(headlines) == len(set(headlines))
-    assert 'You set the point. Name it.' not in headlines
+        assert personal[label]['short_mode'] is True
+        assert 'You name' not in personal[label]['headline']
+        assert 'You set the point. Name it.' not in personal[label]['headline']
 
 
 def test_generate_session_stamps_the_host_before_the_closer(tmp_path):

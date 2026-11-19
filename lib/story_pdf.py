@@ -227,14 +227,24 @@ def _talk_share(story: dict, folder: Path) -> Path:
     labels = [item[0] for item in roster]
     values = [item[1] for item in roster]
     colors = [NAVY if label == name else '#C5CDD8' for label in labels]
-    axis.barh(labels, values, color=colors, height=0.55)
+    bars = axis.barh(labels, values, color=colors, height=0.55)
     axis.axvline(even, color=SKY, linestyle='--', linewidth=1)
+    axis.bar_label(
+        bars,
+        labels=[str(int(round(value))) for value in values],
+        padding=3,
+        color=INK,
+        fontproperties=load_poppins('regular'),
+        fontsize=8,
+    )
+    axis.get_xaxis().set_visible(False)
+    axis.spines['bottom'].set_visible(False)
     finding = (
         f'{name} spoke more than an even share of {even:.0f}%.'
         if share >= even
         else f'{name} spoke less than an even share of {even:.0f}%.'
     )
-    axis.set_title(finding, color=INK, fontproperties=load_poppins('semibold'), fontsize=9, loc='left')
+    axis.set_title(_wrap_title(finding), color=INK, fontproperties=load_poppins('semibold'), fontsize=9, loc='left')
     axis.tick_params(colors=INK, labelsize=8)
     for label in axis.get_xticklabels() + axis.get_yticklabels():
         label.set_fontproperties(load_poppins('regular'))
@@ -242,6 +252,12 @@ def _talk_share(story: dict, folder: Path) -> Path:
         spine.set_color(LINE)
     figure.tight_layout()
     return _save_chart(figure, folder, 'talk-share.png')
+
+
+def _wrap_title(title: str, width: int = 32) -> str:
+    import textwrap
+
+    return '\n'.join(textwrap.wrap(title, width=width)) or title
 
 
 def _ranked_bars(pairs, folder: Path, filename: str, title: str) -> Path | None:
@@ -268,7 +284,7 @@ def _ranked_bars(pairs, folder: Path, filename: str, title: str) -> Path | None:
     )
     axis.get_xaxis().set_visible(False)
     axis.spines['bottom'].set_visible(False)
-    axis.set_title(title, color=INK, fontproperties=load_poppins('semibold'), fontsize=11, loc='left')
+    axis.set_title(_wrap_title(title), color=INK, fontproperties=load_poppins('semibold'), fontsize=11, loc='left')
     axis.tick_params(colors=INK, labelsize=8)
     for tick in axis.get_yticklabels():
         weight = 'bold' if float(dict(ordered).get(tick.get_text(), -1)) == top_value else 'regular'
@@ -480,55 +496,42 @@ def write_personal_report(
     pdf.add_page()
     pdf.set_font('Poppins', '', 11)
     pdf.set_text_color(20, 33, 74)
-    from lib.story_render import fit_headline, personal_why_line
-
-    headline = fit_headline(story.get('short_headline') or story.get('headline') or '')
+    headline = str(story.get('headline') or 'You spoke.')
     pdf.set_font('Poppins', 'b', 16)
     pdf.multi_cell(w=0, h=pdf.font_size * 1.2, text=headline, align='L')
     pdf.ln(1)
+    if story.get('short_mode'):
+        count = int(story.get('turns') or 0)
+        if count == 1:
+            spoken = 'You spoke once.'
+        elif count > 1:
+            spoken = f'You spoke {count} times.'
+        else:
+            spoken = headline
+        _body(pdf, spoken)
+        _image(pdf, _talk_share(story, chart_dir))
+        if story.get('said_quote'):
+            _pull_quote(pdf, str(story['said_quote']))
+        _heading(pdf, 'Your next rep')
+        _body(pdf, story.get('next_rep') or story.get('one_thing') or '')
+    else:
+        _heading(pdf, '1 big thing')
+        _body(pdf, story.get('one_big_thing') or story.get('drama') or '')
+        _heading(pdf, 'Why it matters')
+        _body(pdf, story.get('why_it_matters') or story.get('goal') or '')
+        _heading(pdf, 'By the numbers')
+        for line in (story.get('numbers') or [])[:3]:
+            _body(pdf, line)
+        _image(pdf, _talk_share(story, chart_dir))
+        _heading(pdf, 'What you said')
+        if story.get('said_quote'):
+            _pull_quote(pdf, str(story['said_quote']))
+        _heading(pdf, 'Yes, but')
+        _body(pdf, story.get('yes_but') or story.get('challenge') or '')
+        _heading(pdf, 'Your next rep')
+        _body(pdf, story.get('next_rep') or story.get('one_thing') or '')
     used_turns: set[str] = set()
-    drama = str(story.get('drama') or '')
-    cost = ''
-    move = drama
-    if 'What it costs you' in drama:
-        before, _, after = drama.partition('What it costs you')
-        move = before.strip()
-        cost = ('What it costs you' + after).strip()
-    from lib.story_render import personal_big_thing
-
-    _heading(pdf, '1 big thing')
-    _body(pdf, _keep_fresh(personal_big_thing(move), used_turns) or personal_big_thing(move))
-    from lib.story_render import narrative_text
-
-    roster = story.get('roster_shares') or []
-    _heading(pdf, 'Why it matters')
-    _body(pdf, personal_why_line(int(story.get('share') or 0), max(len(roster), 1), str(story.get('next_voice') or '')))
-    _heading(pdf, 'By the numbers')
-    for line in (story.get('numbers') or [])[:3]:
-        _body(pdf, line)
-    _image(pdf, _talk_share(story, chart_dir))
-    _heading(pdf, 'What you said')
-    quotes = story.get('pull_quotes') or (story.get('signature') or {}).get('quotes') or []
-    shown = 0
-    for quote in quotes:
-        fresh = _keep_fresh(str(quote), used_turns)
-        if not fresh:
-            continue
-        _pull_quote(pdf, fresh)
-        shown += 1
-        if shown >= 2:
-            break
-    if shown == 0:
-        _pull_quote(pdf, _keep_fresh(move, used_turns) or move)
-    _heading(pdf, 'Yes, but')
-    _body(pdf, narrative_text(_keep_fresh(str(story.get('challenge') or ''), used_turns)))
-    if cost:
-        _body(pdf, _keep_fresh(cost, used_turns) or cost)
-    _heading(pdf, 'Your next rep')
-    _body(pdf, story.get('one_thing') or '')
-    if story.get('why') and story.get('why') not in (story.get('one_thing') or ''):
-        _body(pdf, story['why'])
-    card = story['signature']
+    card = story.get('signature') or {}
     # Keep the signature label with the lines under it, and leave a gap after Drama.
     if _remaining(pdf) < 24:
         pdf.add_page()

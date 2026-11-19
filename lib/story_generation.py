@@ -317,62 +317,10 @@ def _parse_safely(llm, prompt: str):
 def generate_personal_draft(
     llm, *, transcript, label, info, stats, forbidden_names, progress_dir=None
 ) -> dict:
-    facts = personal_facts(
-        transcript=transcript,
-        label=label,
-        share=stats['share'],
-        turns=stats['turns'],
-        questions=stats['questions'],
-        question_average=stats['session_question_average'],
-        speaker_count=stats['speaker_count'],
-    )
-    facts['_quote_log'] = []
-    own, _following = _quote_lists(stats['events'])
-    # Other people's lines stay out of this prompt. Exact-quote checks still use the transcript.
-    evidence = facts_prompt(facts, own, [])
-    substantive = 0
-    for event in stats['events']:
-        words = re.findall(r"[A-Za-z']+", str(event.get('text') or ''))
-        if len(words) >= 8 or (len(words) >= 4 and words and words[0].lower() not in {
-            'yeah', 'yes', 'yep', 'right', 'ok', 'okay', 'sure', 'mm', 'hmm', 'uh', 'um',
-        }):
-            substantive += 1
-    if substantive < 4:
-        evidence += (
-            '\nTHIN DATA: fewer than 4 substantive turns. '
-            'Drama is about those short entries and when this person chose to come in. '
-            'Resolution stays to two sentences. Use only the turns listed above.\n'
-        )
-    turns = '\n'.join(f'{item["time"]} {item["text"]}' for item in own)
-    path = _progress_file(progress_dir, f'personal-{label}')
-    saved = _load_progress(path)
-    draft = {
-        'transitions': pick_transitions(label),
-        'fallback_sections': [],
-        'accepted': list(saved.get('accepted') or []),
-        'name_seed': info.get('name') or label,
-    }
-    for key, value in saved.items():
-        if key not in ('accepted',):
-            draft.setdefault(key, value)
-    _fill_sections(
-        llm,
-        audience='personal',
-        sections=PERSONAL_SECTIONS,
-        evidence=evidence,
-        render=lambda section, data: render_personal_section(
-            section,
-            data,
-            transcript=transcript,
-            label=label,
-            facts=facts,
-            forbidden=forbidden_names,
-        ),
-        progress_path=path,
-        draft=draft,
-        turns=turns,
-    )
-    return draft
+    del forbidden_names, progress_dir
+    from lib.personal_narrative import build_personal_story
+
+    return build_personal_story(llm, transcript, label, info, stats)
 
 
 def generate_group_draft(
@@ -508,10 +456,6 @@ def generate_report_stories(
         personal[label] = draft
         profiles.append({'label': label, 'role': speaker_map[label].get('role'), **stats})
         fallbacks.extend(f'{label}:{section}' for section in draft.get('fallback_sections') or [])
-    for label, (sentence, why) in unique_habits(profiles).items():
-        personal[label]['one_thing'] = sentence
-        personal[label]['why'] = why
-    _unique_short_headlines(personal)
     from lib.proposals import classify_proposals
 
     proposal_counts = classify_proposals(llm, transcript, progress_dir)

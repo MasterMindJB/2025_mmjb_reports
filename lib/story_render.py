@@ -766,7 +766,8 @@ def share_relation(share: int, speaker_count: int) -> str:
         return 'near the room average'
     times = (int(share) / average) if average else 0
     if times >= 1.5:
-        return f'about {int(round(times))}× an even share of {average}%'
+        shown = f'{times:.1f}'.rstrip('0').rstrip('.')
+        return f'about {shown}× an even share of {average}%'
     if gap > 0:
         return f'{gap} points above an even share of {average}%'
     return f'{abs(gap)} points below an even share of {average}%'
