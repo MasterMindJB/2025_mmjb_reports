@@ -6,7 +6,7 @@ import re
 
 from langchain_core.exceptions import OutputParserException
 
-from lib.story_evidence import before_after, clock, halfway_target
+from lib.story_evidence import before_after, clock
 from lib.story_validation import BAN_PHRASES, own_quote, reject_craft_violations, word_count
 
 SCHEMAS = {
@@ -30,7 +30,7 @@ SCHEMAS = {
     'group': {
         'character': (
             '{"headline": "12 words or fewer, no digits", '
-            '"number_keys": ["participation", "interaction", "word_interaction"]}'
+            '"number_keys": ["interaction"]}'
         ),
         'goal': '{"claim": "no digits, only topics from the transcript"}',
         'challenge': '{"claim": "no digits", "fact_key": "interaction"}',
@@ -134,7 +134,7 @@ def clip_clause(text: str, limit: int = 25) -> str:
     return ' '.join(words[:limit]).rstrip(',;:')
 
 
-def choose_gap(
+def ranked_kinds(
     *,
     share: int,
     speaker_count: int,
@@ -144,13 +144,18 @@ def choose_gap(
     session_turn_words: float = 0,
     early: int | None = None,
     late: int | None = None,
-) -> str:
-    """Largest gap this person does not already meet. Questions are skipped when they are at or above the session average."""
+) -> list[str]:
+    """Gaps this person does not already meet, largest first.
+
+    Talk share is only a reduction when it is well above an even share.
+    Questions are skipped when the person is already at or above the session average.
+    """
     average = room_average(speaker_count)
     options: list[tuple[str, float]] = []
-    if int(questions) < int(question_average):
-        options.append(('questions', int(question_average) - int(questions)))
-    if int(share) > average + 5:
+    if int(questions) < 1 or int(questions) < int(question_average):
+        gap = max(1, int(question_average) - int(questions))
+        options.append(('questions', gap))
+    if int(share) > average + 10:
         options.append(('talk_high', int(share) - average))
     elif int(share) < average - 5:
         options.append(('talk_low', average - int(share)))
@@ -161,12 +166,68 @@ def choose_gap(
     if early is not None and late is not None and abs(int(early) - int(late)) >= 15:
         options.append(('thirds', abs(int(early) - int(late))))
     if not options:
-        if int(share) >= average:
-            options.append(('talk_high', max(int(share) - average, 1)))
-        else:
-            options.append(('talk_low', max(average - int(share), 1)))
+        options.append(('beat', 1))
     options.sort(key=lambda item: item[1], reverse=True)
-    return options[0][0]
+    return options
+
+
+def improve_toward(current: int, norm: int, *, increase: bool) -> int:
+    """Move to the group norm when that is strictly better, otherwise one step past current.
+
+    The direction comes from the metric. A talk share already under the room's
+    even share is not pulled downward, and a count of zero does not stay at zero.
+    """
+    current = int(current)
+    norm = int(norm)
+    if increase:
+        return norm if norm > current else current + 1
+    return norm if norm < current else max(0, current - 1)
+
+
+def _habit(kind: str, *, share, speaker_count, questions, question_average, turn_words, session_turn_words, early, late):
+    average = room_average(speaker_count)
+    if kind == 'questions':
+        target = improve_toward(int(questions), max(int(question_average), int(questions) + 1), increase=True)
+        sentence = (
+            f'Ask one question before you add another point. '
+            f'Target: {count_label(target, "question")}.'
+        )
+        why = (
+            f'You asked {count_label(int(questions), "question")}, '
+            f'against {count_label(int(question_average), "question")} for the session.'
+        )
+        return sentence, why
+    if kind == 'talk_low':
+        target = improve_toward(int(share), average, increase=True)
+        sentence = f'Say one more detail before you stop. Target: {target}% talk time.'
+        why = f'You are at {int(share)}% talk time, below an even share of {average}%.'
+        return sentence, why
+    if kind == 'turns_short':
+        target = improve_toward(int(turn_words), int(session_turn_words), increase=True)
+        sentence = f'Name one more detail before the turn ends. Target: {target} words in a turn.'
+        why = f'A turn of yours averages {int(turn_words)} words, against {int(session_turn_words)}.'
+        return sentence, why
+    if kind == 'thirds':
+        start = int(early or 0)
+        end = int(late or 0)
+        increase = end < start
+        target = improve_toward(end, start, increase=increase)
+        sentence = f'Wait through the opening before the long story. Target: {target}% in the last third.'
+        why = f'Talk time moves from {start}% in the first third to {end}% in the last.'
+        return sentence, why
+    if kind == 'talk_high':
+        target = improve_toward(int(share), average, increase=False)
+        sentence = f'Pause after the point and hand the turn on. Target: {target}% talk time.'
+        why = f'You are at {int(share)}% talk time, above an even share of {average}%.'
+        return sentence, why
+    if kind == 'beat':
+        sentence = 'Pause once before you take the next turn. Target: 1 pause before the second point.'
+        why = f'You are at {int(share)}% talk time, near an even share of {room_average(speaker_count)}%.'
+        return sentence, why
+    target = improve_toward(int(turn_words or 1), int(session_turn_words or 1), increase=False)
+    sentence = f'Stop once the point is made. Target: {target} words in a turn.'
+    why = f'A turn of yours averages {int(turn_words or 0)} words, against {int(session_turn_words or 0)}.'
+    return sentence, why
 
 
 def one_thing_from_gap(
@@ -180,8 +241,18 @@ def one_thing_from_gap(
     early: int | None = None,
     late: int | None = None,
 ) -> tuple[str, str]:
-    """The habit follows this person's largest unmet gap."""
-    kind = choose_gap(
+    kind = ranked_kinds(
+        share=share,
+        speaker_count=speaker_count,
+        questions=questions,
+        question_average=question_average,
+        turn_words=turn_words,
+        session_turn_words=session_turn_words,
+        early=early,
+        late=late,
+    )[0][0]
+    return _habit(
+        kind,
         share=share,
         speaker_count=speaker_count,
         questions=questions,
@@ -191,36 +262,62 @@ def one_thing_from_gap(
         early=early,
         late=late,
     )
-    average = room_average(speaker_count)
-    if kind == 'questions':
-        target = halfway_target(int(questions), int(question_average))
-        sentence = f'Ask one question before the second long turn. Target: {count_label(target, "question")}.'
-        why = f'{questions_sentence(questions, question_average)} {count_label(target, "question")} is the halfway step.'
-        return sentence, why
-    if kind == 'talk_low':
-        target = halfway_target(int(share), average)
-        sentence = f'Say one added point before handing the turn on. Target: {target}% talk time.'
-        why = f'Talk time is {int(share)}%, {share_relation(share, speaker_count)}.'
-        return sentence, why
-    if kind == 'turns_long':
-        target = halfway_target(int(turn_words), int(session_turn_words))
-        sentence = f'Pause at the end of the point. Target: {target} words in a turn.'
-        why = f'A turn averages {int(turn_words)} words, against {int(session_turn_words)} for the session.'
-        return sentence, why
-    if kind == 'turns_short':
-        target = halfway_target(int(turn_words), int(session_turn_words))
-        sentence = f'Name one more detail before the turn ends. Target: {target} words in a turn.'
-        why = f'A turn averages {int(turn_words)} words, against {int(session_turn_words)} for the session.'
-        return sentence, why
-    if kind == 'thirds':
-        target = halfway_target(int(late or 0), int(early or 0))
-        sentence = f'Wait until the first third ends before the long story. Target: {target}% in the last third.'
-        why = f'Talk time moves from {int(early or 0)}% in the first third to {int(late or 0)}% in the last.'
-        return sentence, why
-    target = halfway_target(int(share), average if average < int(share) else max(int(share) - 1, 0))
-    sentence = f'Pause after the point. Target: {target}% talk time.'
-    why = f'Talk time is {int(share)}%, {share_relation(share, speaker_count)}.'
-    return sentence, why
+
+
+def unique_habits(people: list[dict]) -> dict[str, tuple[str, str]]:
+    """One habit sentence per person. The largest real gap is claimed first."""
+    def ranked_for(person: dict) -> list[tuple[str, float]]:
+        average = person.get('question_average', person.get('session_question_average', 0))
+        return ranked_kinds(
+            share=person['share'],
+            speaker_count=person['speaker_count'],
+            questions=person['questions'],
+            question_average=average,
+            turn_words=person.get('turn_words') or 0,
+            session_turn_words=person.get('session_turn_words') or 0,
+            early=person.get('early'),
+            late=person.get('late'),
+        )
+
+    used: set[str] = set()
+    assigned: dict[str, tuple[str, str]] = {}
+    ordered = sorted(people, key=lambda person: ranked_for(person)[0][1], reverse=True)
+    for person in ordered:
+        label = person['label']
+        kinds = ranked_for(person)
+        placed = False
+        for kind, _size in kinds:
+            sentence, why = _habit(kind, **{
+                'share': person['share'],
+                'speaker_count': person['speaker_count'],
+                'questions': person['questions'],
+                'question_average': person.get('question_average', person.get('session_question_average', 0)),
+                'turn_words': person.get('turn_words') or 0,
+                'session_turn_words': person.get('session_turn_words') or 0,
+                'early': person.get('early'),
+                'late': person.get('late'),
+            })
+            if sentence not in used:
+                used.add(sentence)
+                assigned[label] = (sentence, why)
+                placed = True
+                break
+        if not placed:
+            sentence, why = _habit(
+                kinds[0][0],
+                share=person['share'],
+                speaker_count=person['speaker_count'],
+                questions=person['questions'],
+                question_average=person.get('question_average', person.get('session_question_average', 0)),
+                turn_words=person.get('turn_words') or 0,
+                session_turn_words=person.get('session_turn_words') or 0,
+                early=person.get('early'),
+                late=person.get('late'),
+            )
+            sentence = f'{sentence} You are at {int(person["share"])}% now.'
+            used.add(sentence)
+            assigned[label] = (sentence, why)
+    return assigned
 
 
 def count_label(value: int, singular: str, plural: str | None = None) -> str:
@@ -329,7 +426,7 @@ def personal_facts(
         early_text, late_text = contrast.split(' then ')
         early = int(re.search(r'\d+', early_text).group(0))
         late = int(re.search(r'\d+', late_text).group(0))
-    target = halfway_target(int(questions), 3 if int(questions) < 3 else int(questions))
+    target = improve_toward(int(questions), max(int(question_average), int(questions) + 1), increase=True)
     facts = {
         'talk_share': {
             'value': int(share),
@@ -378,7 +475,11 @@ def group_facts(*, participation: float, interaction: float, word_interaction: f
     participation_pct = int(round(100 * participation))
     interaction_pct = int(round(100 * interaction))
     word_pct = int(round(100 * word_interaction))
-    target = halfway_target(interaction_pct, 70 if interaction_pct < 70 else interaction_pct)
+    target = improve_toward(
+        interaction_pct,
+        70 if interaction_pct < 70 else interaction_pct + 1,
+        increase=True,
+    )
     return {
         'participation': {
             'value': participation_pct,
@@ -500,23 +601,19 @@ def render_one_thing(
         raise OutputParserException('one thing behavior is over 18 words')
     meta = facts.get('_meta') or {}
     if 'interaction' in facts and 'questions' not in facts:
-        target = int(facts['target_interaction']['value'])
-        sentence = f'{verb.capitalize()} {phrase} {trigger}. Target: {target}% interaction.'
-        why = f"Interaction is {facts['interaction']['value']}%, so {target}% is the halfway step."
-    else:
-        _computed, why = one_thing_from_gap(
-            share=int(meta.get('share', facts['talk_share']['value'])),
-            speaker_count=int(meta.get('speaker_count', 1)),
-            questions=int(meta.get('questions', facts['questions']['value'])),
-            question_average=int(meta.get('question_average', 0)),
-            early=meta.get('early'),
-            late=meta.get('late'),
-        )
-        target_clause = _computed.split('Target:', 1)[-1].strip()
-        sentence = f'{verb.capitalize()} {phrase} {trigger}. Target: {target_clause}'
-    sentence = re.sub(r'\s+', ' ', sentence).strip()
-    if re.search(r'\balso\b', sentence.lower()):
-        raise OutputParserException("one thing must not say 'also'")
+        current = int(facts['interaction']['value'])
+        target = improve_toward(current, 70 if current < 70 else current + 1, increase=True)
+        sentence = f'Name one reply before the next decision. Target: {target}% interaction.'
+        why = f'Interaction is {current}%, so {target}% is a step up.'
+        return sentence, why
+    sentence, why = one_thing_from_gap(
+        share=int(meta.get('share', facts['talk_share']['value'])),
+        speaker_count=int(meta.get('speaker_count', 1)),
+        questions=int(meta.get('questions', facts['questions']['value'])),
+        question_average=int(meta.get('question_average', 0)),
+        early=meta.get('early'),
+        late=meta.get('late'),
+    )
     return sentence, why
 
 
@@ -534,10 +631,22 @@ def render_drama(data: dict, transcript, label: str, corpus: str, forbidden: lis
         for item in quotes:
             text = own_quote(str(item.get('text') or ''), str(item.get('ts') or ''), transcript, label)
             rendered_quotes.append((str(item.get('ts')).strip(), text))
-        pattern_text = _prose(str(pattern.get('pattern') or ''), corpus, 'pattern', forbidden_names=forbidden)
-        twist = _prose(str(pattern.get('twist') or ''), corpus, 'twist', forbidden_names=forbidden)
-        cost = _prose(str(pattern.get('cost') or ''), corpus, 'cost', forbidden_names=forbidden)
-        gift = _prose(str(pattern.get('gift') or ''), corpus, 'gift', forbidden_names=forbidden)
+        pattern_text = _prose(
+            str(pattern.get('pattern') or ''), corpus, 'pattern',
+            forbidden_names=forbidden, transcript=transcript, speaker_label=label,
+        )
+        twist = _prose(
+            str(pattern.get('twist') or ''), corpus, 'twist',
+            forbidden_names=forbidden, transcript=transcript, speaker_label=label,
+        )
+        cost = _prose(
+            str(pattern.get('cost') or ''), corpus, 'cost',
+            forbidden_names=forbidden, transcript=transcript, speaker_label=label,
+        )
+        gift = _prose(
+            str(pattern.get('gift') or ''), corpus, 'gift',
+            forbidden_names=forbidden, transcript=transcript, speaker_label=label,
+        )
         when, said = rendered_quotes[0]
         sentences.append(f'At {when} you said "{said}".')
         for extra_when, extra_said in rendered_quotes[1:]:
@@ -553,7 +662,8 @@ def render_drama(data: dict, transcript, label: str, corpus: str, forbidden: lis
         str(exception.get('quote') or ''), str(exception.get('ts') or ''), transcript, label
     )
     happened = _prose(
-        str(exception.get('what_happened') or ''), corpus, 'what_happened', forbidden_names=forbidden
+        str(exception.get('what_happened') or ''), corpus, 'what_happened',
+        forbidden_names=forbidden, transcript=transcript, speaker_label=label,
     )
     sentences.append(
         f"The one moment it didn't happen was {str(exception.get('ts')).strip()}, "
@@ -571,17 +681,26 @@ def render_drama(data: dict, transcript, label: str, corpus: str, forbidden: lis
 def render_personal_section(section: str, data: dict, *, transcript, label: str, facts: dict, forbidden: list[str]) -> dict:
     corpus = corpus_text(transcript, label)
     if section == 'character':
-        headline = _prose(str(data.get('headline') or ''), corpus, 'headline', forbidden_names=forbidden)
+        headline = _prose(
+            str(data.get('headline') or ''), corpus, 'headline',
+            forbidden_names=forbidden, transcript=transcript, speaker_label=label,
+        )
         if word_count(headline) > 12:
             raise OutputParserException('headline is over 12 words')
         return {'headline': headline, 'numbers': render_numbers(data.get('number_keys'), facts)}
     if section == 'goal':
-        claim = _prose(str(data.get('claim') or ''), corpus, 'claim', forbidden_names=forbidden)
+        claim = _prose(
+            str(data.get('claim') or ''), corpus, 'claim',
+            forbidden_names=forbidden, transcript=transcript, speaker_label=label,
+        )
         quote = data.get('quote') if isinstance(data.get('quote'), dict) else {}
         text = own_quote(str(quote.get('text') or ''), str(quote.get('ts') or ''), transcript, label)
         return {'goal': f'Inferred from what you said: {claim.rstrip(".")}. At {quote.get("ts")} you said "{text}".'}
     if section == 'challenge':
-        claim = _prose(str(data.get('claim') or ''), corpus, 'claim', forbidden_names=forbidden)
+        claim = _prose(
+            str(data.get('claim') or ''), corpus, 'claim',
+            forbidden_names=forbidden, transcript=transcript, speaker_label=label,
+        )
         key = str(data.get('fact_key') or '')
         if key not in facts:
             raise OutputParserException(f'challenge fact_key is not allowed: {key}')
@@ -590,7 +709,10 @@ def render_personal_section(section: str, data: dict, *, transcript, label: str,
     if section == 'drama':
         return {'drama': render_drama(data, transcript, label, corpus, forbidden)}
     if section == 'resolution':
-        claim = _prose(str(data.get('claim') or ''), corpus, 'claim', forbidden_names=forbidden)
+        claim = _prose(
+            str(data.get('claim') or ''), corpus, 'claim',
+            forbidden_names=forbidden, transcript=transcript, speaker_label=label,
+        )
         quote = data.get('quote') if isinstance(data.get('quote'), dict) else {}
         text = own_quote(str(quote.get('text') or ''), str(quote.get('ts') or ''), transcript, label)
         return {'resolution': f'At {quote.get("ts")} you said "{text}". {claim.rstrip(".")}.'}
@@ -608,21 +730,33 @@ def render_group_section(section: str, data: dict, *, transcript, facts: dict, c
         headline = _prose(str(data.get('headline') or ''), corpus, 'headline')
         if word_count(headline) > 12:
             raise OutputParserException('headline is over 12 words')
-        keys = data.get('number_keys')
-        if not isinstance(keys, list) or sorted(keys) != sorted(GROUP_NUMBER_KEYS):
-            raise OutputParserException('group character uses the three rate facts')
-        lines = [facts[key]['line'].rstrip('.') + '.' for key in GROUP_NUMBER_KEYS]
+        keys = [key for key in (data.get('number_keys') or []) if key in facts and not str(key).startswith('target')]
+        if not keys:
+            keys = [key for key in GROUP_NUMBER_KEYS if key in facts][:1]
+        if not keys:
+            raise OutputParserException('group character needs at least one rate fact')
+        lines = [facts[key]['line'].rstrip('.') + '.' for key in keys]
         return {'headline': headline, 'character': ' '.join(lines)}
     if section in ('goal', 'resolution'):
         claim = _prose(str(data.get('claim') or ''), corpus, section)
+        closing = ''
+        rows = (transcript or {}).get('utterances') or []
+        for row in reversed(rows):
+            text = str(row.get('text') or '').strip()
+            if text:
+                closing = clip_clause(text, 12)
+                break
         if section == 'goal':
             return {'goal': f'Inferred from the turns in this session: {claim.rstrip(".")}.'}
-        return {'resolution': claim if claim.endswith('.') else claim + '.'}
+        landed = f'The meeting closed on "{closing}". ' if closing else ''
+        return {'resolution': f'{landed}{claim.rstrip(".")}.'}
     if section == 'challenge':
         claim = _prose(str(data.get('claim') or ''), corpus, 'claim')
-        key = str(data.get('fact_key') or '')
-        if key not in ('participation', 'interaction', 'word_interaction'):
-            raise OutputParserException('group challenge must use a rate fact')
+        key = str(data.get('fact_key') or 'interaction')
+        if key not in facts:
+            key = 'interaction' if 'interaction' in facts else next(iter(facts), '')
+        if key not in facts:
+            raise OutputParserException('group challenge needs one rate fact')
         return {'challenge': f'{facts[key]["line"]}. {claim.rstrip(".")}.'}
     if section == 'drama':
         note = _prose(str(data.get('pattern_note') or ''), corpus, 'pattern_note')

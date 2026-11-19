@@ -26,9 +26,13 @@ set_debug(False)  # Set to True to see communication information
 JSON: TypeAlias = dict[str, "JSON"] | list["JSON"] | str | int | float | bool | None
 
 
-def _signature_fields(analysis: str, speaker_text: str) -> dict[str, str]:
-    """Accept JSON or the What / So, what / Now, what headings. Log happens at the call site."""
-    from lib.story_validation import quoted_spans, reject_craft_violations
+def _signature_fields(analysis: str, speaker_text: str, bigram: str) -> dict[str, str]:
+    """Accept JSON or the What / So, what / Now, what headings.
+
+    Illustrative examples are allowed to be invented. They must be 6 to 25 words,
+    and the reading must mention this speaker's real bigram. Coaching is allowed here.
+    """
+    from lib.story_validation import reject_craft_violations, word_count
 
     cleaned = analysis.strip()
     if cleaned.startswith('```'):
@@ -40,19 +44,18 @@ def _signature_fields(analysis: str, speaker_text: str) -> dict[str, str]:
     if not isinstance(data, dict):
         data = signature_card(cleaned)
     fields = {}
-    blob = re.sub(r'[^a-z0-9]+', '', speaker_text.lower())
     for key in ('what', 'so_what', 'now_what'):
-        value = reject_craft_violations(str(data.get(key) or ''))
-        lowered = value.lower()
-        if 'you' not in lowered and re.search(r'\b(he|she|his|her)\b', lowered):
-            raise ValueError('signature phrase must stay in second person')
-        for span in quoted_spans(value):
-            needle = re.sub(r'[^a-z0-9]+', '', span.lower())
-            if len(needle) >= 4 and needle not in blob:
-                raise ValueError(f'signature example is not this person\'s words: {span}')
+        value = reject_craft_violations(
+            str(data.get(key) or ''),
+            skip_bans=('coaching',),
+            personal_voice=True,
+        )
+        count = word_count(value)
+        if count < 6 or count > 25:
+            raise ValueError(f'signature {key} must be 6 to 25 words, not {count}')
         fields[key] = value
-    if not any(fields.values()):
-        raise ValueError('signature phrase did not include What, So what, or Now what')
+    if bigram and bigram.lower() not in ' '.join(fields.values()).lower():
+        raise ValueError(f'signature must discuss the real bigram {bigram!r}')
     return fields
 
 
@@ -178,10 +181,14 @@ class ConversationSummarizer:
             message += '\n\nLines this person actually said:\n' + examples
         message += (
             '\n\nReturn JSON only, with keys what, so_what, now_what. '
-            'Write in second person. If you include an example sentence, copy it from the lines above. '
-            'Do not invent a scene.'
+            'Write in second person to the reader. '
+            'The examples under What?, So, what?, and Now, what? are illustrative and may be invented. '
+            'Each of those three answers must be 6 to 25 words. '
+            'Do not use the word coaching. '
+            f'The phrase you discuss must be "{bigram}". '
+            'Do not quote the transcript.'
         )
-        from lib.story_validation import quoted_spans, reject_craft_violations
+        from lib.story_validation import reject_craft_violations
 
         parsed = None
         for _attempt in range(2):
@@ -191,7 +198,7 @@ class ConversationSummarizer:
                 analysis = ' '.join(str(part) for part in analysis)
             try:
                 analysis = validate_llm_output('personal_signature_phrase', str(analysis))
-                parsed = _signature_fields(analysis, speaker_text)
+                parsed = _signature_fields(analysis, speaker_text, bigram)
                 break
             except (OutputParserException, json.JSONDecodeError, ValueError, TypeError) as exc:
                 logging.warning('signature reject: %s', exc)

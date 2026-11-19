@@ -20,6 +20,7 @@ from lib.story_render import (
     render_group_section,
     render_personal_section,
     transcript_excerpt,
+    unique_habits,
 )
 
 ATTEMPTS = 2
@@ -103,6 +104,15 @@ def speaker_stats_for_story(transcript, speaker_map, label: str) -> dict:
     ]
     average = int(round(sum(questions) / len(questions))) if questions else 0
     speakers = {row.get('speaker') for row in rows if row.get('speaker')}
+    mine_words = [len(str(row.get('text') or '').split()) for row in mine]
+    all_words = [len(str(row.get('text') or '').split()) for row in rows]
+    from lib.story_evidence import before_after
+
+    early = late = None
+    contrast = before_after(transcript, label)
+    if contrast and ' then ' in contrast:
+        early = int(re.search(r'\d+', contrast).group(0))
+        late = int(re.search(r'then (\d+)', contrast).group(1))
     return {
         'share': share,
         'turns': len(mine),
@@ -110,6 +120,10 @@ def speaker_stats_for_story(transcript, speaker_map, label: str) -> dict:
         'session_turns': len(rows),
         'session_question_average': average,
         'speaker_count': max(1, len(speakers)),
+        'turn_words': (sum(mine_words) / len(mine_words)) if mine_words else 0,
+        'session_turn_words': (sum(all_words) / len(all_words)) if all_words else 0,
+        'early': early,
+        'late': late,
         'events': quote_events(transcript, label),
     }
 
@@ -153,13 +167,30 @@ def _store_progress(path, payload: dict) -> None:
 
 def _batch_prompt(audience: str, sections: tuple[str, ...], evidence: str) -> str:
     schemas = '\n'.join(f'{section}: {SCHEMAS[audience][section]}' for section in sections)
+    if audience == 'personal':
+        voice = (
+            'Write every string to the reader as you. '
+            'Do not say the speaker, the student, or the participant. '
+            'Do not use he, she, or they for the reader, and do not capitalize He, She, or They mid-sentence. '
+            'A quote must be an exact substring of that speaker\'s turn, with its original capitalization. '
+            'Do not drop or recapitalize a leading word. '
+            'Banned words include their inflections, such as leveraging, leveraged, and empowering. '
+        )
+    else:
+        voice = (
+            'Write about the room. Do not address a reader as you. '
+            'Character and challenge each need at least one rate fact, not all three. '
+            'Resolution should use the closing line of the session. '
+            'Banned words include their inflections, such as leveraging, leveraged, and empowering. '
+        )
     return (
         f'BATCH: {audience}\n'
         f'Sections still needed: {", ".join(sections)}\n'
         f'{evidence}\n\n'
         'Return one JSON object whose keys are the section names still needed. '
         'Do not write a digit inside a string unless it is one of the fact values. '
-        'Do not quote another person.\n'
+        'Do not quote another person. '
+        f'{voice}\n'
         f'{schemas}\n'
     )
 
@@ -315,22 +346,28 @@ def generate_report_stories(
     """Personal drafts for participants, plus one group draft."""
     names_by_label = {label: info.get('name') or label for label, info in speaker_map.items()}
     personal = {}
+    profiles = []
     fallbacks = []
     for label in speaker_map:
         if label not in participant_labels:
             continue
         forbidden = [name for other, name in names_by_label.items() if other != label]
+        stats = speaker_stats_for_story(transcript, speaker_map, label)
         draft = generate_personal_draft(
             llm,
             transcript=transcript,
             label=label,
             info=speaker_map[label],
-            stats=speaker_stats_for_story(transcript, speaker_map, label),
+            stats=stats,
             forbidden_names=forbidden,
             progress_dir=progress_dir,
         )
         personal[label] = draft
+        profiles.append({'label': label, **stats})
         fallbacks.extend(f'{label}:{section}' for section in draft.get('fallback_sections') or [])
+    for label, (sentence, why) in unique_habits(profiles).items():
+        personal[label]['one_thing'] = sentence
+        personal[label]['why'] = why
     group = generate_group_draft(
         llm,
         transcript=transcript,

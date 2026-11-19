@@ -25,6 +25,17 @@ def _room(pdf, needed: float = 36) -> None:
         pdf.add_page()
 
 
+def _remaining(pdf) -> float:
+    return pdf.h - pdf.get_y() - pdf.b_margin
+
+
+def _break_before(pdf, needed: float) -> None:
+    """Start a new page only when this page cannot hold the block and a new one can."""
+    room = pdf.h - pdf.t_margin - pdf.b_margin
+    if _remaining(pdf) < needed and _remaining(pdf) < room - 1:
+        pdf.add_page()
+
+
 def _kicker(pdf, text: str) -> None:
     pdf.set_text_color(108, 171, 221)
     pdf.set_font('Poppins', 'b', 9)
@@ -33,12 +44,25 @@ def _kicker(pdf, text: str) -> None:
 
 
 def _heading(pdf, text: str) -> None:
-    _room(pdf, 28)
+    """Queue a heading so it is drawn on the same page as the block that follows."""
+    _flush_heading(pdf)
+    pdf._pending_heading = text
+
+
+def _flush_heading(pdf, following: float = 0) -> None:
+    text = getattr(pdf, '_pending_heading', None)
+    if not text:
+        return
+    pdf._pending_heading = None
+    _break_before(pdf, 14 + following)
+    pdf._heading_page = pdf.page
     pdf.ln(2)
     pdf.set_x(pdf.l_margin)
     pdf.set_font('Poppins', 'b', 14)
     pdf.set_text_color(20, 33, 74)
     pdf.cell(w=0, h=8, text=text, ln=True)
+    if hasattr(pdf, 'note_y'):
+        pdf.note_y()
 
 
 def _paragraph_height(pdf, text: str, size: int) -> float:
@@ -64,9 +88,14 @@ def _paragraph_height(pdf, text: str, size: int) -> float:
 
 def _body(pdf, text: str, size: int = 11) -> None:
     if not text:
+        _flush_heading(pdf)
         return
-    if pdf.h - pdf.get_y() - pdf.b_margin < _paragraph_height(pdf, text, size):
-        pdf.add_page()
+    height = _paragraph_height(pdf, text, size)
+    if getattr(pdf, '_pending_heading', None):
+        _break_before(pdf, min(height, 48) + 14)
+        _flush_heading(pdf)
+    elif _remaining(pdf) < height:
+        _break_before(pdf, height)
     pdf.set_x(pdf.l_margin)
     pdf.set_font('Poppins', '', size)
     pdf.set_text_color(20, 33, 74)
@@ -78,7 +107,11 @@ def _body(pdf, text: str, size: int = 11) -> None:
 
 def _transition(pdf, text: str) -> None:
     if not text:
+        _flush_heading(pdf)
         return
+    if getattr(pdf, '_pending_heading', None):
+        _break_before(pdf, 24)
+        _flush_heading(pdf)
     pdf.set_x(pdf.l_margin)
     pdf.set_font('Poppins', 'i', 11)
     pdf.set_text_color(85, 98, 138)
@@ -88,7 +121,11 @@ def _transition(pdf, text: str) -> None:
 
 
 def _callout(pdf, title: str, text: str) -> None:
-    _room(pdf, 40)
+    if getattr(pdf, '_pending_heading', None):
+        _break_before(pdf, 56)
+        _flush_heading(pdf)
+    else:
+        _room(pdf, 40)
     pdf.set_x(pdf.l_margin)
     pdf.set_fill_color(244, 248, 252)
     pdf.set_font('Poppins', 'b', 16)
@@ -180,8 +217,13 @@ def _phrase_chart(story: dict, folder: Path) -> Path | None:
 
 def _image(pdf, path: Path | None, width: float = 0.72) -> None:
     if path is None or not Path(path).is_file():
+        _flush_heading(pdf)
         return
-    _room(pdf, 32)
+    if getattr(pdf, '_pending_heading', None):
+        _break_before(pdf, 46)
+        _flush_heading(pdf)
+    else:
+        _room(pdf, 32)
     pdf.image(str(path), x='C', w=pdf.epw * width)
     pdf.ln(1)
     if hasattr(pdf, 'note_y'):
@@ -226,6 +268,7 @@ def write_personal_report(pdf, story: dict, chart_dir: Path) -> None:
         _body(pdf, clip_clause(str(quote), 25))
         shown += 1
     _image(pdf, _phrase_chart(story, chart_dir), width=0.55)
+    _body(pdf, 'Illustrative examples, not lines from this session:')
     for label, key in (('What?', 'what'), ('So, what?', 'so_what'), ('Now, what?', 'now_what')):
         if card.get(key):
             _body(pdf, f'{label} {card[key]}')
@@ -239,27 +282,34 @@ def write_personal_report(pdf, story: dict, chart_dir: Path) -> None:
     _body(pdf, 'Top result for each lens.')
     for name, line in story['appendix'].items():
         _body(pdf, f'{name}: {line}')
+    _flush_heading(pdf)
 
 
-def _place_chord(pdf, chord_path, chord_pairs) -> None:
-    """Keep the diagram and its pair table together, on this page when it still has room."""
-    rows = max(1, len(chord_pairs or []))
-    needed = 90 + rows * 8
-    if pdf.h - pdf.get_y() - pdf.b_margin < needed:
-        pdf.add_page()
+def _chord_hero(pdf, chord_path) -> None:
+    """The diagram sits under the headline. It stays on this page, scaled to leave room below."""
     _body(
         pdf,
         'Who spoke right after whom. A wider ribbon means those two followed each other more often. '
         'Color is the person who spoke first.',
     )
-    if chord_path and Path(chord_path).is_file():
-        pdf.image(str(chord_path), x='C', w=pdf.epw * 0.92)
-        pdf.ln(1)
-        if hasattr(pdf, 'note_y'):
-            pdf.note_y()
-    from lib.pdf_functions import _add_direction_table
+    pdf._chord_page = pdf.page
+    if not chord_path or not Path(chord_path).is_file():
+        return
+    width = pdf.epw * 0.92
+    try:
+        from PIL import Image
 
-    _add_direction_table(pdf, chord_pairs or [])
+        with Image.open(chord_path) as image:
+            px_w, px_h = image.size
+        if px_w and px_h:
+            height = width * px_h / px_w
+            cap = max(70, _remaining(pdf) - 46)
+            if height > cap:
+                width = width * cap / height
+    except (OSError, ValueError):
+        pass
+    pdf.image(str(chord_path), x='C', w=width)
+    pdf.ln(1)
     if hasattr(pdf, 'note_y'):
         pdf.note_y()
 
@@ -270,12 +320,20 @@ def write_group_story(pdf, story: dict, chord_path, chord_pairs) -> None:
     _kicker(pdf, 'The session')
     pdf.set_font('Poppins', 'b', 16)
     pdf.multi_cell(w=0, text=story['headline'])
+    pdf.ln(1)
+    if hasattr(pdf, 'note_y'):
+        pdf.note_y()
+    _chord_hero(pdf, chord_path)
     _heading(pdf, 'Character')
     _body(pdf, story['character'])
     _transition(pdf, (story.get('transitions') or {}).get('after_character'))
+    from lib.pdf_functions import _add_direction_table
+
+    _add_direction_table(pdf, chord_pairs or [])
+    if hasattr(pdf, 'note_y'):
+        pdf.note_y()
     _heading(pdf, 'Goal')
     _body(pdf, story['goal'])
-    _place_chord(pdf, chord_path, chord_pairs)
     _heading(pdf, 'Challenge')
     _body(pdf, story['challenge'])
     _transition(pdf, (story.get('transitions') or {}).get('after_challenge'))
@@ -287,3 +345,4 @@ def write_group_story(pdf, story: dict, chord_path, chord_pairs) -> None:
     _transition(pdf, (story.get('transitions') or {}).get('after_resolution'))
     _heading(pdf, 'One thing')
     _callout(pdf, story['one_thing'], story['why'])
+    _flush_heading(pdf)

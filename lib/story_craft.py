@@ -56,8 +56,17 @@ def render_section_prompt(*, audience: str, section: str, evidence: str) -> str:
     name = f'story_{audience}_{section}.txt'
     template = (PROMPT_DIR / name).read_text(encoding='utf-8')
     craft = craft_for(craft_key)
-    return (
+    filled = (
         template.replace('{craft}', craft)
         .replace('{evidence}', evidence)
         .replace('{section}', section)
     )
+    if audience == 'personal':
+        filled += (
+            '\n\nVoice: write to the reader as you. '
+            'Do not say the speaker, the student, or the participant. '
+            'Do not use he, she, or they for the reader, and do not capitalize He, She, or They mid-sentence. '
+            'A quote must copy the turn exactly, including its original capitalization. '
+            'Banned words include inflections such as leveraging, leveraged, and empowering.\n'
+        )
+    return filled

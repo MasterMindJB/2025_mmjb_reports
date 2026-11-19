@@ -246,11 +246,17 @@ def personal_story(
         f'{turns_sentence(turn_count)} {question_line} '
         'The gap in those counts is the part to change.'
     )
+    early = late = None
+    if early_late and ' then ' in early_late:
+        early = int(re.search(r'\d+', early_late).group(0))
+        late = int(re.search(r'then (\d+)', early_late).group(1))
     one_thing, why = one_thing_from_gap(
         share=share_pct,
         speaker_count=speaker_count,
         questions=question_count,
         question_average=session_question_average,
+        early=early,
+        late=late,
     )
     transitions = pick_transitions(label)
     draft = draft or {}
@@ -343,12 +349,16 @@ def group_story(
     draft: dict | None = None,
     transcript: dict | None = None,
 ) -> dict:
-    from lib.story_evidence import halfway_target
+    from lib.story_render import improve_toward
 
     interaction_pct = int(round(100 * interaction))
     participation_pct = int(round(100 * participation))
     word_pct = int(round(100 * word_interaction))
-    target = halfway_target(interaction_pct, 70 if interaction_pct < 70 else interaction_pct)
+    target = improve_toward(
+        interaction_pct,
+        70 if interaction_pct < 70 else interaction_pct + 1,
+        increase=True,
+    )
     headline = f'A session at {interaction_pct}% interaction.'
     character = (
         f'{participation_pct}% participation. {word_pct}% of the words were exchanged across turns. '
@@ -376,8 +386,8 @@ def group_story(
         resolution = f'The meeting closed on "{last_line}". Interaction finished at {interaction_pct}%.'
     else:
         resolution = f'Interaction finished at {interaction_pct}%.'
-    one_thing = f'Ask one question back before the next decision. Target: {target}% interaction.'
-    why = f'Interaction was {interaction_pct}%, so {target}% is the halfway step.'
+    one_thing = f'Name one reply before the next decision. Target: {target}% interaction.'
+    why = f'Interaction was {interaction_pct}%, so {target}% is the next step.'
     from lib.story_render import pick_transitions
 
     transitions = pick_transitions('group', group=True)

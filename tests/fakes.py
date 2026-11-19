@@ -74,11 +74,14 @@ class FakeLLM(BaseChatModel):
         if 'super power' in text:
             return f'SUPERPOWER_TOKEN_{_subject(text)}'
         if 'expert sociolinguist' in text and 'verbal tic' in text:
+            import re
+            match = re.search(r'must be "([^"]+)"', text)
+            phrase = match.group(1) if match else 'that phrase'
             return json.dumps(
                 {
-                    'what': 'SIGNATURE_PHRASE_TOKEN You reach for a familiar phrase.',
-                    'so_what': 'It buys you a second.',
-                    'now_what': 'Ask before the next turn.',
+                    'what': f'SIGNATURE_PHRASE_TOKEN You reach for "{phrase}" while you look for the next point.',
+                    'so_what': 'It gives you a moment to decide what you want to say next.',
+                    'now_what': 'You can pause once before you lean on that phrase again today.',
                 }
             )
         if 'give a title' in text:

@@ -40,6 +40,39 @@ BANNED_ONE_THING_VERBS = ('be', 'try', 'consider', 'improve', 'leverage')
 EMOJI = re.compile('[\U0001f300-\U0001faff\U00002600-\U000027bf]')
 
 
+def _inflected(token: str, phrase: str) -> bool:
+    """True when the token is the phrase or a regular inflection of it.
+
+    'leveraging' and 'leveraged' drop the final e, so a plain prefix test misses them.
+    """
+    if token == phrase or token.startswith(phrase):
+        return True
+    for suffix in ('ingly', 'ing', 'ed', 'es', 's'):
+        if token.endswith(suffix) and len(token) > len(suffix) + 3:
+            stem = token[: -len(suffix)]
+            if phrase == stem or (phrase.startswith(stem) and len(phrase) - len(stem) <= 1):
+                return True
+            return False
+    return False
+
+
+def ban_hit(text: str, *, skip: tuple[str, ...] = ()) -> str | None:
+    """Match a banned phrase or an inflection of a single banned word."""
+    lowered = (text or '').lower()
+    tokens = re.findall(r"[a-z']+", lowered)
+    for phrase in BAN_PHRASES:
+        if phrase in skip:
+            continue
+        if ' ' in phrase:
+            if phrase in lowered:
+                return phrase
+            continue
+        for token in tokens:
+            if _inflected(token, phrase):
+                return phrase
+    return None
+
+
 def _fail(message: str) -> None:
     raise OutputParserException(message)
 
@@ -89,23 +122,45 @@ def quote_word_count(text: str) -> int:
     return len(re.findall(r"[A-Za-z0-9']+", text or ''))
 
 
+def _quote_in_turn(quote: str, raw: str) -> str | None:
+    """Return the transcript's own casing, with a leading ellipsis when the quote starts mid-turn.
+
+    A trimmed leading word still matches. The rendered words keep the turn's case.
+    """
+    if not quote or not raw:
+        return None
+
+    def _shown(source: str, needle: str) -> str | None:
+        index = source.casefold().find(needle.casefold())
+        if index < 0:
+            return None
+        prefix = '…' if source[:index].strip() else ''
+        return prefix + source[index:index + len(needle)]
+
+    exact = _shown(raw, quote)
+    if exact is not None:
+        return exact
+    squashed = re.sub(r'\s+', ' ', raw).strip()
+    squashed_quote = re.sub(r'\s+', ' ', quote).strip()
+    return _shown(squashed, squashed_quote)
+
+
 def own_quote(text: str, timestamp: str, transcript: dict | None, label: str) -> str:
-    """Accept a quote only when it is this speaker's line and uses that turn's clock."""
+    """Accept a quote only when it is this speaker's line, in that turn's own words and clock."""
     from lib.story_evidence import clock
 
     cleaned = (text or '').strip().strip('"').strip()
     if quote_word_count(cleaned) < 3:
         _fail('quote is under 3 words and does not count as evidence')
-    needle = _normalize(cleaned)
     given = str(timestamp or '').strip()
     for row in (transcript or {}).get('utterances') or []:
         if row.get('speaker') != label:
             continue
-        if needle not in _normalize(str(row.get('text') or '')):
+        shown = _quote_in_turn(cleaned, str(row.get('text') or ''))
+        if shown is None:
             continue
-        shown = clock(row.get('start'))
-        if given == shown:
-            return cleaned
+        if given == clock(row.get('start')):
+            return shown
     _fail(f'quote is not inside a turn by {label}: {cleaned}')
     return cleaned
 
@@ -230,15 +285,17 @@ def reject_craft_violations(
     one_thing: bool = False,
     speaker_label: str | None = None,
     participant_names: list[str] | None = None,
+    skip_bans: tuple[str, ...] = (),
+    personal_voice: bool = False,
 ) -> str:
     """Return the cleaned text, or raise OutputParserException."""
     cleaned = (text or '').strip()
     if not cleaned:
         _fail('story text is empty')
     lowered = cleaned.lower()
-    for phrase in BAN_PHRASES:
-        if phrase in lowered:
-            _fail(f'story text contains {phrase!r}')
+    hit = ban_hit(cleaned, skip=skip_bans)
+    if hit:
+        _fail(f'story text contains {hit!r}')
     if '!' in cleaned:
         _fail('story text contains an exclamation point')
     if EMOJI.search(cleaned):
@@ -268,6 +325,13 @@ def reject_craft_violations(
         for person in _named_people(cleaned):
             if person.casefold() not in allowed and not person.casefold().startswith('speaker '):
                 _fail(f'story text names someone who is not in the session: {person}')
+    if personal_voice or speaker_label is not None:
+        if re.search(r'\b(the speaker|the student|the participant)\b', lowered):
+            _fail('personal story must say you, not a role label')
+        if re.search(r'\b(he|she|his|her|they)\b', lowered):
+            _fail('personal story must stay in second person')
+        if re.search(r'(?<=\s)(He|She|They|His|Her)\b', cleaned):
+            _fail('personal story capitalizes a pronoun mid-sentence')
     if headline and word_count(cleaned) > 12:
         _fail(f'headline is {word_count(cleaned)} words; the maximum is 12')
     if one_thing:

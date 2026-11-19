@@ -79,6 +79,152 @@ def test_pages_are_not_left_nearly_empty(tmp_path):
     assert ratios[-1] >= 0.15
 
 
+def test_signature_examples_may_be_invented_and_must_be_long_enough():
+    from lib.llm_functions import _signature_fields
+
+    bigram = 'we should'
+    good = {
+        'what': 'You reach for "we should" when you want the room to move with you.',
+        'so_what': 'A coaching note is that the phrase buys you a moment to think.',
+        'now_what': 'You can pause once before you lean on that phrase again today.',
+    }
+    import json
+    parsed = _signature_fields(json.dumps(good), 'we should try the plan', bigram)
+    assert 'we should' in parsed['what']
+    with pytest.raises(ValueError):
+        _signature_fields(json.dumps({**good, 'so_what': 'Repetition.'}), 'we should', bigram)
+
+
+def test_ban_list_catches_inflections_and_voice():
+    with pytest.raises(OutputParserException):
+        reject_craft_violations('You are leveraging the moment now.')
+    with pytest.raises(OutputParserException):
+        reject_craft_violations('You are empowering the room from here.')
+    with pytest.raises(OutputParserException):
+        reject_craft_violations('The speaker opened the plan for everyone.', speaker_label='A')
+    with pytest.raises(OutputParserException):
+        reject_craft_violations("That's when He stopped the story cold.", speaker_label='A')
+    with pytest.raises(OutputParserException):
+        reject_craft_violations('The student kept the turn after that.', personal_voice=True)
+
+
+def test_mid_turn_quote_keeps_case_and_adds_an_ellipsis():
+    from lib.story_validation import own_quote
+
+    transcript = {
+        'utterances': [
+            {
+                'speaker': 'A',
+                'text': 'And you have to know this now please.',
+                'start': 0,
+                'end': 4000,
+            }
+        ]
+    }
+    shown = own_quote('You have to know this now please.', '0:00', transcript, 'A')
+    assert shown.startswith('…')
+    assert shown[1:].startswith('you have to')
+
+
+def test_question_target_moves_up_and_talk_target_respects_the_norm():
+    from lib.story_render import one_thing_from_gap, unique_habits
+
+    quiet = one_thing_from_gap(share=20, speaker_count=7, questions=0, question_average=1)
+    assert quiet[0].startswith('Ask one question')
+    assert 'Target: 1 question.' in quiet[0]
+    assert 'talk time' not in quiet[0]
+    zero = one_thing_from_gap(share=25, speaker_count=4, questions=0, question_average=0)
+    assert 'Target: 1 question.' in zero[0]
+    even = one_thing_from_gap(share=21, speaker_count=4, questions=2, question_average=1)
+    assert '18%' not in even[0]
+    assert '% talk time' not in even[0]
+    louder = one_thing_from_gap(share=10, speaker_count=4, questions=3, question_average=1)
+    assert 'Target: 25% talk time.' in louder[0]
+    assert louder[0].startswith('Say')
+    loud = one_thing_from_gap(share=50, speaker_count=4, questions=3, question_average=1)
+    assert loud[0].startswith('Pause after the point')
+    assert 'Target: 25% talk time.' in loud[0]
+    person = {
+        'share': 50, 'speaker_count': 7, 'questions': 0, 'question_average': 2,
+        'turn_words': 0, 'session_turn_words': 0, 'early': None, 'late': None,
+    }
+    habits = unique_habits([
+        {'label': 'A', **person},
+        {'label': 'B', 'share': 10, 'speaker_count': 7, 'questions': 0, 'question_average': 2, 'turn_words': 0, 'session_turn_words': 0, 'early': None, 'late': None},
+        {'label': 'C', **person},
+    ])
+    assert len({habits['A'][0], habits['B'][0], habits['C'][0]}) == 3
+    assert habits['A'][0].startswith('Pause')
+    assert habits['C'][0].startswith('Ask')
+
+
+def test_group_character_accepts_one_fact_and_the_page_holds_the_chord(tmp_path):
+    from PIL import Image
+
+    from lib.pdf_functions import MM_PDF
+    from lib.story_pdf import write_group_story
+    from lib.story_render import render_group_section
+
+    facts = {
+        'interaction': {'value': 42, 'unit': 'percent', 'line': '42% interaction'},
+        'participation': {'value': 80, 'unit': 'percent', 'line': '80% participation'},
+        'word_interaction': {'value': 39, 'unit': 'percent', 'line': '39% of the words exchanged'},
+        'target_interaction': {'value': 56, 'unit': 'percent', 'line': '56% interaction'},
+    }
+    rendered = render_group_section(
+        'character',
+        {'headline': 'A working session', 'number_keys': ['interaction']},
+        transcript=synthetic_transcript(),
+        facts=facts,
+        cast='Who talks to whom.',
+    )
+    assert '42% interaction' in rendered['character']
+    resolved = render_group_section(
+        'resolution',
+        {'claim': 'the budget held'},
+        transcript=synthetic_transcript(),
+        facts=facts,
+        cast='Who talks to whom.',
+    )
+    assert resolved['resolution'].startswith('The meeting closed on')
+    assert 'numbers' in resolved['resolution']
+    image = tmp_path / 'chord.png'
+    Image.new('RGB', (400, 400), 'white').save(image)
+    pdf = MM_PDF(path_report_assets=__import__('pathlib').Path('report_assets'))
+    story = {
+        'headline': 'A working session',
+        'character': rendered['character'],
+        'goal': 'The turns keep returning to the onboarding plan.',
+        'challenge': 'Interaction was 42%.',
+        'drama': 'Who talks to whom.',
+        'resolution': 'The meeting closed on the budget.',
+        'one_thing': 'Ask one question back before the next decision. Target: 56% interaction.',
+        'why': 'Interaction is 42%, so 56% is a step up.',
+        'transitions': {},
+    }
+    write_group_story(pdf, story, image, [('Alex Rivera', 'Blake Chen', 2, 1)])
+    assert pdf._chord_page == 1
+    pdf.output(tmp_path / 'group.pdf')
+    ratios = MM_PDF.latest_ratios
+    for ratio in ratios[:-1]:
+        assert ratio >= 0.40
+    assert ratios[-1] >= 0.15
+
+
+def test_a_heading_is_not_stranded_at_the_bottom_of_a_page(tmp_path):
+    from lib.pdf_functions import MM_PDF
+    from lib.story_pdf import _body, _heading
+
+    pdf = MM_PDF(path_report_assets=__import__('pathlib').Path('report_assets'))
+    pdf.add_page()
+    pdf.set_y(pdf.h - pdf.b_margin - 12)
+    previous = pdf.page
+    _heading(pdf, 'Drama')
+    _body(pdf, 'You opened on the plan and the next voice took the turn after you.')
+    assert pdf._heading_page == pdf.page
+    assert pdf._heading_page == previous + 1
+
+
 def test_builtin_templates_do_not_use_banned_words():
     blobs = []
     for options in list(TRANSITIONS.values()) + list(GROUP_TRANSITIONS.values()):
