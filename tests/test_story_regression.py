@@ -845,6 +845,64 @@ def test_annie_like_seven_person_report_compacts_a_thin_last_page(tmp_path):
     assert fitted.page_fill_ratios()[-1] >= 0.15
 
 
+def test_personal_layout_fits_two_pages_and_keeps_the_doshas_line(tmp_path):
+    from pypdf import PdfReader
+
+    from lib.pdf_functions import MM_PDF
+    from lib.story_pdf import fit_personal_report, write_personal_report
+
+    dosha = (
+        'Kapha (4/5). The steady pace keeps the room with you, and the last clause of this '
+        'Doshas note has to stay visible even when the page is nearly full of the section above it.'
+    )
+    sentence = 'The room kept returning to the same point before anyone answered the question.'
+    long = ' '.join([sentence] * 12)
+    story = {
+        'headline': 'Leslie',
+        'numbers': ['8% talk time: below the room average.'] * 3,
+        'character_body': long,
+        'share': 8,
+        'goal': long,
+        'challenge': long,
+        'drama': long,
+        'resolution': long,
+        'one_thing': 'Ask one question before you add another point. Target: 4 questions.',
+        'why': 'The question count is the gap this session can measure next time.',
+        'transitions': {},
+        'signature': {
+            'phrase': 'the room',
+            'count': 2,
+            'quotes': ['You said the room needed a longer line before the close today.'],
+            'what': 'You reach for the room.',
+            'so_what': 'It gives the next voice a place to start.',
+            'now_what': 'You can leave one beat before the next line.',
+        },
+        'lines': [{'start': 0, 'text': 'hello'}],
+        'session_end_ms': 60000,
+        'appendix': {
+            'AMASE': 'One line for the lens.',
+            'Enneagram': 'One line for the lens.',
+            'Doshas': dosha,
+        },
+    }
+
+    def make_pdf():
+        return MM_PDF(path_report_assets=__import__('pathlib').Path('report_assets'))
+
+    plain = make_pdf()
+    write_personal_report(plain, story, tmp_path / 'plain')
+    assert len(plain.page_fill_ratios()) == 3
+    fitted = fit_personal_report(story, tmp_path / 'fitted', make_pdf)
+    assert len(fitted.page_fill_ratios()) == 2
+    fitted.output(tmp_path / 'fitted.pdf')
+    text = '\n'.join(page.extract_text() or '' for page in PdfReader(tmp_path / 'fitted.pdf').pages)
+    collapsed = ' '.join(text.split())
+    assert 'Leslie' in collapsed
+    assert 'L e s l i e' not in collapsed
+    assert 'Ask one question before you add another point' in collapsed
+    assert 'last clause of this Doshas note has to stay visible' in collapsed
+
+
 def test_auto_end_stops_on_the_last_topic_turn_not_the_posing_line():
     from lib.session_window import apply_session_window, parse_clock_ms
     from lib.story_render import is_logistics
@@ -1694,17 +1752,18 @@ def test_group_pair_table_keeps_four_and_signature_stays_with_its_line(tmp_path)
     else:
         raise AssertionError('signature heading missing')
     opening = 'We should try the new onboarding plan.'
-    with pytest.raises(OutputParserException):
-        _render(
-            'drama',
-            {
-                'patterns': [{
-                    'quotes': [{'text': opening, 'ts': '0:00'}],
-                    'pattern': 'You set the plan in the first line',
-                    'twist': 'the next voice took the turn',
-                    'cost': 'a question',
-                    'gift': 'a clear start',
-                }],
-                'exception': {'quote': opening, 'ts': '0:00', 'what_happened': 'you named the plan again'},
-            },
-        )
+    reused = _render(
+        'drama',
+        {
+            'patterns': [{
+                'quotes': [{'text': opening, 'ts': '0:00'}],
+                'pattern': 'You set the plan in the first line',
+                'twist': 'the next voice took the turn',
+                'cost': 'a question',
+                'gift': 'a clear start',
+            }],
+            'exception': {'quote': opening, 'ts': '0:00', 'what_happened': 'you named the plan again'},
+        },
+    )
+    assert 'Monday' in reused['drama']
+    assert reused['drama'].count(opening.rstrip('.')) == 1
