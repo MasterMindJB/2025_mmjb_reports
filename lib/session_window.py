@@ -280,6 +280,41 @@ def closer_turn(rows: list) -> dict | None:
     return result
 
 
+def stamp_speaker_map(transcript: dict, speakers) -> dict:
+    """Copy the confirmed name and role onto each utterance.
+
+    AssemblyAI rows only carry a speaker letter. The host-thanks closer looks at
+    role, so the map has to be stamped before the closer and the story run.
+    A host stays role=host.
+    """
+    if isinstance(speakers, dict):
+        pairs = speakers.items()
+    else:
+        pairs = ((speaker.get('label'), speaker) for speaker in speakers or [])
+    by_label = {label: info for label, info in pairs if label and isinstance(info, dict)}
+    stamped = dict(transcript or {})
+
+    def _apply(rows: list) -> list:
+        applied = []
+        for row in rows or []:
+            item = dict(row)
+            info = by_label.get(item.get('speaker'))
+            if info:
+                name = info.get('display_name') or info.get('name')
+                role = info.get('role')
+                if name:
+                    item['name'] = name
+                if role:
+                    item['role'] = role
+            applied.append(item)
+        return applied
+
+    stamped['utterances'] = _apply((transcript or {}).get('utterances') or [])
+    if 'sentiment_analysis_results' in (transcript or {}):
+        stamped['sentiment_analysis_results'] = _apply(transcript.get('sentiment_analysis_results') or [])
+    return stamped
+
+
 def apply_session_window(transcript: dict, start_ms: int | None = None, end_ms: int | None = None) -> dict:
     """Keep utterances that start inside the window. An omitted end is detected."""
     from lib.story_render import discussion_rows

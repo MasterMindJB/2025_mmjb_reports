@@ -451,3 +451,90 @@ def test_gemini_settings_are_checked_at_startup(monkeypatch):
         assert 'GEMINI_TIMEOUT_SECONDS' in str(exc)
     else:
         raise AssertionError('a zero Gemini timeout should be rejected')
+
+
+def test_generate_session_stamps_the_host_before_the_closer(tmp_path):
+    """Unannotated AssemblyAI rows plus the speaker map. Annie's thanks is the closer."""
+    from app.interfaces import AnalysisBundle
+    from app.services import generate_session
+    from lib.session_window import closer_turn, parse_clock_ms
+
+    captured = {}
+
+    class CaptureAnalysis:
+        def analyze(self, **kwargs):
+            captured['transcript'] = kwargs['transcript']
+            return AnalysisBundle({}, {}, {}, None, {})
+
+    class QuietRenderer:
+        def render(self, **kwargs):
+            return []
+
+    def turn(clock, speaker, text):
+        start = parse_clock_ms(clock)
+        return {'speaker': speaker, 'text': text, 'start': start, 'end': start + 20_000}
+
+    rows = [
+        turn(
+            f'2:{30 + index}:00',
+            'A',
+            'The knowledge systems still hide the design until the workflow is named by the room.',
+        )
+        for index in range(8)
+    ]
+    rows.append(turn(
+        '2:42:24',
+        'A',
+        'The knowledge systems still hide the design until the workflow is named. Thank you all for coming.',
+    ))
+    fragment = (
+        'this era, like as users, as participants, et cetera the knowledge systems '
+        'still hide the design until the workflow ends today.'
+    )
+    assert len(fragment.split()) == 21
+    rows.append(turn('2:46:37', 'E', fragment))
+    assert all('name' not in row and 'role' not in row for row in rows)
+
+    app, _transcription = build_client(tmp_path)
+    app.state.analysis = CaptureAnalysis()
+    app.state.renderer = QuietRenderer()
+    db = app.state.db
+    transcript_path = tmp_path / 'transcript.json'
+    transcript_path.write_text(json.dumps({'utterances': rows}), encoding='utf-8')
+    session_id = db.create_session(
+        client='Northwind',
+        group_name='Cohort A',
+        session_name='Take a Position',
+        session_date='2026-11-18',
+        speakers_expected=2,
+        recording_path='',
+        recording_filename='',
+        created_at='2026-11-19T00:00:00+00:00',
+        window_end_ms=parse_clock_ms('2:47:30'),
+    )
+    db.update_session(session_id, transcript_path=str(transcript_path), status='naming')
+    db.replace_speakers(session_id, [{'label': 'A', 'samples': []}, {'label': 'E', 'samples': []}])
+    for speaker in db.list_speakers(session_id):
+        if speaker['label'] == 'A':
+            db.update_speaker(
+                speaker['id'], name='Dr. Annie Green', email='', role='host', name_status='confirmed',
+            )
+        else:
+            db.update_speaker(
+                speaker['id'], name='', email='', role='participant', name_status='skipped',
+            )
+    generate_session(
+        db, app.state.analysis, app.state.renderer, app.state.transcription, app.state.settings, session_id,
+    )
+    stamped = captured['transcript']['utterances']
+    host = next(row for row in stamped if row['start'] == parse_clock_ms('2:42:24'))
+    assert host['role'] == 'host'
+    assert host['name'] == 'Dr. Annie Green'
+    later = next(row for row in stamped if row['start'] == parse_clock_ms('2:46:37'))
+    assert later['name'] == 'Speaker E'
+    assert later['role'] == 'participant'
+    chosen = closer_turn(stamped)
+    assert chosen['start'] == parse_clock_ms('2:42:24')
+    assert chosen['text'].startswith('The knowledge systems still hide the design')
+    assert 'Thank you all for coming' not in chosen['text']
+    assert 'et cetera' not in chosen['text']

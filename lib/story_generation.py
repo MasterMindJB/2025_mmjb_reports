@@ -472,6 +472,9 @@ def generate_report_stories(
     progress_dir=None,
 ) -> dict:
     """Personal drafts for participants, plus one group draft."""
+    from lib.session_window import stamp_speaker_map
+
+    transcript = stamp_speaker_map(transcript, speaker_map)
     names_by_label = {label: info.get('name') or label for label, info in speaker_map.items()}
     personal = {}
     profiles = []

@@ -133,7 +133,7 @@ def generate_session(
         recipients = [speaker for speaker in included if speaker['receives_report']]
         participant_labels = {speaker['label']: speaker for speaker in recipients}
         participant_labels = set(participant_labels)
-        from lib.session_window import apply_session_window
+        from lib.session_window import apply_session_window, stamp_speaker_map
 
         transcript = apply_session_window(
             _load_transcript(session),
@@ -146,6 +146,8 @@ def generate_session(
                 transcript[key] = [
                     item for item in (transcript.get(key) or []) if item.get('speaker') not in noise
                 ]
+        # Name and role have to be on the rows before the closer and every story input.
+        transcript = stamp_speaker_map(transcript, assigned)
         work_dir = session_root(settings, session_id) / 'work'
 
         def note(message: str) -> None:
