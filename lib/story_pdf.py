@@ -321,7 +321,11 @@ def write_personal_report(
     _heading(pdf, 'Drama')
     _body(pdf, story['drama'])
     card = story['signature']
-    _room(pdf, 40)
+    # Keep the signature label with the lines under it, and leave a gap after Drama.
+    if _remaining(pdf) < 24:
+        pdf.add_page()
+    else:
+        pdf.ln(3)
     _body(pdf, 'Your signature phrase:')
     if card.get('phrase'):
         from lib.report_stats import display_bigram
@@ -411,7 +415,8 @@ def _chord_hero(pdf, chord_path) -> None:
         pdf.note_y()
 
 
-def write_group_story(pdf, story: dict, chord_path, chord_pairs) -> None:
+def write_group_story(pdf, story: dict, chord_path, chord_pairs, *, gap: float = 1.0) -> None:
+    pdf._story_gap = gap
     pdf.add_page()
     pdf.set_text_color(20, 33, 74)
     _kicker(pdf, 'The session')
@@ -426,7 +431,7 @@ def write_group_story(pdf, story: dict, chord_path, chord_pairs) -> None:
     _transition(pdf, (story.get('transitions') or {}).get('after_character'))
     from lib.pdf_functions import _add_direction_table
 
-    _add_direction_table(pdf, chord_pairs or [])
+    _add_direction_table(pdf, (chord_pairs or [])[:4])
     if hasattr(pdf, 'note_y'):
         pdf.note_y()
     _heading(pdf, 'Goal')

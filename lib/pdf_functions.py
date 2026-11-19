@@ -524,13 +524,14 @@ def create_report_group(
 ):
     logging.info('Creating PDF report.')
 
-    pdf = MM_PDF(
-        path_report_assets=path_report_assets,
-        orientation='P',
-        unit='mm',
-        format='letter',
-        link_feedback=link_feedback,
-    )
+    def _new_pdf():
+        return MM_PDF(
+            path_report_assets=path_report_assets,
+            orientation='P',
+            unit='mm',
+            format='letter',
+            link_feedback=link_feedback,
+        )
 
     cast = 'Who talks to whom, and who nobody answered.'
     if chord_pairs:
@@ -555,7 +556,11 @@ def create_report_group(
         pairs=chord_pairs,
         shares=shares,
     )
+    pdf = _new_pdf()
     write_group_story(pdf, story, path_image_chord, chord_pairs)
+    if len(pdf.page_fill_ratios()) > 2 and pdf.page_fill_ratios()[-1] < 0.25:
+        pdf = _new_pdf()
+        write_group_story(pdf, story, path_image_chord, chord_pairs, gap=0.75)
     if pdf.link_feedback:
         pdf.add_comments_section()
     pdf.output(path_file)
