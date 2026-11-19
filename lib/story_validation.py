@@ -343,6 +343,18 @@ def normalize_mid_sentence_capitals(text: str, names: list[str] | None = None) -
     return ''.join(rendered)
 
 
+def _pronoun_in_own_turns(word: str, transcript, label: str | None) -> bool:
+    """A pronoun the speaker used in their own turn is not an outside-voice leak."""
+    if not word or not label:
+        return False
+    own = ' '.join(
+        str(row.get('text') or '')
+        for row in (transcript or {}).get('utterances') or []
+        if row.get('speaker') == label
+    )
+    return re.search(rf'\b{re.escape(word)}\b', own, re.I) is not None
+
+
 def _outside_quotes(text: str) -> str:
     masked = re.sub(r'("[^"]*"|“[^”]*”)', ' ', text or '')
     return re.sub(r"(?<![A-Za-z])'([^']+)'(?![A-Za-z])", ' ', masked)
@@ -474,6 +486,8 @@ def reject_craft_violations(
         if re.search(r'\b(the speaker|the student|the participant|the individual)\b', outside_lower):
             _fail('personal story must say you, not a role label')
         voice_hit = re.search(r'\b(he|she|his|her|they)\b', outside_lower)
+        if voice_hit and _pronoun_in_own_turns(voice_hit.group(0), transcript, speaker_label):
+            voice_hit = None
         if voice_hit:
             _fail(f'personal story must stay in second person: {voice_hit.group(0)!r}')
         if re.search(r"\b(I|I'll|I'm|I've|I'd)\b", outside):

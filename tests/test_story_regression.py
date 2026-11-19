@@ -1500,6 +1500,58 @@ def test_drama_counter_moment_must_be_a_different_turn_and_cost_keeps_fact_digit
     assert '9' not in stripped['drama']
 
 
+def test_drama_keeps_own_turn_digits_and_a_distinct_counter_moment():
+    transcript = {
+        'utterances': [
+            {
+                'speaker': 'A',
+                'text': 'We should try the new onboarding plan for her team.',
+                'start': 0,
+                'end': 4000,
+            },
+            {
+                'speaker': 'A',
+                'text': 'That might work if we start Monday with 12 people.',
+                'start': 11000,
+                'end': 15000,
+            },
+            {
+                'speaker': 'A',
+                'text': 'The gift of the hour was 8 quiet minutes after the plan.',
+                'start': 20000,
+                'end': 24000,
+            },
+        ]
+    }
+    rendered = render_personal_section(
+        'drama',
+        {
+            'patterns': [{
+                'quotes': [{'text': 'We should try the new onboarding plan for her team.', 'ts': '0:00'}],
+                'pattern': 'You set the plan in the first line',
+                'twist': 'the next voice took her turn after 12 minutes',
+                'cost': 'a delay of 3 years',
+                'gift': 'a clear start in 8 minutes',
+            }],
+            'exception': {
+                'quote': 'We should try the new onboarding plan for her team.',
+                'ts': '0:00',
+                'what_happened': 'you named the plan',
+            },
+        },
+        transcript=transcript,
+        label='A',
+        facts=FACTS,
+        forbidden=[],
+    )
+    drama = rendered['drama']
+    assert '12' in drama
+    assert '8' in drama
+    assert 'her' in drama
+    assert 'Monday' in drama
+    assert drama.count('onboarding plan for her team') == 1
+
+
 def test_second_person_check_ignores_words_inside_quotes():
     from lib.story_validation import reject_craft_violations
 

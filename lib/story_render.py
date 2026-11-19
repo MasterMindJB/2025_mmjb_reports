@@ -1082,6 +1082,10 @@ def render_drama(
         for item in (facts or {}).values()
         if isinstance(item, dict) and 'value' in item
     }
+    for row in (transcript or {}).get('utterances') or []:
+        if row.get('speaker') != label:
+            continue
+        allowed_numbers.update(re.findall(r'\d+', str(row.get('text') or '')))
     for pattern in patterns:
         quotes = pattern.get('quotes') if isinstance(pattern, dict) else None
         if not isinstance(quotes, list) or not quotes or len(quotes) > 3:
@@ -1102,7 +1106,8 @@ def render_drama(
         )
         twist = _prose(
             str(pattern.get('twist') or ''), corpus, 'twist',
-            forbidden_names=forbidden, transcript=transcript, speaker_label=label,
+            forbidden_names=forbidden, allowed_numbers=allowed_numbers,
+            transcript=transcript, speaker_label=label,
         )
         cost = _prose(
             str(pattern.get('cost') or ''), corpus, 'cost',
@@ -1111,7 +1116,8 @@ def render_drama(
         )
         gift = _prose(
             str(pattern.get('gift') or ''), corpus, 'gift',
-            forbidden_names=forbidden, transcript=transcript, speaker_label=label,
+            forbidden_names=forbidden, allowed_numbers=allowed_numbers,
+            transcript=transcript, speaker_label=label,
         )
         when, said = rendered_quotes[0]
         sentences.append(f'At {when} you said "{said}".')
@@ -1131,14 +1137,18 @@ def render_drama(
     )
     if _word_count(exception_quote) < 6:
         raise OutputParserException('drama quote is under 6 words')
+    exception_ts = str(exception.get('ts')).strip()
     if exception_turn in seen_turns:
-        raise OutputParserException('drama counter-moment must come from a different turn')
+        replacement = _next_distinct_turn(transcript, label, seen_turns)
+        if replacement is None:
+            raise OutputParserException('drama counter-moment must come from a different turn')
+        exception_ts, exception_quote, exception_turn = replacement
     happened = _prose(
         str(exception.get('what_happened') or ''), corpus, 'what_happened',
         forbidden_names=forbidden, transcript=transcript, speaker_label=label,
     )
     sentences.append(
-        f"The one moment it didn't happen was {str(exception.get('ts')).strip()}, "
+        f"The one moment it didn't happen was {exception_ts}, "
         f'when you said "{exception_quote}", and that\'s when {happened.rstrip(".")}.'
     )
     rendered = ' '.join(sentences)
@@ -1148,6 +1158,24 @@ def render_drama(
         if phrase in rendered.lower():
             raise OutputParserException(f'drama contains {phrase!r}')
     return capitalize_sentences(rendered)
+
+
+def _next_distinct_turn(transcript, label: str, used: set[str]) -> tuple[str, str, str] | None:
+    """The next turn by this speaker that is not already quoted in the section."""
+    from lib.story_evidence import clock
+
+    for index, row in enumerate((transcript or {}).get('utterances') or []):
+        if row.get('speaker') != label:
+            continue
+        turn_id = str(row.get('start') if row.get('start') is not None else index)
+        if turn_id in used:
+            continue
+        text = str(row.get('text') or '').strip()
+        clip = closing_clip(text)
+        if clip is None or _word_count(clip) < 6:
+            continue
+        return clock(row.get('start')), clip, turn_id
+    return None
 
 
 def _normalize_quote(text: str) -> str:
