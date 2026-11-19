@@ -2102,11 +2102,8 @@ def test_group_pair_table_keeps_four_and_signature_stays_with_its_line(tmp_path)
     personal.output(tmp_path / 'personal.pdf')
     for page in PdfReader(tmp_path / 'personal.pdf').pages:
         page_text = page.extract_text() or ''
-        if 'Your signature phrase' in page_text:
-            assert 'You reach for it' in page_text
-            break
-    else:
-        raise AssertionError('signature heading missing')
+        assert 'Your signature phrase' not in page_text
+        assert 'So, what?' not in page_text
     opening = 'We should try the new onboarding plan.'
     reused = _render(
         'drama',

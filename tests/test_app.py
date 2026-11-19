@@ -174,9 +174,10 @@ def test_full_flow_keeps_individual_reports_private(tmp_path):
         assert 'ACTION_TITLE_ALEX' not in alex
         assert 'SUPERPOWER_TOKEN_Alex_Rivera' not in alex
         assert 'AMASE_TOKEN_Alex_Rivera' in alex
-        assert 'Your signature phrase:' in alex
-        assert 'SIGNATURE_PHRASE_TOKEN' in alex
-        assert 'Your signature phrase' in blake
+        assert 'Your signature phrase:' not in alex
+        assert 'SIGNATURE_PHRASE_TOKEN' not in alex
+        assert 'So, what?' not in alex
+        assert 'Your signature phrase' not in blake
         for foreign in (
             'PERSONAL_SUMMARY_TOKEN_BLAKE',
             'QUOTE_TAG_BLAKE',

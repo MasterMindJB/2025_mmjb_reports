@@ -8,6 +8,8 @@ from lib.personal_narrative import (
     good_sentence,
     needs_short_report,
     speaker_rows,
+    substantive_count,
+    word_total,
 )
 from lib.story_render import share_relation
 
@@ -35,7 +37,19 @@ def test_a_fragment_is_not_a_candidate_quote():
     assert all(len(quote.split()) <= 40 for quote in quotes)
 
 
-def test_short_mode_skips_the_model_when_there_are_not_enough_turns():
+def test_two_long_monologues_are_a_full_report():
+    sentence = 'The budget can wait until Monday if the room agrees on one clear plan for the work.'
+    turn = ' '.join([sentence] * 2)
+    rows = [
+        {'speaker': 'L', 'text': turn, 'start': 0, 'end': 8000},
+        {'speaker': 'L', 'text': turn, 'start': 9000, 'end': 16000},
+    ]
+    assert substantive_count(rows) == 2
+    assert word_total(rows) >= 60
+    assert needs_short_report(rows) is False
+
+
+def test_short_mode_skips_the_model_when_there_are_not_enough_words():
     transcript = {'utterances': [
         {'speaker': 'L', 'text': 'The budget can wait until Monday if the room agrees.', 'start': 0, 'end': 4000},
         {'speaker': 'L', 'text': 'I can own the numbers from here.', 'start': 5000, 'end': 9000},
@@ -52,7 +66,7 @@ def test_short_mode_skips_the_model_when_there_are_not_enough_turns():
         {'share': 8, 'turns': 2, 'questions': 0, 'session_question_average': 1, 'speaker_count': 7},
     )
     assert story['short_mode'] is True
-    assert story['headline'].startswith('You spoke')
+    assert story['headline'] == 'A few short turns.'
     assert '1 big thing' not in story['one_big_thing']
     assert story['one_big_thing'] == ''
     assert story['why_it_matters'] == ''

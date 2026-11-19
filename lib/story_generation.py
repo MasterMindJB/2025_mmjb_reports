@@ -61,11 +61,12 @@ def story_request_estimate(participants: int, attempts: int = ATTEMPTS) -> dict:
     people = max(0, int(participants))
     before = people * PREVIOUS_SECTION_CALLS * PREVIOUS_ATTEMPTS + PREVIOUS_SECTION_CALLS * PREVIOUS_ATTEMPTS
     before += people * PREVIOUS_ATTEMPTS
-    after_worst = (people + 1 + people) * attempts
+    # Personal narrative, the group story, and one proposal call. No signature cards.
+    after_typical = people + 2
     return {
         'before_worst': before,
-        'after_typical': people + 1 + people,
-        'after_worst': after_worst,
+        'after_typical': after_typical,
+        'after_worst': after_typical * attempts,
     }
 
 

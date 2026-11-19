@@ -112,6 +112,43 @@ def test_proposal_prompt_shows_what_is_not_a_proposal():
     assert '0. H:' in prompt
 
 
+def test_talk_most_comes_from_share_not_from_who_followed_whom():
+    from lib.readability import reading_grade
+    from lib.story_render import group_character_copy
+
+    text = group_character_copy({
+        '_shares': [
+            ('Steve', 21), ('Stephen', 18), ('Ric', 17),
+            ('Moderator', 15), ('G', 11), ('Leslie', 6),
+        ],
+        '_portrait': {'pair': ('Moderator', 'Ric'), 'least': 'G'},
+        '_closing': {'name': 'Leslie', 'text': 'The quiet line still closed the hour well.'},
+    })
+    assert 'Steve talked the most' in text
+    assert 'Leslie talked the least' in text
+    assert 'back and forth ran between Moderator and Ric' in text
+    assert 'Moderator and Ric did most of the talking' not in text
+    assert 'G spoke the least' not in text
+    assert text.count('"') % 2 == 0
+
+
+def test_a_cut_off_quote_is_closed():
+    from lib.story_render import close_quotes
+
+    assert close_quotes('…find a niche to exploit.') == '…find a niche to exploit.'
+    assert close_quotes('"…find a niche to exploit.') == '"…find a niche to exploit."'
+    assert close_quotes('"…find a niche to exploit."').count('"') % 2 == 0
+
+
+def test_chord_title_stays_at_grade_six_or_below():
+    from lib.chord_diagram import chord_finding
+    from lib.readability import reading_grade
+
+    title = chord_finding(['Full Sail Moderator', 'Ric'], [4, 9])
+    assert title == 'Ric had the most back and forth.'
+    assert reading_grade(title) <= 6
+
+
 def test_idea_generation_label_is_not_a_chart_column():
     assert 'Idea Generation' not in NICE_STATS_COL_NAME.values()
 

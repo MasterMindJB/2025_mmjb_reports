@@ -90,11 +90,11 @@ def test_personal_report_section_order(tmp_path):
     positions = [text.find(heading) for heading in order]
     assert all(position != -1 for position in positions), text
     assert positions == sorted(positions)
-    assert text.find('Your next rep') < text.find('Your signature phrase:')
-    assert text.find('Your signature phrase:') < text.find('Appendix: style lenses')
+    assert text.find('Your next rep') < text.find('Appendix: style lenses')
     assert 'Enneagram' not in text
     assert 'Doshas' not in text
     assert 'AMASE' in text
     assert 'Harkness Training Solutions 2026' in text
-    assert 'Your signature phrase:' in text
+    assert 'Your signature phrase:' not in text
+    assert 'So, what?' not in text
     assert 'coffee machine' not in text.lower()

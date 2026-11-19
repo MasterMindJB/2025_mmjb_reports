@@ -917,19 +917,18 @@ def people_spoke_line(spoke: int, total: int) -> str:
     )
 
 
-def group_pattern_why(portrait: dict) -> str:
-    """Why the pattern matters. Not a restatement of the meeting topic."""
+def group_pattern_why(portrait: dict, shares=None) -> str:
+    """Why the pattern matters. Talk share and back and forth stay distinct."""
+    most, least_talk = _talk_ends(shares or [])
     pair = (portrait or {}).get('pair') or ()
-    least = (portrait or {}).get('least') or 'the quiet person'
-    if len(pair) >= 2 and pair[0] and pair[1]:
-        return (
-            f'When {pair[0]} and {pair[1]} do most of the talking, {least} cannot change the choice. '
-            f'Next time, ask {least} before you decide.'
-        )
-    return (
-        f'When a few people do most of the talking, {least} cannot change the choice. '
-        f'Next time, ask {least} before you decide.'
-    )
+    quiet = least_talk or (portrait or {}).get('least') or 'the quiet person'
+    if most and least_talk and most != least_talk:
+        opening = f'{most} talked the most, so {quiet} had less chance to change the choice.'
+    elif len(pair) >= 2 and pair[0] and pair[1]:
+        opening = f'Most of the back and forth ran between {pair[0]} and {pair[1]}.'
+    else:
+        opening = f'{quiet} had less chance to change the choice.'
+    return f'{opening} Next time, ask {quiet} before you decide.'
 
 
 def group_caveat(portrait: dict) -> str:
@@ -1089,26 +1088,45 @@ def narrative_text(text: str, *, big: bool = False) -> str:
     return result
 
 
+def _talk_ends(shares) -> tuple[str, str]:
+    rows = [(str(name), int(value)) for name, value in (shares or []) if str(name) != 'Average']
+    if not rows:
+        return '', ''
+    ordered = sorted(rows, key=lambda item: (-item[1], item[0]))
+    return ordered[0][0], ordered[-1][0]
+
+
 def group_character_copy(facts: dict) -> str:
-    """The group's 1 big thing: the pattern, the moment, and one invitation. No metric dump."""
+    """Talk most and least come from talk share. A pair is back and forth, not talk time."""
     portrait = facts.get('_portrait') or {}
     pair = portrait.get('pair') or ()
-    least = portrait.get('least') or 'the quietest voice'
+    most, least_talk = _talk_ends(facts.get('_shares') or [])
+    sentences = []
+    if most and least_talk and most != least_talk:
+        sentences.append(f'{most} talked the most. {least_talk} talked the least.')
+    elif most:
+        sentences.append(f'{most} talked the most.')
     if len(pair) >= 2 and pair[0] and pair[1]:
-        pattern = f'{pair[0]} and {pair[1]} did most of the talking, and {least} spoke the least.'
-    else:
-        pattern = f'A few people did most of the talking, and {least} spoke the least.'
+        sentences.append(f'The most back and forth ran between {pair[0]} and {pair[1]}.')
+    elif portrait.get('least') and not least_talk:
+        sentences.append(f'{portrait.get("least")} had the least back and forth.')
     closing = facts.get('_closing') or {}
     name = str(closing.get('name') or '').strip()
-    quote = str(closing.get('text') or '').strip()
+    quote = str(closing.get('text') or '').strip().strip('"')
     if name and quote:
-        mattered = f'{name} said the last line: "{quote}".'
+        sentences.append(f'{name} said the last line: "{quote}"')
     elif name:
-        mattered = f'{name} said the last line.'
-    else:
-        mattered = 'The last line still had to land.'
-    invite = f'Next time, who will ask {least} to speak sooner?'
-    return f'{pattern} {mattered} {invite}'
+        sentences.append(f'{name} said the last line.')
+    ask = least_talk or portrait.get('least') or 'the quiet person'
+    sentences.append(f'Next time, who will ask {ask} to speak sooner?')
+    return close_quotes(' '.join(sentences))
+
+
+def close_quotes(text: str) -> str:
+    """An opened quote always gets its closing mark."""
+    if str(text).count('"') % 2:
+        return f'{text}"'
+    return text
 
 
 _MOMENT_SKIP = {

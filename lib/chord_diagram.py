@@ -980,7 +980,7 @@ def chord_finding(names: list[str], arcs: list[int]) -> str:
     index = max(range(len(names)), key=lambda item: (int(arcs[item] or 0), str(names[item])))
     if int(arcs[index] or 0) <= 0:
         return 'Who spoke right after whom'
-    return f'Most exchanges ran through {names[index]}.'
+    return f'{names[index]} had the most back and forth.'
 
 
 def save_chord_diagram(

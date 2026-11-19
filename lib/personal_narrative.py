@@ -20,6 +20,17 @@ _DANGLING = {
     'to', 'and', 'the', 'a', 'an', 'of', 'for', 'with', 'in', 'on', 'at',
     'from', 'by', 'or', 'as', 'if', 'that', 'so',
 }
+_FUNCTION = {
+    'the', 'a', 'an', 'of', 'for', 'with', 'in', 'on', 'at', 'from', 'by', 'or',
+    'as', 'if', 'that', 'so', 'to', 'and', 'we', 'you', 'i', 'it', 'is', 'are',
+    'was', 'were', 'be', 'been', 'will', 'would', 'could', 'should', 'all', 'us',
+    'our', 'probably', 'just', 'really', 'very', 'well', 'yeah', 'yes', 'right',
+    'think', 'know', 'mean', 'like', 'this', 'these', 'those',
+}
+_FILLER_PREFIX = re.compile(
+    r'^(?:(?:well|so|okay|ok|yeah|yes|right|um+|uh+)\s*,?\s*|(?:i think|you know|i mean)\s*,?\s*)+',
+    re.I,
+)
 _BANNED = (
     'interaction', 'participation', 'talk time', 'focused dialogue',
     'this is the part to change', 'who else should speak about',
@@ -43,21 +54,58 @@ def good_sentence(sentence: str) -> bool:
     return words[-1].lower() not in _DANGLING
 
 
+def _content_words(sentence: str) -> list[str]:
+    return [word for word in _words(sentence) if word.lower() not in _FUNCTION and len(word) > 3]
+
+
+def _strip_filler(sentence: str) -> str:
+    cleaned = _FILLER_PREFIX.sub('', sentence or '').strip()
+    if cleaned[:1].islower():
+        cleaned = cleaned[0].upper() + cleaned[1:]
+    return cleaned
+
+
 def candidate_quotes(turns: list[str]) -> list[str]:
-    """Up to three quotes. Each is one or two complete sentences, at most 40 words."""
-    found: list[str] = []
+    """Up to three quotes, preferring a real claim over filler. Mid-turn sentences count."""
+    scored: list[tuple[int, str]] = []
     for turn in turns:
-        sentences = [sentence for sentence in _sentences(turn) if good_sentence(sentence)]
+        sentences = [_strip_filler(sentence) for sentence in _sentences(turn)]
+        sentences = [sentence for sentence in sentences if good_sentence(sentence)]
         options = list(sentences)
         for first, second in zip(sentences, sentences[1:]):
             options.append(f'{first} {second}')
         for option in options:
-            if len(_words(option)) > 40 or option in found:
+            if len(_words(option)) > 40:
                 continue
+            if re.search(r'\ball of us will probably agree\b', option, re.I):
+                continue
+            content = _content_words(option)
+            if len(content) < 3:
+                continue
+            scored.append((len(content), option))
+    scored.sort(key=lambda item: (-item[0], len(item[1])))
+    found: list[str] = []
+    for _score, option in scored:
+        if option not in found:
             found.append(option)
-            if len(found) == 3:
-                return found
+        if len(found) == 3:
+            break
     return found
+
+
+def suggested_next_rep(rows: list[dict], stats: dict) -> str:
+    """A next step that matches how this person actually spoke."""
+    turns = len(rows)
+    words = word_total(rows)
+    share = int(stats.get('share') or 0)
+    speakers = max(int(stats.get('speaker_count') or 1), 1)
+    if turns <= 2 and words >= 60:
+        return 'Next time, stop after two sentences and ask the room a question.'
+    if share > room_average(speakers) + 2:
+        return 'Next time, stop after one point and let someone else speak.'
+    if turns < 3:
+        return 'Next time, add one more turn before the close.'
+    return 'Next time, ask the room one question before you add a point.'
 
 
 def speaker_rows(transcript: dict | None, label: str) -> list[dict]:
@@ -80,7 +128,8 @@ def substantive_count(rows: list[dict]) -> int:
 
 
 def needs_short_report(rows: list[dict]) -> bool:
-    return substantive_count(rows) < 3 or word_total(rows) < 60
+    """Only a small amount of speech. A long monologue is still a full report."""
+    return word_total(rows) < 60
 
 
 def turn_counts(transcript: dict | None) -> dict[str, int]:
@@ -116,7 +165,7 @@ def computed_numbers(transcript, label: str, stats: dict) -> tuple[list[str], se
     return lines, allowed
 
 
-def _prompt(name: str, lines: list[str], quotes: list[str], failures: list[str]) -> str:
+def _prompt(name: str, lines: list[str], quotes: list[str], failures: list[str], phrase: str, next_rep: str) -> str:
     quote_block = '\n'.join(f'{index + 1}. "{quote}"' for index, quote in enumerate(quotes)) or 'None.'
     number_block = '\n'.join(f'- {line}' for line in lines)
     retry = ''
@@ -133,10 +182,13 @@ def _prompt(name: str, lines: list[str], quotes: list[str], failures: list[str])
         'next_rep: a script plus one target number copied from the numbers below. Do not invent a word target. '
         'number_lines: copy the number lines exactly. '
         'said_quote: copy quote 2 exactly, or "" if there is no quote 2. Do not reuse quote 1. '
+        'next_rep should follow the suggested next step unless the evidence shows a better fit. '
         'Never name a metric. Never use interaction, participation, or talk time.\n'
         f'{retry}'
         f'NUMBERS\n{number_block}\n'
         f'QUOTES\n{quote_block}\n'
+        f'REPEATED PHRASE\n{phrase or "None."}\n'
+        f'SUGGESTED NEXT STEP\n{next_rep}\n'
         'Return JSON only with keys headline, one_big_thing, why_it_matters, yes_but, next_rep, number_lines, said_quote.\n'
     )
 
@@ -212,24 +264,23 @@ def _parse(raw) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
-def short_story(name: str, rows: list[dict], lines: list[str], quotes: list[str]) -> dict:
+def short_story(name: str, rows: list[dict], lines: list[str], quotes: list[str], stats: dict) -> dict:
     count = len(rows)
-    spoken = 'You spoke once.' if count == 1 else f'You spoke {count} times.'
     quote = quotes[0] if quotes else ''
     return {
         'short_mode': True,
-        'headline': spoken,
+        'headline': 'A short turn.' if count <= 1 else 'A few short turns.',
         'one_big_thing': '',
         'why_it_matters': '',
         'yes_but': '',
-        'next_rep': 'Next time, add one sentence before you stop.',
+        'next_rep': suggested_next_rep(rows, stats),
         'numbers': lines,
         'said_quote': quote,
         'big_quote': quote,
         'drama': quote,
         'goal': '',
         'challenge': '',
-        'one_thing': 'Next time, add one sentence before you stop.',
+        'one_thing': suggested_next_rep(rows, stats),
         'why': '',
         'turns': count,
         'fallback_sections': [],
@@ -268,12 +319,14 @@ def build_personal_story(llm, transcript, label: str, info: dict, stats: dict) -
     quotes = candidate_quotes([str(row.get('text') or '') for row in rows])
     lines, allowed = computed_numbers(transcript, label, stats)
     name = info.get('name') or label
+    step = suggested_next_rep(rows, stats)
+    phrase = _repeated_phrase(rows)
     if needs_short_report(rows):
-        return short_story(name, rows, lines, quotes)
+        return short_story(name, rows, lines, quotes, stats)
     failures: list[str] = []
     for _attempt in range(2):
         try:
-            payload = _parse(llm.invoke(_prompt(name, lines, quotes, failures)))
+            payload = _parse(llm.invoke(_prompt(name, lines, quotes, failures, phrase, step)))
         except Exception as exc:
             logging.warning('personal narrative call failed: %s', exc)
             payload = None
@@ -284,4 +337,14 @@ def build_personal_story(llm, transcript, label: str, info: dict, stats: dict) -
         if not failures:
             return full_story(payload, lines, name)
     logging.warning('personal narrative fell back to the short report: %s', failures)
-    return short_story(name, rows, lines, quotes)
+    return short_story(name, rows, lines, quotes, stats)
+
+
+def _repeated_phrase(rows: list[dict]) -> str:
+    from lib.report_stats import display_bigram, top_bigram
+
+    found = top_bigram(' '.join(str(row.get('text') or '') for row in rows))
+    if not found:
+        return ''
+    phrase, count = found
+    return f'{display_bigram(phrase)} ({count})'

@@ -231,11 +231,11 @@ def test_story_requests_drop_after_batching():
     six = story_request_estimate(6)
     twelve = story_request_estimate(12)
     assert six['before_worst'] == 144
-    assert six['after_typical'] == 13
-    assert six['after_worst'] == 26
+    assert six['after_typical'] == 8
+    assert six['after_worst'] == 16
     assert twelve['before_worst'] == 270
-    assert twelve['after_typical'] == 25
-    assert twelve['after_worst'] == 50
+    assert twelve['after_typical'] == 14
+    assert twelve['after_worst'] == 28
     assert six['after_worst'] < six['before_worst']
 
 
@@ -321,7 +321,7 @@ def test_realistic_fake_has_no_fallbacks_and_a_bad_json_retries():
     )
     assert stories['fallbacks'] == []
     assert stories['personal']['A']['short_mode'] is True
-    assert stories['personal']['A']['headline'].startswith('You spoke')
+    assert stories['personal']['A']['headline'] == 'A few short turns.'
     assert 'events' not in stories['group']['character']
     flaky = FlakyStoryLLM()
     draft = generate_personal_draft(

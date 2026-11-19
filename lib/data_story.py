@@ -607,6 +607,7 @@ def group_story(
         'interaction': {'value': interaction_pct},
         'participation': {'value': participation_pct},
         '_portrait': portrait,
+        '_shares': list(shares or []),
     }
     last_name = 'the last voice'
     last_line = ''
@@ -682,7 +683,7 @@ def group_story(
         'resolution': resolution,
         'one_thing': one_thing,
         'why': why,
-        'pattern_why': group_pattern_why(portrait),
+        'pattern_why': group_pattern_why(portrait, shares),
         'caveat': group_caveat(portrait),
         'transitions': transitions,
         'numbers': group_plain_numbers(

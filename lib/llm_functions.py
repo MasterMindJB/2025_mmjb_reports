@@ -748,10 +748,8 @@ class ConversationSummarizer:
                 return_unchanged = False
                 logging.debug('...forcing personal errors and corrections regeneration.')
 
-            if return_unchanged and _signatures_present(speaker_analysis):
-                return speaker_analysis
             if return_unchanged:
-                logging.warning('...cached speaker analysis is missing signature phrases; filling them.')
+                return speaker_analysis
 
         # Process all speakers
         for speaker in df_speaker_stats.index:
@@ -854,11 +852,8 @@ class ConversationSummarizer:
                     _tmp_speaker['personal_errors_and_corrections'],
                 )
 
-            if generate_all or not _tmp_speaker.get('personal_signature_phrase'):
-                self._progress(f'Reading the signature phrase for {speaker}')
-                _tmp_speaker['personal_signature_phrase'] = self.signature_phrase(
-                    str(df_speaker_stats.loc[speaker].get('text', ''))
-                )
+            # The signature card and its Gemini call are gone. A repeated phrase, if any,
+            # is passed into the one personal narrative call instead.
 
             # Created to keep the sorting order
             _speaker_sorted = {}

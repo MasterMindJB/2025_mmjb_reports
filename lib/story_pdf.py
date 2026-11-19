@@ -122,7 +122,9 @@ def _keep_fresh(text: str, used: set[str]) -> str:
 def _body(pdf, text: str, size: int = 11) -> None:
     from lib.story_render import lead_sentence
 
-    text = lead_sentence(_plain(text))
+    from lib.story_render import close_quotes
+
+    text = close_quotes(lead_sentence(_plain(text)))
     if size == 11:
         size = int(getattr(pdf, '_body_size', 11) or 11)
     if not text:
@@ -156,6 +158,10 @@ def _pull_quote(pdf, text: str, when: str = '') -> None:
     text = lead_sentence(_plain(bounded))
     if not text:
         return
+    from lib.story_render import close_quotes
+
+    inner = text.strip().strip('"')
+    text = close_quotes(f'"{inner}"')
     pdf.set_font('Poppins', '', 11)
     pdf.set_text_color(20, 33, 74)
     indent = 8
@@ -507,8 +513,9 @@ def write_personal_report(
         elif count > 1:
             spoken = f'You spoke {count} times.'
         else:
-            spoken = headline
-        _body(pdf, spoken)
+            spoken = ''
+        if spoken and spoken.strip('.') != headline.strip('.'):
+            _body(pdf, spoken)
         _image(pdf, _talk_share(story, chart_dir))
         if story.get('said_quote'):
             _pull_quote(pdf, str(story['said_quote']))
@@ -530,31 +537,6 @@ def write_personal_report(
         _body(pdf, story.get('yes_but') or story.get('challenge') or '')
         _heading(pdf, 'Your next rep')
         _body(pdf, story.get('next_rep') or story.get('one_thing') or '')
-    used_turns: set[str] = set()
-    card = story.get('signature') or {}
-    # Keep the signature label with the lines under it, and leave a gap after Drama.
-    if _remaining(pdf) < 24:
-        pdf.add_page()
-    else:
-        pdf.ln(3)
-    _body(pdf, 'Your signature phrase:')
-    if card.get('phrase'):
-        from lib.report_stats import display_bigram
-
-        _body(pdf, f'You said "{display_bigram(str(card["phrase"]))}" {card.get("count") or 0} times.')
-    shown_examples = 0
-    for quote in card.get('quotes') or []:
-        if shown_examples >= 2:
-            break
-        fresh = _keep_fresh(str(quote), used_turns)
-        if not fresh:
-            continue
-        _pull_quote(pdf, fresh)
-        shown_examples += 1
-    _image(pdf, _phrase_chart(story, chart_dir), width=0.55)
-    for label, key in (('What?', 'what'), ('So, what?', 'so_what'), ('Now, what?', 'now_what')):
-        if card.get(key):
-            _body(pdf, f'{label} {card[key]}')
     if story.get('handed_to'):
         _body(pdf, story['handed_to'])
     appendix = [f'{name}: {line}' for name, line in (story.get('appendix') or {}).items()]
