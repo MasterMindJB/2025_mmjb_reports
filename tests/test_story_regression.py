@@ -1431,6 +1431,38 @@ def test_a_turn_that_ends_with_thanks_is_still_the_closer():
     assert trimmed['utterances'][-1]['text'].endswith('Thank you all for coming.')
 
 
+def test_group_closer_uses_the_strongest_sentence_not_the_last_fragment():
+    from lib.story_render import render_group_section, strongest_sentence
+
+    turn = (
+        'The knowledge systems still hide the design until the workflow is named by the people who use it. '
+        'Thanks for the fragment.'
+    )
+    assert strongest_sentence(turn).startswith('The knowledge systems still hide the design')
+    assert 'fragment' not in strongest_sentence(turn)
+    rendered = render_group_section(
+        'resolution',
+        {'claim': 'the room named the workflow'},
+        transcript={'utterances': [{
+            'speaker': 'A', 'role': 'host', 'name': 'Annie Green',
+            'text': turn + ' Thank you all for coming.',
+            'start': 0, 'end': 8000,
+        }]},
+        facts={'interaction': {'value': 23, 'line': '23% interaction'}},
+        cast='',
+    )
+    assert 'knowledge systems still hide the design' in rendered['resolution']
+    assert 'fragment' not in rendered['resolution'].lower()
+    with pytest.raises(OutputParserException, match='opening segment'):
+        render_group_section(
+            'resolution',
+            {'claim': 'the opening segment closed the hour'},
+            transcript=synthetic_transcript(),
+            facts={'interaction': {'value': 23, 'line': '23% interaction'}, '_names': ['Annie Green']},
+            cast='',
+        )
+
+
 def test_speaker_e_fragment_cannot_replace_the_hosts_thanks_closer():
     from lib.session_window import closer_turn
 

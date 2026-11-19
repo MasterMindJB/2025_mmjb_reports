@@ -405,6 +405,22 @@ def substantive_line(text: str) -> bool:
     return True
 
 
+def strongest_sentence(text: str) -> str | None:
+    """The longest complete sentence, not the last fragment and not 'et cetera'."""
+    best = None
+    for part in re.split(r'(?<=[.!?])\s+', (text or '').strip()):
+        if re.search(r'\bet cetera\b|\betc\.?\b', part, re.I):
+            continue
+        if not part.endswith(('.', '!', '?')):
+            continue
+        words = re.findall(r"[A-Za-z']+", part)
+        if len(words) < 6:
+            continue
+        if best is None or len(words) > best[0]:
+            best = (len(words), part.strip())
+    return None if best is None else best[1]
+
+
 def closing_clip(text: str, limit: int = 18) -> str | None:
     """The closer is the first complete sentence, at least six words, never cut mid-clause.
 
@@ -1565,12 +1581,14 @@ def render_group_section(section: str, data: dict, *, transcript, facts: dict, c
                 }
                 closing = ''
         speaker = closing_fact.get('name') or 'the last voice'
-        spoken = closing_clip(_strip_stated_by(closing_fact.get('text') or closing)) or ''
+        spoken = strongest_sentence(_strip_stated_by(closing_fact.get('text') or closing)) or ''
         if spoken and _word_count(spoken) < 6:
             spoken = ''
         claim = _strip_stated_by(claim)
         if re.search(r'\bthe session begins with\b', claim, re.I):
             raise OutputParserException("resolution must not say 'The session begins with'")
+        if re.search(r'\bthe opening segment\b', claim, re.I):
+            raise OutputParserException("resolution must not call the ending 'the opening segment'")
         from lib.story_validation import unconfirmed_personal_name
 
         stray = unconfirmed_personal_name(claim, list(facts.get('_names') or []))

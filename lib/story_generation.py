@@ -429,11 +429,11 @@ def generate_group_draft(
     facts['_portrait'] = portrait
     facts['_names'] = [info.get('name') for info in speaker_map.values() if info.get('name')]
     from lib.session_window import closer_turn
-    from lib.story_render import closing_clip
+    from lib.story_render import strongest_sentence
 
     closing_row = closer_turn(transcript.get('utterances') or [])
     if closing_row:
-        spoken = closing_clip(str(closing_row.get('text') or ''))
+        spoken = strongest_sentence(str(closing_row.get('text') or ''))
         if spoken:
             facts['_closing'] = {
                 'name': name_by_label.get(closing_row.get('speaker')) or 'the last voice',
