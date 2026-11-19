@@ -861,6 +861,38 @@ def _prose(
     return capitalize_sentences(cleaned)
 
 
+def question_directions(transcript, label: str) -> tuple[int, int]:
+    """Questions this speaker asked, and questions the previous turn aimed at them."""
+    rows = (transcript or {}).get('utterances') or []
+    asked = 0
+    received = 0
+    for index, row in enumerate(rows):
+        count = str(row.get('text') or '').count('?')
+        if not count:
+            continue
+        if row.get('speaker') == label:
+            asked += count
+        elif index + 1 < len(rows) and rows[index + 1].get('speaker') == label:
+            received += count
+    return asked, received
+
+
+_RECEIVED_CLAIM = re.compile(
+    r'\b(inquiries|inquiry|questions? you faced|faced a high volume|volume of inquiries|'
+    r'directed at you|asked of you|aimed at you)\b',
+    re.I,
+)
+
+
+def inverted_question_claim(text: str, asked: int, received: int) -> str | None:
+    """A line that says the questions ran the other way."""
+    if asked > received and _RECEIVED_CLAIM.search(text or '') and not re.search(r'\byou asked\b', text or '', re.I):
+        return 'challenge says questions were aimed at you, but you asked more than you received'
+    if received > asked and re.search(r'\byou asked\b', text or '', re.I) and not _RECEIVED_CLAIM.search(text or ''):
+        return 'challenge says you asked the questions, but more were aimed at you'
+    return None
+
+
 def personal_facts(
     *,
     transcript,
@@ -878,6 +910,9 @@ def personal_facts(
         early = int(re.search(r'\d+', early_text).group(0))
         late = int(re.search(r'\d+', late_text).group(0))
     target = improve_toward(int(questions), max(int(question_average), int(questions) + 1), increase=True)
+    asked, received = question_directions(transcript, label)
+    if not asked:
+        asked = int(questions)
     facts = {
         'talk_share': {
             'value': int(share),
@@ -888,6 +923,16 @@ def personal_facts(
             'value': int(questions),
             'unit': 'questions',
             'line': questions_sentence(questions, question_average),
+        },
+        'questions_asked': {
+            'value': int(asked),
+            'unit': 'questions you asked',
+            'line': f'You asked {int(asked)} questions.',
+        },
+        'questions_received': {
+            'value': int(received),
+            'unit': 'questions directed at you',
+            'line': f'Other people directed {int(received)} questions at you.',
         },
         'turns': {
             'value': int(turns),
@@ -904,6 +949,8 @@ def personal_facts(
         'share': int(share),
         'speaker_count': int(speaker_count),
         'questions': int(questions),
+        'questions_asked': int(asked),
+        'questions_received': int(received),
         'question_average': int(question_average),
         'early': early,
         'late': late,
@@ -1385,6 +1432,11 @@ def render_personal_section(section: str, data: dict, *, transcript, label: str,
         key = str(data.get('fact_key') or '')
         if key not in facts:
             raise OutputParserException(f'challenge fact_key is not allowed: {key}')
+        asked = int((facts.get('_meta') or {}).get('questions_asked') or 0)
+        received = int((facts.get('_meta') or {}).get('questions_received') or 0)
+        inverted = inverted_question_claim(claim, asked, received)
+        if inverted:
+            raise OutputParserException(inverted)
         line = str(facts[key]['line']).rstrip('.')
         return {'challenge': capitalize_sentences(f'{line}. {claim.rstrip(".")}.')}
     if section == 'drama':

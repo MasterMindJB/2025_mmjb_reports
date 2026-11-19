@@ -744,6 +744,36 @@ def test_habits_do_not_leak_diarization_letters_and_the_why_matches():
     assert len({item[0] for item in habits.values()}) == 3
 
 
+def test_challenge_rejects_inquiries_when_the_speaker_asked_them():
+    from lib.story_render import personal_facts, question_directions
+
+    transcript = {
+        'utterances': [
+            {'speaker': 'A', 'text': 'Where does this break? Who owns the next step? Why now?', 'start': 0, 'end': 4000},
+            {'speaker': 'B', 'text': 'I can take the first one.', 'start': 4000, 'end': 6000},
+            {'speaker': 'A', 'text': 'And what happens if we wait?', 'start': 6000, 'end': 8000},
+        ]
+    }
+    asked, received = question_directions(transcript, 'A')
+    assert asked == 4
+    assert received == 0
+    facts = personal_facts(
+        transcript=transcript, label='A', share=40, turns=2, questions=4,
+        question_average=1, speaker_count=2,
+    )
+    assert facts['questions_asked']['line'] == 'You asked 4 questions.'
+    assert facts['questions_received']['value'] == 0
+    with pytest.raises(OutputParserException, match='aimed at you'):
+        render_personal_section(
+            'challenge',
+            {'claim': 'You faced a high volume of inquiries', 'fact_key': 'questions'},
+            transcript=transcript,
+            label='A',
+            facts=facts,
+            forbidden=[],
+        )
+
+
 def test_utilize_and_communication_style_are_banned_in_story_prose():
     with pytest.raises(OutputParserException):
         reject_craft_violations('You utilize the opening to set the plan for the room.')
