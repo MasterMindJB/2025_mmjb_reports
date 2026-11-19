@@ -17,6 +17,37 @@ def _clock(milliseconds) -> str:
     return clock(milliseconds)
 
 
+_INTRO = re.compile(
+    r"^(hello|hi|hey|good morning|good afternoon|good evening)\b|\bmy name is\b",
+    re.I,
+)
+
+
+def _fallback_event(events: list[dict], rows: list) -> dict | None:
+    """Longest on-topic turn of at least six words. Intros and 'Repetition.' never qualify."""
+    from lib.session_window import on_topic, topic_keys
+    from lib.story_render import closing_clip, is_logistics
+
+    keys = topic_keys(rows)
+
+    def usable(event: dict, require_topic: bool) -> bool:
+        text = str(event.get('text') or '').strip()
+        if _INTRO.search(text) or is_logistics(text):
+            return False
+        if len(re.findall(r"[A-Za-z']+", text)) < 6:
+            return False
+        if require_topic and keys and not on_topic(text, keys):
+            return False
+        return closing_clip(text) is not None
+
+    pool = [event for event in events if usable(event, True)] or [
+        event for event in events if usable(event, False)
+    ]
+    if not pool:
+        return None
+    return max(pool, key=lambda event: len(re.findall(r"[A-Za-z']+", str(event.get('text') or ''))))
+
+
 def _lines(transcript: dict | None, label: str) -> list[dict]:
     rows = []
     for utterance in (transcript or {}).get('utterances') or []:
@@ -231,6 +262,7 @@ def personal_story(
     cards = signature_card(str(signature.get('analysis') or ''))
     from lib.story_render import (
         clip_clause,
+        closing_clip,
         one_thing_from_gap,
         pick_transitions,
         questions_sentence,
@@ -275,21 +307,9 @@ def personal_story(
         headline = 'You held the floor for a long stretch'
     else:
         headline = 'You came in and set a point down'
-    evidence_event = first_event
-    if evidence_event and len(re.findall(r"[A-Za-z']+", str(evidence_event.get('text') or ''))) < 6:
-        long_enough = [
-            event for event in events
-            if len(re.findall(r"[A-Za-z']+", str(event.get('text') or ''))) >= 6
-        ]
-        if long_enough:
-            evidence_event = max(
-                long_enough,
-                key=lambda event: len(re.findall(r"[A-Za-z']+", str(event.get('text') or ''))),
-            )
-        else:
-            evidence_event = None
+    evidence_event = _fallback_event(events, (transcript or {}).get('utterances') or [])
     if evidence_event:
-        said = clip_clause(evidence_event['text'], 18)
+        said = closing_clip(evidence_event['text']) or clip_clause(evidence_event['text'], 18)
         when = evidence_event['time']
         goal = (
             f'You came in to move the work. At {when} you said "{said}", '

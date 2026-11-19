@@ -15,7 +15,10 @@ SCHEMAS = {
             '{"headline": "12 words or fewer, no digits", '
             '"number_keys": ["talk_share", "questions", "turns"]}'
         ),
-        'goal': '{"claim": "no digits", "quote": {"text": "their words", "ts": "m:ss"}}',
+        'goal': (
+            '{"claim": "verb phrase starting with a base verb, not with the", '
+            '"quote": {"text": "their words", "ts": "m:ss"}}'
+        ),
         'challenge': '{"claim": "no digits", "fact_key": "questions"}',
         'drama': (
             '{"patterns": [{"quotes": [{"text": "", "ts": ""}], "pattern": "", '
@@ -32,7 +35,7 @@ SCHEMAS = {
             '{"headline": "12 words or fewer, no digits", '
             '"number_keys": ["interaction"]}'
         ),
-        'goal': '{"claim": "no digits, only topics from the transcript"}',
+        'goal': '{"claim": "verb phrase starting with a base verb, not with the"}',
         'challenge': '{"claim": "no digits", "fact_key": "interaction"}',
         'drama': '{"pattern_note": "one line, no digits, only topics from the transcript"}',
         'resolution': '{"claim": "no digits, only topics from the transcript"}',
@@ -200,39 +203,59 @@ def _topic_phrase(claim: str) -> str:
     return text
 
 
-_GOAL_SENTENCE = re.compile(
-    r'^(?P<subject>the group|the objective|the room|the team|the primary objective|you)\s+'
-    r'(?P<verb>aims|aim|is|are|seeks|seek|wants|want|tries|try|needs|need)\b\s*(?P<rest>.*)$',
-    re.I,
-)
+_BASE_VERBS = {
+    'ask', 'build', 'choose', 'clarify', 'close', 'compare', 'connect', 'create',
+    'decide', 'define', 'describe', 'endure', 'establish', 'explain', 'find', 'give',
+    'hold', 'identify', 'keep', 'leave', 'maintain', 'make', 'mark', 'measure',
+    'move', 'name', 'notice', 'open', 'pause', 'place', 'protect', 'reduce', 'say',
+    'secure', 'separate', 'set', 'share', 'show', 'start', 'state', 'stop', 'test',
+    'use', 'wait',
+}
+_FRAME_VERBS = {
+    'aim', 'aims', 'are', 'involve', 'involves', 'is', 'need', 'needs', 'seek',
+    'seeks', 'try', 'tries', 'want', 'wants',
+}
+
+
+def _base_verb(token: str) -> str | None:
+    word = (token or '').lower().strip('.,')
+    if word in _FRAME_VERBS:
+        return None
+    if word in _BASE_VERBS:
+        return word
+    if word.endswith('ing') and len(word) > 5:
+        stem = word[:-3]
+        if stem in _BASE_VERBS:
+            return stem
+        if f'{stem}e' in _BASE_VERBS:
+            return f'{stem}e'
+    return None
+
+
+def verb_phrase(claim: str) -> str:
+    """A goal is a verb phrase. The first kept token is a base verb, never 'the'."""
+    text = _strip_stated_by(claim).strip().rstrip('.')
+    text = re.sub(r'^(?:the room|you)\s+set out to\s+', '', text, flags=re.I)
+    words = text.split()
+    for index, word in enumerate(words):
+        if word.lower() == 'the':
+            continue
+        base = _base_verb(word)
+        if not base:
+            continue
+        rest = ' '.join(words[index + 1:]).strip()
+        phrase = f'{base} {rest}'.strip()
+        if phrase.lower().startswith('the '):
+            continue
+        return phrase
+    raise OutputParserException('goal must be a verb phrase starting with a base verb')
 
 
 def goal_line(claim: str, *, personal: bool = False) -> str:
-    """A full sentence stays a sentence. Only a noun phrase uses the returning-to wrapper."""
-    text = _strip_stated_by(claim).strip().rstrip('.')
-    match = _GOAL_SENTENCE.match(text)
-    if match:
-        verb = match.group('verb').lower()
-        rest = (match.group('rest') or '').strip()
-        subject = 'You' if personal else 'The room'
-        if verb == 'is' and rest.lower().startswith('to '):
-            verb = 'aim' if personal else 'aims'
-        elif personal and verb == 'aims':
-            verb = 'aim'
-        elif personal and verb == 'is':
-            verb = 'are'
-        elif personal and verb == 'seeks':
-            verb = 'seek'
-        elif personal and verb.endswith('s') and verb != 'is':
-            verb = verb[:-1]
-        sentence = f'{subject} {verb} {rest}'.strip()
-        if not sentence.endswith('.'):
-            sentence += '.'
-        return capitalize_sentences(sentence)
-    phrase = _topic_phrase(text)
-    if personal:
-        return capitalize_sentences(f'Inferred from what you said: {phrase}.')
-    return capitalize_sentences(f'The turns keep returning to {phrase}.')
+    """'The room set out to <verb phrase>.' A wrapped sentence is not a second wrapper."""
+    phrase = verb_phrase(claim)
+    subject = 'You' if personal else 'The room'
+    return f'{subject} set out to {phrase}.'
 
 
 def _cap_sentence(text: str) -> str:
@@ -260,16 +283,6 @@ _LOGISTICS_START = re.compile(
     r'^(thanks|thank you|let me stand up|smile|say cheese|take a photo|photo|picture)\b',
     re.I,
 )
-_CLOSING_START = re.compile(r'^(thanks|thank you|goodbye|good night|goodnight)\b', re.I)
-_HOST_ROLES = {'host', 'facilitator', 'moderator'}
-_TOPIC_SKIP = {
-    'about', 'after', 'again', 'before', 'being', 'could', 'every', 'first', 'going',
-    'would', 'there', 'their', 'these', 'those', 'which', 'while', 'where', 'thank',
-    'thanks', 'thank', 'please', 'really', 'still', 'other', 'people', 'thing', 'think',
-    'right', 'middle', 'stay', 'stand', 'photo', 'picture', 'smile',
-}
-
-
 def is_logistics(text: str) -> bool:
     """Photos, smiles, venue hours, thanks, and packing up are not the closer.
 
@@ -320,79 +333,11 @@ def closing_clip(text: str, limit: int = 18) -> str | None:
     return first
 
 
-def _content_tokens(text: str) -> set[str]:
-    return {
-        word
-        for word in re.findall(r"[a-z']{5,}", (text or '').lower())
-        if word not in _TOPIC_SKIP
-    }
-
-
-def _topic_keys(rows: list) -> set[str]:
-    """Content words that show up in more than one non-logistics turn."""
-    counts: dict[str, int] = {}
-    for row in rows:
-        text = str(row.get('text') or '')
-        if is_logistics(text):
-            continue
-        for token in _content_tokens(text):
-            counts[token] = counts.get(token, 0) + 1
-    return {token for token, count in counts.items() if count >= 2}
-
-
-def _topic_overlap(text: str, keys: set[str]) -> bool:
-    return bool(keys and (_content_tokens(text) & keys))
-
-
-def _is_closing_remark(row: dict) -> bool:
-    text = str(row.get('text') or '').strip()
-    if not _CLOSING_START.match(text):
-        return False
-    role = str(row.get('role') or '').lower()
-    return role in _HOST_ROLES or not role
-
-
 def discussion_rows(rows: list) -> list:
-    """Keep the discussion through the last on-topic turn and the host's thanks.
+    """The analysis window: last on-topic turn, then the closing cues, then cut."""
+    from lib.session_window import window_through_closing
 
-    A short turn with no topic overlap after that thanks is tail, as is a posing line.
-    """
-    usable = [row for row in rows or [] if str(row.get('text') or '').strip()]
-    if not usable:
-        return []
-    keys = _topic_keys(usable)
-    if keys:
-        last = None
-        for index, row in enumerate(usable):
-            text = str(row.get('text') or '')
-            if is_logistics(text):
-                continue
-            if _topic_overlap(text, keys) and _word_count(text) >= 6:
-                last = index
-        if last is not None:
-            end = last
-            index = last + 1
-            while index < len(usable):
-                row = usable[index]
-                text = str(row.get('text') or '')
-                if _is_closing_remark(row):
-                    end = index
-                    index += 1
-                    continue
-                if _word_count(text) < 12 and not _topic_overlap(text, keys):
-                    break
-                if is_logistics(text) or not _topic_overlap(text, keys):
-                    break
-                break
-            return usable[: end + 1]
-    while len(usable) > 1:
-        text = str(usable[-1].get('text') or '')
-        fragment = closing_clip(text) is None
-        if is_logistics(text) or fragment:
-            usable.pop()
-            continue
-        break
-    return usable
+    return window_through_closing(rows)
 
 
 def _complete_clause(text: str) -> str:
@@ -410,10 +355,10 @@ def _complete_clause(text: str) -> str:
 
 
 def last_substantive_utterance(rows: list) -> dict | None:
-    for row in reversed(discussion_rows(rows)):
-        if closing_clip(str(row.get('text') or '')):
-            return row
-    return None
+    """The closer is the last on-topic turn before the closing cues."""
+    from lib.session_window import closer_turn
+
+    return closer_turn(rows)
 
 
 def capitalize_sentences(text: str) -> str:
@@ -960,17 +905,64 @@ def corpus_text(transcript, label: str | None = None) -> str:
     return ' '.join(parts)
 
 
+_FACT_ALIASES = {
+    'talk': 'talk_share',
+    'talk_time': 'talk_share',
+    'speaking': 'talk_share',
+    'speaking_time': 'talk_share',
+    'share': 'talk_share',
+    'question': 'questions',
+    'question_count': 'questions',
+    'questions_asked': 'questions',
+    'turn': 'turns',
+    'turn_count': 'turns',
+    'turns_taken': 'turns',
+    'interaction_rate': 'interaction',
+    'participation_rate': 'participation',
+}
+
+
+def _fact_keys(facts: dict) -> list[str]:
+    return [
+        key
+        for key, item in facts.items()
+        if isinstance(item, dict) and 'line' in item and not str(key).startswith(('target_', '_'))
+    ]
+
+
+def _map_fact_key(key, facts: dict) -> str | None:
+    if key in facts and isinstance(facts[key], dict) and 'line' in facts[key]:
+        return str(key)
+    token = re.sub(r'[^a-z0-9]+', '_', str(key or '').lower()).strip('_')
+    if token in facts and isinstance(facts[token], dict) and 'line' in facts[token]:
+        return token
+    alias = _FACT_ALIASES.get(token)
+    if alias and alias in facts:
+        return alias
+    for fact_key in _fact_keys(facts):
+        if token and (token in fact_key or fact_key in token):
+            return fact_key
+    return None
+
+
 def render_numbers(keys: list, facts: dict) -> list[str]:
-    if not isinstance(keys, list) or not 1 <= len(keys) <= 3:
+    import logging
+
+    logging.warning('number_keys raw %r', keys)
+    available = _fact_keys(facts)
+    if not isinstance(keys, list) or not keys:
+        chosen = available[:3]
+    else:
+        chosen = []
+        for key in keys[:3]:
+            mapped = _map_fact_key(key, facts)
+            if mapped and mapped not in chosen and not mapped.startswith('target_'):
+                chosen.append(mapped)
+        if not chosen:
+            chosen = available[:3]
+    if not chosen:
         raise OutputParserException('number_keys must be one to three fact keys')
-    lines = []
-    seen = set()
-    for key in keys:
-        if key not in facts or key in seen or str(key).startswith('target_'):
-            raise OutputParserException(f'number key is not an allowed fact: {key}')
-        seen.add(key)
-        lines.append(facts[key]['line'])
-    return lines
+    return [facts[key]['line'] for key in chosen]
 
 
 def render_one_thing(

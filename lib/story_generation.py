@@ -228,6 +228,15 @@ def _coerce_payload(payload, section: str):
         try:
             parsed = json.loads(text)
         except json.JSONDecodeError:
+            if section == 'goal' and text:
+                from lib.story_render import verb_phrase
+
+                try:
+                    verb_phrase(text)
+                except OutputParserException:
+                    return payload
+                logging.warning('story section goal arrived as non-JSON string')
+                return {'claim': text}
             return payload
         if isinstance(parsed, (dict, list)):
             return _coerce_payload(parsed, section)

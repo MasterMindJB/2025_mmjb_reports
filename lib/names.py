@@ -26,12 +26,18 @@ def display_name(name: str) -> str:
 
 
 def table_name(name: str) -> str:
-    """A pair-table label. 'Speaker F' is the letter, so the row does not wrap."""
+    """A pair-table label. 'Speaker F' is the letter. 'Audience member 1' is 'Aud. member 1'."""
     full = display_name(name)
+    full = re.sub(r'(?i)^audience member\b', 'Aud. member', full)
     match = re.fullmatch(r'Speaker\s+([A-Za-z0-9]+)', full)
     if match:
         return match.group(1)
     return short_name(full)
+
+
+def pair_cell(name_a: str, name_b: str) -> str:
+    """Two lines, so 'Audience member 1 and Dr. Annie Green' does not wrap mid-name."""
+    return f'{table_name(name_a)}\nand {table_name(name_b)}'
 
 
 def short_name(name: str) -> str:

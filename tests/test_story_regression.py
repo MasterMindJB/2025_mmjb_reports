@@ -244,7 +244,7 @@ def test_realistic_good_sections_pass():
     later = 'That might work if we start Monday.'
     goods = [
         ('character', {'headline': 'You opened on the onboarding plan', 'number_keys': ['talk_share', 'questions', 'turns']}),
-        ('goal', {'claim': 'You wanted the onboarding plan in motion', 'quote': {'text': opening, 'ts': '0:00'}}),
+        ('goal', {'claim': 'move the onboarding plan into motion', 'quote': {'text': opening, 'ts': '0:00'}}),
         ('challenge', {'claim': 'The question never arrived', 'fact_key': 'questions'}),
         (
             'drama',
@@ -264,7 +264,7 @@ def test_realistic_good_sections_pass():
         ('resolution', {'claim': 'Monday became the stake', 'quote': {'text': later, 'ts': '0:11'}}),
         ('one_thing', {'verb': 'pause', 'verb_phrase': 'after the point', 'trigger': 'before the next story'}),
         ('character', {'headline': 'Two turns carried the plan', 'number_keys': ['turns', 'talk_share', 'questions']}),
-        ('goal', {'claim': 'The budget was the test of the plan', 'quote': {'text': opening, 'ts': '0:00'}}),
+        ('goal', {'claim': 'test the budget against the plan', 'quote': {'text': opening, 'ts': '0:00'}}),
         ('challenge', {'claim': 'The first third held the whole share', 'fact_key': 'early_share'}),
         ('one_thing', {'verb': 'ask', 'verb_phrase': 'one open question', 'trigger': 'before the second turn'}),
     ]
@@ -587,7 +587,7 @@ def test_goal_wrapper_does_not_glue_a_second_sentence():
         cast='',
     )
     assert 'to The group' not in rendered['goal']
-    assert rendered['goal'] == 'The room seeks to identify the core need.'
+    assert rendered['goal'] == 'The room set out to identify the core need.'
     assert capitalize_sentences('average. you struggle') == 'average. You struggle'
 
 
@@ -763,7 +763,7 @@ def test_goal_strips_a_leading_infinitive_down_to_the_noun_phrase():
         facts={'interaction': {'value': 20, 'line': '20% interaction', 'unit': 'percent'}},
         cast='',
     )
-    assert rendered['goal'] == 'The turns keep returning to where value breaks when the client leaves.'
+    assert rendered['goal'] == 'The room set out to identify where value breaks when the client leaves.'
 
 
 def test_group_character_keeps_the_facts_when_the_headline_is_personal(tmp_path):
@@ -920,10 +920,20 @@ def test_goal_sentences_are_not_wrapped_as_noun_phrases():
         facts=facts,
         cast='',
     )['goal']
-    assert aims == 'The room aims to identify where value breaks within knowledge management systems.'
-    assert autonomy == 'The room aims to maintain personal autonomy.'
+    assert aims == (
+        'The room set out to identify where value breaks within knowledge management systems.'
+    )
+    assert autonomy == 'The room set out to maintain personal autonomy.'
     assert 'returning to the group aims' not in aims
     assert 'returning to the objective is' not in autonomy
+    normalized = render_group_section(
+        'goal',
+        {'claim': 'the objective involves maintaining personal autonomy'},
+        transcript=synthetic_transcript(),
+        facts=facts,
+        cast='',
+    )['goal']
+    assert normalized == 'The room set out to maintain personal autonomy.'
 
 
 def test_a_json_string_or_list_is_coerced_into_a_section_object(caplog):
@@ -1029,6 +1039,135 @@ def test_prompts_name_the_whole_ban_list_and_quotes_stay_distinct():
     assert 'journey' in prompt and 'leverage' in prompt
     assert table_name('Speaker F') == 'F'
     assert table_name('Full Sail Moderator') == 'Full Sail Moderator'
+    from lib.names import pair_cell
+
+    assert pair_cell('Audience member 1', 'Dr. Annie Green') == 'Aud. member 1\nand Dr. Annie Green'
+
+
+def test_forty_turn_window_ends_on_the_host_thanks_block():
+    from lib.session_window import apply_session_window, closer_turn
+
+    def turn(minute, speaker, text, role='participant'):
+        start = minute * 60 * 1000
+        return {
+            'speaker': speaker,
+            'role': role,
+            'text': text,
+            'start': start,
+            'end': start + 20_000,
+        }
+
+    rows = []
+    for index in range(31):
+        rows.append(turn(
+            index,
+            'A' if index % 2 == 0 else 'B',
+            'The knowledge systems still hide the design until the workflow is named by the room.',
+            'moderator' if index % 2 == 0 else 'participant',
+        ))
+    closer = turn(
+        32,
+        'A',
+        'The knowledge systems still hide the design until the workflow is named for the record.',
+        'moderator',
+    )
+    host = turn(33, 'H', 'Thank you all, and thank the panelists.', 'host')
+    audience = turn(34, 'Aud', 'Thank the panelists for the hour.', 'audience')
+    applause = turn(35, 'H', 'Give them a round of applause.', 'host')
+    books = turn(36, 'H', 'Her books are on the table if you want one.', 'host')
+    posing = turn(50, 'Jay', "middle or you're going to stay there.", 'participant')
+    fragment = turn(51, 'Jay', "good sign. If Stan if stands, that's", 'participant')
+    chatter = [
+        turn(52, 'Aud', 'Smile and hold still.', 'audience'),
+        turn(53, 'Aud', 'That was fun.', 'audience'),
+        turn(54, 'Jay', 'One more picture after this.', 'participant'),
+    ]
+    # 31 panel + closer + 4 cues + posing + fragment + 3 chatter = 41. Drop one panel turn.
+    rows = rows[:30] + [closer, host, audience, applause, books, posing, fragment, *chatter]
+    assert len(rows) == 40
+    trimmed = apply_session_window({'utterances': rows})
+    texts = [row['text'] for row in trimmed['utterances']]
+    assert texts[-1] == books['text']
+    assert host['text'] in texts
+    assert posing['text'] not in texts
+    assert fragment['text'] not in texts
+    assert closer_turn(rows)['text'] == closer['text']
+    assert 'Thank' not in closer_turn(rows)['text']
+
+
+def test_fallback_skips_repetition_and_an_introduction():
+    from lib.data_story import personal_story
+
+    transcript = {
+        'utterances': [
+            {'speaker': 'A', 'text': 'Hello, my name is Lynae.', 'start': 0, 'end': 2000},
+            {'speaker': 'A', 'text': 'Repetition.', 'start': 2000, 'end': 3000},
+            {
+                'speaker': 'A',
+                'text': 'The knowledge systems still hide the design until the workflow is named by the room.',
+                'start': 3000,
+                'end': 8000,
+            },
+        ]
+    }
+    story = personal_story(
+        label='A',
+        info={'name': 'Lynae'},
+        analysis={},
+        transcript=transcript,
+        stats_frame=None,
+        framework={},
+        draft={},
+    )
+    assert 'Repetition.' not in story['drama']
+    assert 'my name is' not in story['drama'].lower()
+    assert 'knowledge systems' in story['drama']
+
+
+def test_plain_goal_prose_is_wrapped_and_empty_number_keys_use_facts(caplog):
+    import json
+    import logging
+
+    from lib.story_generation import _fill_sections
+
+    class ProseGoal:
+        def invoke(self, prompt):
+            return type('Reply', (), {'content': json.dumps({
+                'goal': 'identify where value breaks between data and knowledge',
+            })})()
+
+    draft = {'accepted': []}
+    _fill_sections(
+        ProseGoal(),
+        audience='group',
+        sections=('goal',),
+        evidence='FACTS',
+        render=lambda section, data: {'goal': data['claim']},
+        progress_path=None,
+        draft=draft,
+    )
+    assert draft['goal'] == 'identify where value breaks between data and knowledge'
+    assert 'goal' not in draft.get('fallback_sections', [])
+    with caplog.at_level(logging.WARNING):
+        rendered = render_personal_section(
+            'character',
+            {'headline': 'You opened on the onboarding plan', 'number_keys': []},
+            transcript=synthetic_transcript(),
+            label='A',
+            facts=FACTS,
+            forbidden=[],
+        )
+    assert rendered['numbers']
+    assert 'number_keys raw' in caplog.text
+    mapped = render_personal_section(
+        'character',
+        {'headline': 'You opened on the onboarding plan', 'number_keys': ['talk time']},
+        transcript=synthetic_transcript(),
+        label='A',
+        facts=FACTS,
+        forbidden=[],
+    )
+    assert 'talk time' in mapped['numbers'][0]
     opening = 'We should try the new onboarding plan.'
     with pytest.raises(OutputParserException):
         _render(

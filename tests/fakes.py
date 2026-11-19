@@ -136,7 +136,7 @@ def _story_reply(text: str) -> str:
                 'number_keys': ['participation', 'interaction', 'word_interaction'],
             }
         elif section == 'goal':
-            payload = {'claim': 'the onboarding plan'}
+            payload = {'claim': 'identify the onboarding plan'}
         elif section == 'challenge':
             payload = {'claim': 'the center of the room', 'fact_key': 'interaction'}
         elif section == 'drama':
@@ -164,7 +164,7 @@ def _story_reply(text: str) -> str:
             'number_keys': ['talk_share', 'questions', 'turns'],
         }
     elif section == 'goal':
-        payload = {'claim': claim, 'quote': {'text': first_line, 'ts': first_when}}
+        payload = {'claim': 'identify the onboarding plan', 'quote': {'text': first_line, 'ts': first_when}}
     elif section == 'challenge':
         payload = {'claim': claim, 'fact_key': 'questions'}
     elif section == 'drama':
