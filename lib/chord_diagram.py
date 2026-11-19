@@ -18,9 +18,9 @@ matplotlib.use('Agg', force=False)
 import matplotlib.pyplot as plt
 from matplotlib import font_manager
 from matplotlib.font_manager import FontProperties
-from matplotlib.patches import Circle, FancyArrowPatch, FancyBboxPatch, PathPatch, Polygon, Rectangle, Wedge
+from matplotlib.patches import FancyBboxPatch, PathPatch, Rectangle
 from matplotlib.path import Path as MplPath
-from matplotlib.textpath import TextPath
+from fontTools.ttLib import TTFont
 
 NAVY = '#1C2C5B'
 NAVY_DEEP = '#121D3D'
@@ -73,7 +73,7 @@ _FONT_FILES = {
     'extrabold': 'Poppins-ExtraBold.ttf',
 }
 
-_PAIR_PATTERN = re.compile(r'[^:,\n]+↔[^:,\n]+\(\d+\)')
+_PAIR_PATTERN = re.compile(r'[^:,\n]+ and [^:,\n]+\(\d+\)')
 
 
 def roster_names(sequence: list[str], names: list[str] | None = None) -> list[str]:
@@ -172,7 +172,7 @@ def chord_caption(names: list[str], directed: list[list[int]]) -> str:
         return 'No one spoke immediately after anyone else.'
     shown = pairs[:2]
     bits = [
-        f'{_short_name(left, names)} ↔ {_short_name(right, names)} ({total})'
+        f'{_short_name(left, names)} and {_short_name(right, names)} ({total})'
         for left, right, _forward, _back, total in shown
     ]
     size = len(names)
@@ -320,9 +320,14 @@ def _directed_ribbon(source: tuple[float, float], target_angle: float, radius: f
     start, end = sorted(source)
     mid = (start + end) / 2
     separation = _angular_separation(mid, target_angle)
-    fraction = 0.08 + 0.34 * (separation / math.pi) ** 1.25
-    tip_radius = radius - 0.062
-    half_tip = min(0.034, max(0.012, (end - start) * 0.16))
+    # A moderate bow: deep enough to stay off the rim, shallow enough to read as a band.
+    fraction = 0.20 + 0.24 * (separation / math.pi) ** 0.85
+    if separation < 0.55:
+        fraction = 0.14
+    tip_radius = radius - 0.045
+    source_width = max(end - start, 0.045)
+    # Gentle taper. The far end stays a band, not a point or an arrowhead.
+    half_tip = min(max(source_width * 0.34, 0.02), 0.12)
     tip_low = target_angle - half_tip
     tip_high = target_angle + half_tip
 
@@ -350,25 +355,25 @@ def _directed_ribbon(source: tuple[float, float], target_angle: float, radius: f
     return MplPath(vertices, codes)
 
 
+@lru_cache(maxsize=None)
+def _font_metrics(font_path: str):
+    font = TTFont(font_path)
+    return font['head'].unitsPerEm, font.getBestCmap(), font['hmtx']
+
+
 def _text_width(text: str, prop: FontProperties, size: float) -> float:
+    """Advance width in points, including spaces. TextPath drops spaces."""
     if text == '':
         return 0.0
-    # A space has no outline, so TextPath reports its width as -inf.
-    glyphs = text.replace(' ', '')
-    space_count = len(text) - len(glyphs)
-    width = space_count * size * 0.30
-    if glyphs:
-        width += float(TextPath((0, 0), glyphs, prop=prop, size=size).get_extents().width)
-    return width
-
-
-def _radial_style(angle: float) -> tuple[float, str, float]:
-    """Upright rotation, alignment, and the outward direction in radians."""
-    normalized = math.atan2(math.sin(angle), math.cos(angle))
-    degrees = math.degrees(normalized)
-    if math.cos(normalized) >= 0:
-        return degrees, 'left', normalized
-    return degrees + 180, 'right', normalized
+    units, cmap, metrics = _font_metrics(str(Path(prop.get_file()).resolve()))
+    total = 0
+    for character in text:
+        glyph = cmap.get(ord(character))
+        if glyph is None:
+            total += int(units * 0.33)
+        else:
+            total += metrics[glyph][0]
+    return total / units * size
 
 
 def _rounded_arc_path(low: float, high: float, outer: float, thickness: float) -> MplPath:
@@ -423,96 +428,90 @@ def _add_arc(axis, low: float, high: float, outer: float, thickness: float, colo
     )
 
 
-def _shift_point(axis, anchor: tuple[float, float], angle: float, points: float) -> tuple[float, float]:
-    """Move a data point by a distance in typographic points, along an angle."""
-    display = axis.transData.transform(anchor)
-    pixels = points * axis.figure.dpi / 72.0
-    shifted = (display[0] + math.cos(angle) * pixels, display[1] + math.sin(angle) * pixels)
-    data = axis.transData.inverted().transform(shifted)
-    return (float(data[0]), float(data[1]))
+def _horizontal_alignment(angle: float) -> tuple[str, str, float]:
+    """Horizontal label alignment and how far outside the arc the block starts."""
+    normalized = math.atan2(math.sin(angle), math.cos(angle))
+    if math.sin(normalized) > 0.93:
+        return 'center', 'bottom', 1.11
+    if math.sin(normalized) < -0.93:
+        return 'center', 'top', 1.11
+    if math.cos(normalized) >= 0:
+        return 'left', 'center', 1.07
+    return 'right', 'center', 1.07
 
 
 def _draw_labels(axis, names, arcs, spans, roles, colors) -> None:
     count = len(names)
-    name_size = 8.4 if count <= 8 else 7.1
-    count_size = 6.4 if count <= 8 else 5.6
-    role_size = 5.6 if count <= 8 else 5.0
+    name_size = 10.0 if count <= 8 else 8.2
+    count_size = 7.4 if count <= 8 else 6.4
+    role_size = 6.1 if count <= 8 else 5.4
     name_font = load_poppins('medium')
     count_font = load_poppins('regular')
     role_font = load_poppins('semibold')
-    radius = 1.2
+    pill = {
+        'boxstyle': 'round,pad=0.22',
+        'facecolor': SKY,
+        'edgecolor': SKY,
+        'linewidth': 0.4,
+    }
     for position, (low, high) in enumerate(spans):
         angle = (low + high) / 2
-        rotation, align, outward = _radial_style(angle)
+        align, vertical, radius = _horizontal_alignment(angle)
         anchor = _polar(angle, radius)
         name = names[position]
+        exchanges = arcs[position]
+        exchange_word = 'exchange' if exchanges == 1 else 'exchanges'
+        role = roles.get(name, 'participant')
+        has_role = role in {'facilitator', 'actor'}
         axis.text(
             anchor[0],
             anchor[1],
             name,
-            rotation=rotation,
-            rotation_mode='anchor',
             ha=align,
-            va='center',
+            va=vertical,
             fontproperties=name_font,
             fontsize=name_size,
             color=INK,
             clip_on=False,
             zorder=8,
         )
-        name_width = _text_width(name, name_font, name_size)
-        # Right side of the circle reads outward, so the count follows the name.
-        # Left side reads back toward the arc, so the count sits at that end.
-        if align == 'left':
-            count_shift = name_width + 2.5
+        if vertical == 'bottom':
+            first_line = -14
+        elif vertical == 'top':
+            first_line = -(name_size + 8)
         else:
-            count_shift = -2.5
-        count_at = _shift_point(axis, anchor, outward, count_shift)
-        axis.text(
-            count_at[0],
-            count_at[1],
-            str(arcs[position]),
-            rotation=rotation,
-            rotation_mode='anchor',
-            ha='left',
+            first_line = -(name_size * 0.62 + 9)
+        second_line = first_line - 17
+        if has_role:
+            axis.annotate(
+                'FACILITATOR' if role == 'facilitator' else 'ACTOR',
+                xy=anchor,
+                xytext=(0, first_line),
+                textcoords='offset points',
+                ha=align,
+                va='center',
+                fontproperties=role_font,
+                fontsize=role_size,
+                color=WHITE,
+                bbox=pill,
+                clip_on=False,
+                zorder=8,
+                annotation_clip=False,
+            )
+        axis.annotate(
+            f'{exchanges} {exchange_word}',
+            xy=anchor,
+            xytext=(0, second_line if has_role else first_line),
+            textcoords='offset points',
+            ha=align,
             va='center',
             fontproperties=count_font,
             fontsize=count_size,
             color=MUTED,
             clip_on=False,
             zorder=8,
+            annotation_clip=False,
         )
-        role = roles.get(name, 'participant')
-        if role in {'facilitator', 'actor'}:
-            side = math.radians(rotation) - math.pi / 2
-            probe = (
-                anchor[0] + math.cos(side) * 0.08,
-                anchor[1] + math.sin(side) * 0.08,
-            )
-            if math.hypot(*probe) < math.hypot(*anchor):
-                side += math.pi
-            # Step out from the arc, then aside, so the tag sits next to the name.
-            along = 7
-            apart = name_size + 12
-            axis.annotate(
-                'FACILITATOR' if role == 'facilitator' else 'ACTOR',
-                xy=anchor,
-                xytext=(
-                    math.cos(outward) * along + math.cos(side) * apart,
-                    math.sin(outward) * along + math.sin(side) * apart,
-                ),
-                textcoords='offset points',
-                rotation=rotation,
-                rotation_mode='anchor',
-                ha=align,
-                va='center',
-                fontproperties=role_font,
-                fontsize=role_size,
-                color=SKY,
-                clip_on=False,
-                zorder=8,
-                annotation_clip=False,
-            )
 
 
 def _tracked(figure, x: float, y: float, text: str, prop: FontProperties, size: float, color: str, tracking: float) -> None:
@@ -532,54 +531,42 @@ def _tracked(figure, x: float, y: float, text: str, prop: FontProperties, size: 
         cursor += (_text_width(character, prop, size) + tracking) / width
 
 
-def _caption_tokens(caption: str) -> list[tuple[str, str]]:
-    tokens: list[tuple[str, str]] = []
+def _caption_runs(caption: str) -> list[tuple[str, str]]:
+    """Whole phrases, so each run keeps the font's own spacing."""
+    runs: list[tuple[str, str]] = []
     position = 0
     for match in _PAIR_PATTERN.finditer(caption):
         if match.start() > position:
-            tokens.extend((part, 'regular') for part in re.findall(r'\s+|\S+', caption[position : match.start()]))
-        tokens.extend((part, 'semibold') for part in re.findall(r'\s+|\S+', match.group()))
+            runs.append((caption[position : match.start()], 'regular'))
+        runs.append((match.group().strip(), 'semibold'))
         position = match.end()
     if position < len(caption):
-        tokens.extend((part, 'regular') for part in re.findall(r'\s+|\S+', caption[position:]))
-    return tokens
+        runs.append((caption[position:], 'regular'))
+    return [(text, weight) for text, weight in runs if text]
 
 
 def _draw_caption(figure, caption: str, x: float, y: float, width: float) -> float:
-    """Draw the caption. Pair phrases are SemiBold. Returns the y of the next line."""
+    """One measured line. Pair phrases are SemiBold and do not collide with the rest."""
     regular = load_poppins('regular')
     semibold = load_poppins('semibold')
     size = 9.0
-    figure_width = figure.get_figwidth() * 72
-    line_gap = 13 / (figure.get_figheight() * 72)
+    figure_points = figure.get_figwidth() * 72
+    line_gap = 14 / (figure.get_figheight() * 72)
     cursor_x = x
     cursor_y = y
     limit = x + width
-    for text, weight in _caption_tokens(caption):
+    runs = _caption_runs(caption)
+    for index, (text, weight) in enumerate(runs):
         prop = semibold if weight == 'semibold' else regular
-        if cursor_x > x and text.isspace():
-            token_width = _text_width(text, prop, size) / figure_width
-            if cursor_x + token_width > limit:
-                continue
-        piece = text.lstrip() if cursor_x == x else text
-        if piece == '':
-            continue
-        if piece == '↔':
-            token_width = 12 / figure_width
-            if cursor_x > x and cursor_x + token_width > limit:
-                cursor_x = x
-                cursor_y -= line_gap
-            _draw_exchange_mark(figure, cursor_x, cursor_y)
-            cursor_x += token_width
-            continue
-        token_width = _text_width(piece, prop, size) / figure_width
+        piece = text
+        token_width = _text_width(piece, prop, size) / figure_points
         if cursor_x > x and cursor_x + token_width > limit:
             cursor_x = x
             cursor_y -= line_gap
-            piece = text.strip()
+            piece = text.lstrip()
             if piece == '':
                 continue
-            token_width = _text_width(piece, prop, size) / figure_width
+            token_width = _text_width(piece, prop, size) / figure_points
         figure.text(
             cursor_x,
             cursor_y,
@@ -589,98 +576,19 @@ def _draw_caption(figure, caption: str, x: float, y: float, width: float) -> flo
             color=INK,
             ha='left',
             va='center',
-        )
-        cursor_x += token_width
-        if piece in {',', ';'}:
-            cursor_x += 3.2 / figure_width
-    return cursor_y - line_gap
-
-
-def _draw_exchange_mark(figure, x: float, y: float) -> None:
-    """A small double arrow. Poppins has no left-right arrow glyph."""
-    figure_width = figure.get_figwidth() * 72
-    figure.add_artist(
-        FancyArrowPatch(
-            (x + 1.2 / figure_width, y),
-            (x + 10.2 / figure_width, y),
-            transform=figure.transFigure,
-            arrowstyle='<->',
-            mutation_scale=5.5,
-            linewidth=0.7,
-            color=INK,
-            shrinkA=0,
-            shrinkB=0,
-            clip_on=False,
             zorder=4,
         )
-    )
-
-
-def _square_axes(figure, left: float, bottom: float, size: float):
-    width, height = figure.get_size_inches()
-    axis = figure.add_axes([left, bottom, size / width, size / height])
-    axis.set_xlim(-1.2, 1.2)
-    axis.set_ylim(-1.2, 1.2)
-    axis.set_aspect('equal')
-    axis.axis('off')
-    axis.set_facecolor('none')
-    axis.set_zorder(5)
-    return axis
-
-
-def _draw_legends(figure, left: float, bottom: float) -> None:
-    regular = load_poppins('regular')
-    labels = ('One person', 'Spoke next', 'Who spoke first')
-    drawers = (_legend_arc, _legend_ribbon, _legend_color)
-    step = 0.27
-    for index, (label, drawer) in enumerate(zip(labels, drawers)):
-        origin = left + index * step
-        drawer(_square_axes(figure, origin, bottom, 0.34))
-        figure.text(
-            origin + 0.34 / figure.get_figwidth() + 0.008,
-            bottom + (0.17 / figure.get_figheight()),
-            label,
-            fontproperties=regular,
-            fontsize=7.4,
-            color=MUTED,
-            ha='left',
-            va='center',
-        )
-
-
-def _legend_arc(axis) -> None:
-    axis.add_patch(Wedge((0, -0.45), 1.2, 32, 148, width=0.40, facecolor=NAVY, edgecolor='none'))
-
-
-def _legend_ribbon(axis) -> None:
-    axis.add_patch(
-        Polygon(
-            [(-1.15, 0.50), (-0.2, 0.20), (0.62, 0.13), (0.62, -0.13), (-0.2, -0.20), (-1.15, -0.50)],
-            closed=True,
-            facecolor=SKY,
-            edgecolor=WHITE,
-            linewidth=0.6,
-        )
-    )
-
-
-def _legend_color(axis) -> None:
-    axis.add_patch(Circle((-0.78, 0.08), 0.30, facecolor=NAVY, edgecolor='none'))
-    axis.add_patch(
-        Polygon(
-            [(-0.42, 0.20), (0.22, 0.05), (0.40, 0.0), (0.22, -0.05), (-0.42, -0.12)],
-            closed=True,
-            facecolor=NAVY,
-            edgecolor='none',
-        )
-    )
-    axis.add_patch(Circle((0.74, -0.04), 0.30, facecolor=SKY, edgecolor='none'))
+        cursor_x += token_width
+        following = runs[index + 1][0] if index + 1 < len(runs) else ''
+        if following and following[0] not in ',.;: ':
+            cursor_x += 1.5 / figure_points
+    return cursor_y - line_gap
 
 
 def _draw_guide(figure, caption: str) -> None:
     semibold = load_poppins('semibold')
     regular = load_poppins('regular')
-    card_x, card_y, card_w, card_h = 0.075, 0.112, 0.85, 0.232
+    card_x, card_y, card_w, card_h = 0.075, 0.055, 0.85, 0.152
     figure.add_artist(
         FancyBboxPatch(
             (card_x, card_y),
@@ -713,7 +621,7 @@ def _draw_guide(figure, caption: str) -> None:
     text_x = card_x + 0.034
     figure.text(
         text_x,
-        card_y + card_h - 0.028,
+        card_y + card_h - 0.022,
         'How to read this chart',
         fontproperties=semibold,
         fontsize=11,
@@ -725,17 +633,16 @@ def _draw_guide(figure, caption: str) -> None:
     for index, line in enumerate(HOW_TO_READ):
         figure.text(
             text_x,
-            card_y + card_h - 0.062 - index * 0.026,
+            card_y + card_h - 0.046 - index * 0.022,
             line,
             fontproperties=regular,
-            fontsize=8.15,
+            fontsize=8.3,
             color=INK,
             ha='left',
             va='center',
             zorder=4,
         )
-    _draw_legends(figure, text_x, card_y + 0.018)
-    _draw_caption(figure, caption, 0.075, 0.086, 0.85)
+    _draw_caption(figure, caption, 0.075, 0.038, 0.78)
 
 
 def _draw_wordmark(figure) -> None:
@@ -748,7 +655,7 @@ def _draw_wordmark(figure) -> None:
     x_left = x_right - width / figure_width
     figure.text(
         x_left,
-        0.034,
+        0.022,
         text,
         fontproperties=prop,
         fontsize=size,
@@ -760,7 +667,7 @@ def _draw_wordmark(figure) -> None:
     bar_width = min(width * 0.38, 78) / figure_width
     figure.add_artist(
         Rectangle(
-            (x_left, 0.024),
+            (x_left, 0.014),
             bar_width,
             2.4 / (figure.get_figheight() * 72),
             transform=figure.transFigure,
@@ -774,10 +681,10 @@ def _draw_wordmark(figure) -> None:
 
 
 def _draw_header(figure, title: str) -> None:
-    _tracked(figure, 0.075, 0.962, KICKER, load_poppins('semibold'), 8.2, SKY, 1.15)
+    _tracked(figure, 0.075, 0.972, KICKER, load_poppins('semibold'), 8.2, SKY, 1.15)
     figure.text(
         0.075,
-        0.928,
+        0.942,
         title,
         fontproperties=load_poppins('semibold'),
         fontsize=21,
@@ -787,7 +694,7 @@ def _draw_header(figure, title: str) -> None:
     )
     figure.text(
         0.075,
-        0.894,
+        0.912,
         SUBTITLE,
         fontproperties=load_poppins('regular'),
         fontsize=10.5,
@@ -797,7 +704,7 @@ def _draw_header(figure, title: str) -> None:
     )
     figure.add_artist(
         Rectangle(
-            (0.075, 0.868),
+            (0.075, 0.892),
             0.85,
             1.15 / (figure.get_figheight() * 72),
             transform=figure.transFigure,
@@ -825,7 +732,6 @@ def save_chord_diagram(
     spans = _arc_layout(arcs)
     colors = [_color_for(position) for position in range(count)]
     strong = strongest_pair_indexes(directed)
-    peak = max((value for row in directed for value in row), default=0)
     slices = []
     for position, (low, high) in enumerate(spans):
         outgoing = [
@@ -849,13 +755,23 @@ def save_chord_diagram(
                 spots[source] = start + step * index
         landings.append(spots)
 
-    figure = plt.figure(figsize=(8.7, 10.05), facecolor=LIGHT)
-    axis = figure.add_axes([0.13, 0.385, 0.74, 0.455])
+    figure_width, figure_height = 10.0, 11.0
+    figure = plt.figure(figsize=(figure_width, figure_height), facecolor=LIGHT)
+    # Square axes in inches, tight around the circle, so the chord is about two thirds of the page.
+    axes_inches = 7.05
+    axis = figure.add_axes(
+        [
+            (figure_width - axes_inches) / 2 / figure_width,
+            2.45 / figure_height,
+            axes_inches / figure_width,
+            axes_inches / figure_height,
+        ]
+    )
     axis.set_aspect('equal')
     axis.axis('off')
-    axis.set_xlim(-2.25, 2.25)
-    axis.set_ylim(-2.2, 2.05)
-    axis.set_facecolor(LIGHT)
+    axis.set_xlim(-1.06, 1.06)
+    axis.set_ylim(-1.06, 1.06)
+    axis.set_facecolor('none')
     outer = 1.0
     thickness = 0.082
     inner = outer - thickness
@@ -868,18 +784,11 @@ def save_chord_diagram(
                 continue
             pair = tuple(sorted((source, target)))
             emphasized = pair in strong
-            faded = peak >= FADE_BELOW and weight < FADE_BELOW and not emphasized
-            rank = 0 if faded else (2 if emphasized else 1)
-            drawings.append((rank, source, target, emphasized, faded))
+            drawings.append((2 if emphasized else 1, source, target, emphasized))
     drawings.sort(key=lambda item: item[0])
 
-    for rank, source, target, emphasized, faded in drawings:
-        if emphasized:
-            alpha = 0.70
-        elif faded:
-            alpha = 0.30
-        else:
-            alpha = 0.56
+    for rank, source, target, emphasized in drawings:
+        alpha = 0.82 if emphasized else 0.45
         axis.add_patch(
             PathPatch(
                 _directed_ribbon(slices[source][target], landings[target][source], inner),

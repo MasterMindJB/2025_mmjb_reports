@@ -77,7 +77,7 @@ def test_caption_names_the_strongest_pairs_and_the_least_connected_person():
     directed[alex][dana] = 1
     assert (
         chord_caption(names, directed)
-        == 'Most back-and-forth: Alex ↔ Blake (9), Dana ↔ Casey (6). Least connected: Fran.'
+        == 'Most back-and-forth: Alex and Blake (9), Dana and Casey (6). Least connected: Fran.'
     )
     pairs = pair_directions(names, directed)
     assert pairs[0][:4] == ('Alex Rivera', 'Blake Chen', 6, 3)
@@ -132,24 +132,39 @@ def test_caption_when_nobody_follows_a_different_person():
 
 
 def six_person_session() -> tuple[list[str], list[str], dict[str, str]]:
+    """About 120 turns. Casey holds the middle, Alex and Blake lock in, Dana is quiet."""
     names = ['Alex Rivera', 'Blake Chen', 'Casey Quinn', 'Dana Okonkwo', 'Eden Brooks', 'Fran Ibarra']
-    sequence = [
-        'Casey Quinn',
-        'Alex Rivera',
-        'Blake Chen',
-        'Alex Rivera',
-        'Dana Okonkwo',
-        'Eden Brooks',
-        'Fran Ibarra',
-        'Eden Brooks',
-        'Alex Rivera',
-        'Fran Ibarra',
-        'Blake Chen',
-        'Dana Okonkwo',
-        'Casey Quinn',
-        'Eden Brooks',
-        'Blake Chen',
-        'Alex Rivera',
-    ]
-    roles = {'Casey Quinn': 'facilitator', 'Fran Ibarra': 'actor'}
+    alex, blake, casey, dana, eden, fran = names
+    sequence: list[str] = []
+    for other in (alex, blake, eden, fran, alex, blake, eden, fran, alex, eden):
+        sequence += [casey, other, casey]
+    sequence += [alex, blake] * 16
+    sequence += [blake, alex] * 8
+    sequence += [eden, fran] * 7
+    sequence += [fran, eden] * 3
+    sequence += [casey, blake, alex, casey, fran, eden, casey, alex]
+    sequence += [casey, eden, casey, fran, casey, blake]
+    sequence += [casey, dana, casey, dana, casey]
+    roles = {casey: 'facilitator', fran: 'actor'}
+    return sequence, names, roles
+
+
+def ten_person_session() -> tuple[list[str], list[str], dict[str, str]]:
+    """About 200 turns. Person 0 is central, Person 1 and 2 are the strong pair, Person 9 is quiet."""
+    names = [f'Person {index}' for index in range(10)]
+    facilitator, left, right, quiet = names[0], names[1], names[2], names[9]
+    sequence: list[str] = []
+    for other in [name for name in names if name != facilitator] * 2:
+        sequence += [facilitator, other]
+    sequence += [left, right] * 18
+    sequence += [right, left] * 10
+    for index in range(3, 8):
+        sequence += [names[index], names[index + 1]] * 4
+    sequence += [names[8], names[6], names[8], names[4]] * 3
+    sequence += [names[4], names[5]] * 7
+    sequence += [names[5], names[4]] * 4
+    for other in (left, right, names[3], names[4], names[5], names[6], names[7], names[8]):
+        sequence += [facilitator, other, facilitator]
+    sequence += [facilitator, quiet, facilitator]
+    roles = {facilitator: 'facilitator', names[8]: 'actor'}
     return sequence, names, roles
