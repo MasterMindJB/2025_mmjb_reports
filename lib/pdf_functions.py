@@ -84,21 +84,41 @@ class MM_PDF(FPDF):
         path_dejavusans_dir = path_report_assets.joinpath('fonts').joinpath('DejaVuSans')
         self.add_font('DejaVuSans', style='', fname=path_dejavusans_dir.joinpath('DejaVuSans.ttf'))
 
+        poppins_dir = Path(__file__).resolve().parents[1] / 'assets' / 'fonts' / 'Poppins'
+        self.add_font('Poppins', '', fname=poppins_dir / 'Poppins-Regular.ttf')
+        self.add_font('Poppins', 'b', fname=poppins_dir / 'Poppins-SemiBold.ttf')
+        self.add_font('PoppinsMedium', '', fname=poppins_dir / 'Poppins-Medium.ttf')
+        self.brand_canvas = False
+        self._brand_pages: set[int] = set()
+
         # Font settings
         self.set_font('KulimPark', '', 12)
         self.set_font_to_recall()
 
     def header(self):
+        if getattr(self, 'brand_canvas', False):
+            self._brand_pages.add(self.page)
+            self.brand_canvas = False
+            self.set_fill_color(244, 248, 252)
+            self.rect(0, 0, self.w, self.h, 'F')
+            self.set_fill_color(255, 255, 255)
+        branded = self.page in getattr(self, '_brand_pages', ())
+        self.set_text_color(20, 33, 74) if branded else self.set_text_color(0, 0, 0)
         self.set_font('KulimPark', '', 11)
         line_height = self.font_size * 2
         self.cell(w=self.epw * 0.72, text='Harkness Training Solutions', align='L', h=line_height)
+        self.set_text_color(85, 98, 138) if branded else self.set_text_color(0, 0, 0)
         self.set_font('KulimPark', '', 9)
         self.cell(w=self.epw * 0.28, text='Confidential', align='R', h=line_height)
+        self.set_text_color(20, 33, 74) if branded else self.set_text_color(0, 0, 0)
         self.ln(12)
 
     # Page footer
     def footer(self):
         self.set_y(-15)  # Set position of the footer
+        branded = self.page in getattr(self, '_brand_pages', ())
+        if branded:
+            self.set_text_color(85, 98, 138)
         if self.link_feedback:
             self.set_font('DejaVuSans', '', 13)
             self.cell(6, 10, '😊', align='L')
@@ -112,6 +132,7 @@ class MM_PDF(FPDF):
             )
         self.set_font('KulimPark-light', '', 11)
         self.cell(0, 10, f'{self.page_no()}/{{nb}}', align='R')  # Page number
+        self.set_text_color(0, 0, 0)
 
     def add_title_document(self, title: str, subtitle: str = None):
         self.set_font_to_recall()
@@ -220,33 +241,75 @@ def pdf_filename_for(name: str) -> str:
     return f'{cleaned or "participant"}.pdf'
 
 
+def _place_chord_image(pdf: 'MM_PDF', path: Path) -> None:
+    with PIL.Image.open(path) as image:
+        aspect = image.height / max(image.width, 1)
+    reserve = 64
+    available_h = pdf.h - pdf.get_y() - pdf.b_margin - reserve
+    available_w = pdf.epw
+    width = available_w
+    if available_h > 20 and width * aspect > available_h:
+        width = available_h / aspect
+    pdf.image(path, x='C', w=max(width, 40))
+    pdf.ln(2)
+
+
 def _add_direction_table(pdf: 'MM_PDF', pairs: list) -> None:
-    pdf.set_font('KulimPark', '', 11)
+    ink = (20, 33, 74)
+    muted = (85, 98, 138)
+    navy = (28, 44, 91)
+    line = (216, 227, 240)
+    light = (244, 248, 252)
+    white = (255, 255, 255)
+    y = pdf.get_y()
+    pdf.set_fill_color(108, 171, 221)
+    pdf.rect(pdf.l_margin, y, 16, 1.1, 'F')
+    pdf.ln(4)
+    pdf.set_text_color(*ink)
+    pdf.set_font('Poppins', 'b', 12)
     pdf.cell(w=0, h=7, text='Top pairs, each direction', align='L', ln=True)
+    pdf.set_font('Poppins', '', 9)
+    pdf.set_text_color(*muted)
+    pdf.multi_cell(
+        w=0,
+        text='Each number is how many times the first person was immediately followed by the second.',
+    )
+    pdf.ln(1)
     if not pairs:
-        pdf.set_font('KulimPark-light', '', 10)
+        pdf.set_font('Poppins', '', 10)
+        pdf.set_text_color(*ink)
         pdf.multi_cell(w=0, text='No turn was immediately followed by a different person.')
+        pdf.set_text_color(0, 0, 0)
         pdf.set_font('KulimPark', '', 12)
         return
-    pdf.set_font('KulimPark', '', 8)
+    pdf.set_font('Poppins', '', 8)
+    pdf.set_text_color(*ink)
+    pdf.set_draw_color(*line)
+    pdf.set_line_width(0.2)
+    heading = FontFace(family='Poppins', emphasis='BOLD', size_pt=8, color=white, fill_color=navy)
     with pdf.table(
         text_align=['LEFT', 'LEFT', 'LEFT'],
         col_widths=(3, 2, 2),
-        borders_layout='MINIMAL',
-        line_height=pdf.font_size * 1.35,
+        borders_layout='HORIZONTAL_LINES',
+        line_height=pdf.font_size * 1.45,
         first_row_as_headings=True,
     ) as table:
         header = table.row()
-        header.cell('Pair')
-        header.cell('One way')
-        header.cell('The other way')
-        for name_a, name_b, first_way, other_way in pairs[:6]:
+        header.cell('Pair', style=heading)
+        header.cell('One way', style=heading)
+        header.cell('The other way', style=heading)
+        for index, (name_a, name_b, first_way, other_way) in enumerate(pairs[:6]):
             short_a = name_a.split(' ', 1)[0]
             short_b = name_b.split(' ', 1)[0]
+            fill = light if index % 2 == 0 else white
+            style = FontFace(family='Poppins', size_pt=8, color=ink, fill_color=fill)
             row = table.row()
-            row.cell(f'{name_a}  and  {name_b}')
-            row.cell(f'{short_a} then {short_b}: {first_way}')
-            row.cell(f'{short_b} then {short_a}: {other_way}')
+            row.cell(f'{name_a}  and  {name_b}', style=style)
+            row.cell(f'{short_a} then {short_b}: {first_way}', style=style)
+            row.cell(f'{short_b} then {short_a}: {other_way}', style=style)
+    pdf.set_draw_color(0, 0, 0)
+    pdf.set_text_color(0, 0, 0)
+    pdf.set_line_width(0.2)
     pdf.set_font('KulimPark', '', 12)
     pdf.ln(2)
 
@@ -488,12 +551,11 @@ def create_report_group(
     pdf.set_font_recall()
 
     # The chord diagram is the first view of the session, ahead of the scores.
+    pdf.brand_canvas = True
     pdf.add_page()
     link_chord = pdf.add_link()
-    pdf.add_title_1(text='Who talks with whom', link_dest=link_chord)
-    pdf.image(path_image_chord, x='C', w=pdf.epw * 0.96)
-    pdf.ln(1)
-    pdf.set_font('KulimPark', '', 12)
+    pdf.set_link(link_chord)
+    _place_chord_image(pdf, path_image_chord)
     _add_direction_table(pdf, chord_pairs or [])
 
     # Table of Contents
@@ -526,7 +588,7 @@ def create_report_group(
         row = table.row()
         row.cell('Who talks with whom', style=style_link, link=link_chord)
         row.cell(
-            'Who spoke immediately after whom. Ribbon width counts both directions.',
+            'Who spoke immediately after whom. Color shows who spoke first.',
             style=style_desc,
         )
         row = table.row()

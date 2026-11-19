@@ -1,9 +1,18 @@
+import math
 from pathlib import Path
+
+import pytest
+from matplotlib import font_manager
+from PIL import Image
 
 from lib.chord_diagram import (
     CHORD_DEFINITION,
+    PARTICIPANT_COLORS,
+    _directed_ribbon,
     chord_caption,
     directed_follows,
+    font_dir,
+    load_poppins,
     pair_directions,
     save_chord_diagram,
     strongest_pair_indexes,
@@ -41,6 +50,9 @@ def test_chord_diagram_handles_two_speakers_and_a_speaker_with_no_transitions(tm
     assert arcs[2] == 0
     assert path.is_file()
     assert path.stat().st_size > 5_000
+    with Image.open(path) as image:
+        dpi = image.info.get('dpi')
+        assert dpi is not None and dpi[0] >= 299
 
 
 def test_chord_diagram_handles_twelve_speakers(tmp_path: Path):
@@ -72,6 +84,45 @@ def test_caption_names_the_strongest_pairs_and_the_least_connected_person():
     assert pairs[1][:4] == ('Dana Okonkwo', 'Casey Quinn', 4, 2)
     assert strongest_pair_indexes(directed) == {(alex, blake), (dana, casey), (alex, dana)}
     assert fran == 4
+
+
+def test_poppins_loads_from_the_vendored_files():
+    expected = {
+        'regular': 'Poppins-Regular.ttf',
+        'medium': 'Poppins-Medium.ttf',
+        'semibold': 'Poppins-SemiBold.ttf',
+        'bold': 'Poppins-Bold.ttf',
+        'extrabold': 'Poppins-ExtraBold.ttf',
+    }
+    assert (font_dir() / 'OFL.txt').is_file()
+    for weight, filename in expected.items():
+        prop = load_poppins(weight)
+        assert prop.get_name().startswith('Poppins')
+        vendored = (font_dir() / filename).resolve()
+        assert Path(prop.get_file()).resolve() == vendored
+        found = Path(font_manager.findfont(prop, fallback_to_default=False)).resolve()
+        assert found == vendored
+    with pytest.raises(ValueError):
+        load_poppins('condensed')
+
+
+def test_palette_stays_in_the_navy_sky_family():
+    banned = {'#FFC659', '#FF0000', '#E69F00', '#D55E00'}
+    assert banned.isdisjoint({color.upper() for color in PARTICIPANT_COLORS})
+    for color in PARTICIPANT_COLORS:
+        red = int(color[1:3], 16)
+        blue = int(color[5:7], 16)
+        assert blue + 8 >= red
+
+
+def test_ribbons_stay_inside_the_circle_even_for_neighbors():
+    radius = 1.0
+    cases = [((0.9, 1.25), 1.45), ((0.1, 0.7), math.pi + 0.2), ((-0.4, 1.2), 1.35)]
+    for source, target in cases:
+        path = _directed_ribbon(source, target, radius)
+        assert len(path.vertices) == len(path.codes)
+        for x, y in path.vertices:
+            assert math.hypot(x, y) <= radius + 1e-6
 
 
 def test_caption_when_nobody_follows_a_different_person():
