@@ -1095,6 +1095,49 @@ def test_forty_turn_window_ends_on_the_host_thanks_block():
     assert 'Thank' not in closer_turn(rows)['text']
 
 
+def test_goal_fallback_accepts_a_short_verb_and_skips_a_self_introduction():
+    from lib.data_story import personal_story
+    from lib.story_render import goal_line
+
+    assert goal_line('help the group see the gap', personal=True) == (
+        'You set out to help the group see the gap.'
+    )
+    assert goal_line('show the room one clear next step', personal=True) == (
+        'You set out to show the room one clear next step.'
+    )
+    transcript = {
+        'utterances': [
+            {
+                'speaker': 'A', 'start': 0, 'end': 4000,
+                'text': (
+                    'Annie and Corey Cannon, Noco International brought the opening remarks '
+                    'for the whole session today.'
+                ),
+            },
+            {
+                'speaker': 'A', 'start': 8000, 'end': 14000,
+                'text': (
+                    'The knowledge systems still hide the design until the workflow is named '
+                    'by the people who use it.'
+                ),
+            },
+        ],
+    }
+    story = personal_story(
+        label='A',
+        info={'name': 'Lynae'},
+        analysis={},
+        transcript=transcript,
+        stats_frame=None,
+        framework={},
+        draft={},
+    )
+    assert 'No turn of yours is long enough' not in story['goal']
+    assert 'Noco International' not in story['goal']
+    assert story['goal'].startswith('You set out to share ')
+    assert 'knowledge systems' in story['goal']
+
+
 def test_fallback_skips_repetition_and_an_introduction():
     from lib.data_story import personal_story
 

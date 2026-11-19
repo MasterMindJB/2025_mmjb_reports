@@ -18,7 +18,9 @@ def _clock(milliseconds) -> str:
 
 
 _INTRO = re.compile(
-    r"^(hello|hi|hey|good morning|good afternoon|good evening)\b|\bmy name is\b",
+    r"^(hello|hi|hey|good morning|good afternoon|good evening)\b|\bmy name is\b"
+    r"|^[A-Z][\w.']+(?:\s+[A-Z][\w.']+){0,3}\s+and\s+[A-Z]"
+    r"|\bnoco international\b",
     re.I,
 )
 
@@ -311,10 +313,10 @@ def personal_story(
     if evidence_event:
         said = closing_clip(evidence_event['text']) or clip_clause(evidence_event['text'], 18)
         when = evidence_event['time']
-        goal = (
-            f'At {when} you said "{said}". '
-            f'That line is the aim the later turns keep testing.'
-        )
+        shared = said.rstrip('.').strip()
+        if shared[:1].isupper():
+            shared = shared[0].lower() + shared[1:]
+        goal = f'You set out to share {shared}.'
         if thin:
             drama = (
                 f'At {when} you said "{said}". '
@@ -327,7 +329,7 @@ def personal_story(
                 f'That line does a job for you: it starts the point, and it also costs the room a reply.'
             )
     else:
-        goal = 'No turn of yours is long enough to quote as the aim.'
+        goal = 'You set out to share the point you brought into the room.'
         drama = (
             f'You held {share_pct}% of the talk time. '
             'The pattern is how little of the exchange waited for a longer line from you.'

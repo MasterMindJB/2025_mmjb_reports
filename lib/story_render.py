@@ -209,12 +209,25 @@ _BASE_VERBS = {
     'hold', 'identify', 'keep', 'leave', 'maintain', 'make', 'mark', 'measure',
     'move', 'name', 'notice', 'open', 'pause', 'place', 'protect', 'reduce', 'say',
     'secure', 'separate', 'set', 'share', 'show', 'start', 'state', 'stop', 'test',
-    'use', 'wait',
+    'use', 'wait', 'help', 'get', 'let', 'put', 'take', 'bring', 'tell', 'talk',
+    'call', 'work', 'learn', 'lead', 'join', 'offer', 'focus', 'change', 'grow',
+    'see', 'know', 'think', 'feel', 'read', 'write', 'hear', 'meet', 'reach',
+    'support', 'explore', 'discuss', 'turn', 'add', 'bring',
 }
 _FRAME_VERBS = {
     'aim', 'aims', 'are', 'involve', 'involves', 'is', 'need', 'needs', 'seek',
     'seeks', 'try', 'tries', 'want', 'wants',
 }
+
+
+def _tagged_verb(word: str) -> bool:
+    try:
+        import nltk
+
+        tag = nltk.pos_tag([word])[0][1]
+    except Exception:
+        return False
+    return str(tag) in {'VB', 'VBP'}
 
 
 def _base_verb(token: str) -> str | None:
@@ -250,12 +263,19 @@ def verb_phrase(claim: str) -> str:
         if word.lower() == 'the':
             continue
         base = _base_verb(word)
+        if not base and index == 0 and _tagged_verb(word):
+            base = word.lower().strip('.,')
         if not base:
             continue
         rest = ' '.join(words[index + 1:]).strip()
         phrase = f'{base} {rest}'.strip()
         if phrase.lower().startswith('the '):
             continue
+        words_out = phrase.split()
+        if len(words_out) < 3:
+            continue
+        if len(words_out) > 15:
+            phrase = ' '.join(words_out[:15])
         return phrase
     raise OutputParserException('goal must be a verb phrase starting with a base verb')
 
