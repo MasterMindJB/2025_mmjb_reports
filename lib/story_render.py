@@ -225,6 +225,8 @@ _BASE_VERBS = {
     'call', 'work', 'learn', 'lead', 'join', 'offer', 'focus', 'change', 'grow',
     'see', 'know', 'think', 'feel', 'read', 'write', 'hear', 'meet', 'reach',
     'support', 'explore', 'discuss', 'turn', 'add', 'bring', 'recognize',
+    'prioritize', 'demonstrate', 'integrate', 'strengthen', 'advocate', 'live',
+    'feel', 'defend', 'invite', 'practice', 'listen', 'notice',
 }
 _FRAME_VERBS = {
     'aim', 'aims', 'are', 'involve', 'involves', 'is', 'need', 'needs', 'seek',
@@ -314,6 +316,8 @@ def verb_phrase(claim: str) -> str:
             continue
         if len(words_out) > 20:
             phrase = ' '.join(words_out[:20])
+        if re.match(r'^(?:feel|live) rather than\b', phrase, re.I):
+            phrase = 'share a flexible aim rather than ' + phrase.split('rather than', 1)[1].strip()
         return phrase
     phrase = text.strip().rstrip('.')
     if phrase[:1].isupper():
@@ -323,6 +327,9 @@ def verb_phrase(claim: str) -> str:
         phrase = ' '.join(words_out[:20])
         words_out = phrase.split()
     if len(words_out) >= 3:
+        first = re.sub(r'[^\w]', '', words_out[0])
+        if _base_verb(first) or _tagged_verb(first):
+            return phrase
         if _clause_has_verb(phrase):
             return f'make the case that {phrase}'
         return f'share {phrase}'
@@ -337,7 +344,7 @@ def _what_happened(claim: str) -> str:
     first = re.sub(r'[^\w]', '', body.split()[0])
     if _base_verb(first):
         lowered = body[0].lower() + body[1:]
-        return f'What happened is you {lowered}'
+        return f'What happened is that you {lowered}'
     return body
 
 
@@ -479,7 +486,11 @@ def capitalize_sentences(text: str) -> str:
     def _upper(match: re.Match) -> str:
         return match.group(1) + match.group(2).upper()
 
-    return re.sub(r'((?:[.!?]["”]?)\s+)([a-z])', _upper, cleaned)
+    cleaned = re.sub(r'((?:[.!?]["”]?)\s+)([a-z])', _upper, cleaned)
+    stripped = cleaned.lstrip()
+    if stripped[:1].islower():
+        cleaned = cleaned[:len(cleaned) - len(stripped)] + stripped[0].upper() + stripped[1:]
+    return cleaned
 
 
 def clip_clause(text: str, limit: int = 25) -> str:
@@ -594,8 +605,8 @@ def _habit(kind: str, *, share, speaker_count, questions, question_average, turn
         return sentence, why
     if kind == 'beat':
         if facilitator:
-            sentence = 'Pause after a point and hand the turn on. Target: 1 handoff before the next stretch.'
-            why = 'You are running the room, so the useful change is one handoff before the next stretch.'
+            sentence = 'Pause after a point and hand the turn on. Target: 1 handoff before the next decision.'
+            why = 'You are running the room, so the useful change is one handoff before the next decision.'
             return sentence, why
         sentence = 'Pause once before you take the next turn. Target: 1 pause before the second point.'
         why = 'The next change is one pause before the second point.'

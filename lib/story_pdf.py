@@ -350,7 +350,6 @@ def write_personal_report(
         _body(pdf, clip_clause(str(quote), 25))
         shown += 1
     _image(pdf, _phrase_chart(story, chart_dir), width=0.55)
-    _body(pdf, 'Illustrative examples, not lines from this session:')
     for label, key in (('What?', 'what'), ('So, what?', 'so_what'), ('Now, what?', 'now_what')):
         if card.get(key):
             _body(pdf, f'{label} {card[key]}')

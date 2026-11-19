@@ -1232,6 +1232,22 @@ def test_forty_turn_window_ends_on_the_host_thanks_block():
     assert 'Thank' not in closer_turn(rows)['text']
 
 
+def test_a_goal_that_already_starts_with_a_verb_is_not_prefixed_with_share():
+    from lib.story_render import capitalize_sentences, goal_line
+
+    assert goal_line('prioritize the handoff before the next decision', personal=True) == (
+        'You set out to prioritize the handoff before the next decision.'
+    )
+    assert goal_line('demonstrate the gap for the whole room', personal=True) == (
+        'You set out to demonstrate the gap for the whole room.'
+    )
+    assert 'share prioritize' not in goal_line('prioritize the work for the team', personal=True)
+    fixed = goal_line('feel rather than a rigid plan for the room', personal=True)
+    assert fixed.startswith('You set out to share a flexible aim rather than')
+    assert 'to feel rather than' not in fixed
+    assert capitalize_sentences('you advocate for the next voice.').startswith('You advocate')
+
+
 def test_goal_keeps_a_grounded_phrase_and_trims_the_fallback_filler():
     from lib.data_story import personal_story
     from lib.story_render import goal_line
@@ -1587,7 +1603,7 @@ def test_resolution_uses_the_host_closer_and_a_what_happened_clause():
         facts=FACTS,
         forbidden=[],
     )
-    assert personal['resolution'].startswith('What happened is you recognize your specific talents.')
+    assert personal['resolution'].startswith('What happened is that you recognize your specific talents.')
 
 
 def test_dr_annie_green_matches_annie_green_and_seth_does_not():
