@@ -181,6 +181,29 @@ def visible_chord_pairs(names: list[str], directed: list[list[int]]) -> list[tup
     return shown
 
 
+def handoff_totals(names: list[str], directed: list[list[int]]) -> list[tuple[str, int]]:
+    """Back-and-forth count for each person. The chord and the prose share this list."""
+    size = len(names)
+    totals = []
+    for person in range(size):
+        total = sum(
+            directed[person][other] + directed[other][person]
+            for other in range(size)
+            if other != person
+        )
+        totals.append((names[person], total))
+    return totals
+
+
+def least_connected_names(names: list[str], directed: list[list[int]]) -> list[str]:
+    """People with the fewest handoffs. Same people the chord marks as least connected."""
+    totals = handoff_totals(names, directed)
+    if not totals:
+        return []
+    smallest = min(total for _name, total in totals)
+    return [name for name, total in totals if total == smallest]
+
+
 def chord_caption(names: list[str], directed: list[list[int]]) -> str:
     """One sentence naming the strongest pairs and the least connected people."""
     pairs = pair_directions(names, directed)
@@ -191,17 +214,14 @@ def chord_caption(names: list[str], directed: list[list[int]]) -> str:
         f'{_short_name(left, names)} and {_short_name(right, names)} ({total})'
         for left, right, _forward, _back, total in shown
     ]
-    size = len(names)
-    arcs = [
-        sum(directed[person][other] + directed[other][person] for other in range(size) if other != person)
-        for person in range(size)
-    ]
-    smallest = min(arcs) if arcs else 0
-    largest = max(arcs) if arcs else 0
+    totals = handoff_totals(names, directed)
+    amounts = [total for _name, total in totals]
+    smallest = min(amounts) if amounts else 0
+    largest = max(amounts) if amounts else 0
     if smallest == largest:
         ending = 'Everyone has the same amount of back-and-forth.'
     else:
-        least = [_short_name(names[person], names) for person, arc in enumerate(arcs) if arc == smallest]
+        least = [_short_name(name, names) for name in least_connected_names(names, directed)]
         if len(least) > 3:
             ending = f'Least connected: {", ".join(least[:3])}, and {len(least) - 3} others.'
         else:

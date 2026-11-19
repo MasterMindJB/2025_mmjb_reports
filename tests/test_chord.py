@@ -86,6 +86,34 @@ def test_caption_names_the_strongest_pairs_and_the_least_connected_person():
     assert fran == 4
 
 
+def test_prose_and_chord_name_the_same_least_connected_people():
+    from lib.chord_diagram import least_connected_names
+    from lib.story_render import group_character_copy
+
+    names = ['Annie', 'Lynae', 'Audience member 1', 'Audience member 3']
+    directed = [[0 for _ in names] for _ in names]
+    # Annie and Audience member 1 exchange often. Lynae and Audience member 3
+    # each have one handoff, so they are tied for least connected.
+    directed[0][2] = 5
+    directed[2][0] = 4
+    directed[0][1] = 1
+    directed[0][3] = 1
+    least = least_connected_names(names, directed)
+    assert least == ['Lynae', 'Audience member 3']
+    caption = chord_caption(names, directed)
+    assert 'Lynae' in caption.split('Least connected:')[1]
+    assert 'Audience member 3' in caption.split('Least connected:')[1]
+    assert 'Audience member 1' not in caption.split('Least connected:')[1]
+    # Talk time would have named Audience member 1. The prose uses the chord's people.
+    copy = group_character_copy({
+        'interaction': {'value': 40},
+        'participation': {'value': 80},
+        '_portrait': {'least': ' and '.join(least), 'least_names': least, 'low_share': 4, 'high_share': 40},
+    })
+    assert 'Lynae and Audience member 3 was the least connected' in copy or 'Lynae and Audience member 3' in copy
+    assert 'Audience member 1 was the least connected' not in copy
+
+
 def test_poppins_loads_from_the_vendored_files():
     expected = {
         'regular': 'Poppins-Regular.ttf',

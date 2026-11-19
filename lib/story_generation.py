@@ -417,9 +417,14 @@ def generate_group_draft(
     if best and best[0] and best[1]:
         portrait['pair'] = best
     if shares:
-        portrait['least'] = min(shares, key=lambda item: item[1])[0]
         portrait['low_share'] = min(item[1] for item in shares)
         portrait['high_share'] = max(item[1] for item in shares)
+    from lib.chord_diagram import least_connected_names
+
+    least = least_connected_names(order, directed)
+    if least:
+        portrait['least'] = least[0] if len(least) == 1 else ' and '.join(least)
+        portrait['least_names'] = least
     facts['_portrait'] = portrait
     facts['_names'] = [info.get('name') for info in speaker_map.values() if info.get('name')]
     from lib.session_window import closer_turn

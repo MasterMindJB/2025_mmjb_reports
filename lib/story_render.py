@@ -803,11 +803,13 @@ def group_character_copy(facts: dict) -> str:
     low = portrait.get('low_share')
     high = portrait.get('high_share')
     if least and low is not None and high is not None:
+        verb = 'were' if ' and ' in str(least) else 'was'
         sentences.append(
-            f'{least} was the least connected, and talk time ran from {int(low)}% to {int(high)}%.'
+            f'{least} {verb} the least connected, and talk time ran from {int(low)}% to {int(high)}%.'
         )
     elif least:
-        sentences.append(f'{least} was the least connected voice in the room.')
+        verb = 'were' if ' and ' in str(least) else 'was'
+        sentences.append(f'{least} {verb} the least connected voice in the room.')
     return ' '.join(sentences[:3])
 
 
