@@ -276,20 +276,40 @@ def _arc_layout(arcs: list[int]) -> list[tuple[float, float]]:
     return spans
 
 
-def _ribbon_slices(
-    low: float, high: float, weights: list[tuple[int, int]], arc_total: int
-) -> dict[int, tuple[float, float]]:
-    """Map each partner index to the angular slice it occupies on this arc."""
-    slices: dict[int, tuple[float, float]] = {}
-    if arc_total <= 0 or high <= low:
-        return slices
-    cursor = high
-    span = high - low
-    for partner, weight in weights:
-        width = span * (weight / arc_total)
-        slices[partner] = (cursor - width, cursor)
-        cursor -= width
-    return slices
+def _clockwise_from(origin: float, angle: float) -> float:
+    return (origin - angle) % (2 * math.pi)
+
+
+def _allocate_arc_ends(
+    spans: list[tuple[float, float]], directed: list[list[int]]
+) -> list[dict[tuple[str, int], tuple[float, float]]]:
+    """Subdivide each arc into the directed flows that touch that person.
+
+    Outgoing and incoming segments are ordered by the other person's angle so
+    neighboring ribbons sit next to each other instead of crossing.
+    """
+    allocated = []
+    for person, (low, high) in enumerate(spans):
+        flows = []
+        for other, (other_low, other_high) in enumerate(spans):
+            if other == person:
+                continue
+            other_mid = (other_low + other_high) / 2
+            if directed[person][other] > 0:
+                flows.append((other_mid, 0, other, 'out', directed[person][other]))
+            if directed[other][person] > 0:
+                flows.append((other_mid, 1, other, 'in', directed[other][person]))
+        flows.sort(key=lambda item: (_clockwise_from(high, item[0]), item[1]))
+        total = sum(item[4] for item in flows) or 1
+        span = high - low
+        cursor = high
+        slots: dict[tuple[str, int], tuple[float, float]] = {}
+        for _mid, _order, other, kind, weight in flows:
+            width = span * (weight / total)
+            slots[(kind, other)] = (cursor - width, cursor)
+            cursor -= width
+        allocated.append(slots)
+    return allocated
 
 
 def _polar(angle: float, radius: float) -> tuple[float, float]:
@@ -310,49 +330,82 @@ def _arc_points(start: float, end: float, radius: float, steps: int = 10) -> lis
     ]
 
 
-def _directed_ribbon(source: tuple[float, float], target_angle: float, radius: float) -> MplPath:
-    """A tapered bezier from the speaker to who spoke next.
+def _target_span(source: tuple[float, float], incoming: tuple[float, float]) -> tuple[float, float]:
+    """A narrower segment centered on the incoming slot, still on that arc."""
+    source_width = max(source[1] - source[0], 1e-4)
+    slot_low, slot_high = incoming
+    slot_width = max(slot_high - slot_low, 1e-4)
+    desired = source_width * 0.42
+    if desired < 0.01:
+        desired = min(source_width, slot_width)
+    width = min(desired, slot_width)
+    center = (slot_low + slot_high) / 2
+    return (center - width / 2, center + width / 2)
 
-    Control points stay inside the disk. A bezier stays in the convex hull of its
-    controls, and that hull cannot reach a neighboring arc, so a ribbon between
-    neighbors cannot loop back along the rim.
+
+def _directed_ribbon(
+    source: tuple[float, float],
+    target: tuple[float, float] | float,
+    radius: float,
+) -> MplPath:
+    """A chord band. Both ends lie on the inner radius; the sides bow inward.
+
+    ``target`` may be a span ``(low, high)`` or a single angle, which becomes a
+    short span. Neighboring arcs get a shallower bow so the band stays near the rim.
     """
-    start, end = sorted(source)
-    mid = (start + end) / 2
-    separation = _angular_separation(mid, target_angle)
-    # A moderate bow: deep enough to stay off the rim, shallow enough to read as a band.
-    fraction = 0.20 + 0.24 * (separation / math.pi) ** 0.85
-    if separation < 0.55:
-        fraction = 0.14
-    tip_radius = radius - 0.045
-    source_width = max(end - start, 0.045)
-    # Gentle taper. The far end stays a band, not a point or an arrowhead.
-    half_tip = min(max(source_width * 0.34, 0.02), 0.12)
-    tip_low = target_angle - half_tip
-    tip_high = target_angle + half_tip
+    source_low, source_high = sorted(source)
+    if isinstance(target, tuple):
+        target_low, target_high = sorted(target)
+    else:
+        half = max((source_high - source_low) * 0.21, 0.012)
+        target_low, target_high = target - half, target + half
+    source_mid = (source_low + source_high) / 2
+    target_mid = (target_low + target_high) / 2
+    separation = _angular_separation(source_mid, target_mid)
+    # One shared control keeps the band from pinching. Neighbors stay shallower.
+    pull = 0.72 if separation < 0.9 else 0.30
+    delta = (target_mid - source_mid + math.pi) % (2 * math.pi) - math.pi
+    shared = _polar(source_mid + delta / 2, radius * pull)
 
-    def control(angle: float) -> tuple[float, float]:
-        return _polar(angle, radius * fraction)
+    def add_arc(vertices, codes, start: float, end: float) -> None:
+        points = _arc_points(start, end, radius, steps=18)
+        if end < start:
+            points.reverse()
+        for point in points[1:]:
+            vertices.append(point)
+            codes.append(MplPath.LINETO)
 
-    vertices: list[tuple[float, float]] = [
-        _polar(end, radius),
-        control(end),
-        control(tip_high),
-        _polar(tip_high, tip_radius),
-    ]
-    codes = [MplPath.MOVETO, MplPath.CURVE4, MplPath.CURVE4, MplPath.CURVE4]
-    # Short rounded end. The high tip is already the current point.
-    for point in list(reversed(_arc_points(tip_low, tip_high, tip_radius, steps=7)))[1:]:
-        vertices.append(point)
-        codes.append(MplPath.LINETO)
-    vertices.extend([control(tip_low), control(start), _polar(start, radius)])
-    codes.extend([MplPath.CURVE4, MplPath.CURVE4, MplPath.CURVE4])
-    for point in _arc_points(start, end, radius, steps=16)[1:-1]:
-        vertices.append(point)
-        codes.append(MplPath.LINETO)
+    def add_quadratic(vertices, codes, end_angle: float) -> None:
+        vertices.append(shared)
+        vertices.append(_polar(end_angle, radius))
+        codes.extend([MplPath.CURVE3, MplPath.CURVE3])
+
+    # Connecting low-to-low can twist the band into a bowtie. Swap ends when the chords cross.
+    if _chords_cross(source_low, target_low, source_high, target_high):
+        first_target, second_target = target_high, target_low
+    else:
+        first_target, second_target = target_low, target_high
+    vertices = [_polar(source_high, radius)]
+    codes = [MplPath.MOVETO]
+    add_arc(vertices, codes, source_high, source_low)
+    add_quadratic(vertices, codes, first_target)
+    add_arc(vertices, codes, first_target, second_target)
+    add_quadratic(vertices, codes, source_high)
     vertices.append(vertices[0])
     codes.append(MplPath.CLOSEPOLY)
     return MplPath(vertices, codes)
+
+
+def _chords_cross(a0: float, b0: float, a1: float, b1: float) -> bool:
+    def orient(p, q, r) -> float:
+        return (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])
+
+    start_a, end_a = _polar(a0, 1.0), _polar(b0, 1.0)
+    start_b, end_b = _polar(a1, 1.0), _polar(b1, 1.0)
+    return (
+        orient(start_a, end_a, start_b) * orient(start_a, end_a, end_b) < 0
+        and orient(start_b, end_b, start_a) * orient(start_b, end_b, end_a) < 0
+    )
 
 
 @lru_cache(maxsize=None)
@@ -538,7 +591,7 @@ def _caption_runs(caption: str) -> list[tuple[str, str]]:
     for match in _PAIR_PATTERN.finditer(caption):
         if match.start() > position:
             runs.append((caption[position : match.start()], 'regular'))
-        runs.append((match.group().strip(), 'semibold'))
+        runs.append((match.group().lstrip(), 'semibold'))
         position = match.end()
     if position < len(caption):
         runs.append((caption[position:], 'regular'))
@@ -558,12 +611,14 @@ def _draw_caption(figure, caption: str, x: float, y: float, width: float) -> flo
     runs = _caption_runs(caption)
     for index, (text, weight) in enumerate(runs):
         prop = semibold if weight == 'semibold' else regular
-        piece = text
+        piece = text.rstrip()
+        if piece == '':
+            continue
         token_width = _text_width(piece, prop, size) / figure_points
         if cursor_x > x and cursor_x + token_width > limit:
             cursor_x = x
             cursor_y -= line_gap
-            piece = text.lstrip()
+            piece = piece.lstrip()
             if piece == '':
                 continue
             token_width = _text_width(piece, prop, size) / figure_points
@@ -579,9 +634,10 @@ def _draw_caption(figure, caption: str, x: float, y: float, width: float) -> flo
             zorder=4,
         )
         cursor_x += token_width
-        following = runs[index + 1][0] if index + 1 < len(runs) else ''
-        if following and following[0] not in ',.;: ':
-            cursor_x += 1.5 / figure_points
+        # A trailing space is easy to lose between a bold pair and the next word.
+        # Keep the comma tight, then advance one explicit space.
+        if piece.endswith((',', ';', ':')):
+            cursor_x += max(_text_width(' ', regular, size), size * 0.33) / figure_points
     return cursor_y - line_gap
 
 
@@ -732,28 +788,7 @@ def save_chord_diagram(
     spans = _arc_layout(arcs)
     colors = [_color_for(position) for position in range(count)]
     strong = strongest_pair_indexes(directed)
-    slices = []
-    for position, (low, high) in enumerate(spans):
-        outgoing = [
-            (other, directed[position][other]) for other in range(count) if directed[position][other] > 0
-        ]
-        outgoing.sort(key=lambda item: names[item[0]])
-        slices.append(_ribbon_slices(low, high, outgoing, arcs[position]))
-
-    landings: list[dict[int, float]] = []
-    for target, (low, high) in enumerate(spans):
-        sources = [source for source in range(count) if directed[source][target] > 0]
-        spots: dict[int, float] = {}
-        if len(sources) == 1:
-            spots[sources[0]] = (low + high) / 2
-        elif sources:
-            pad = (high - low) * 0.18
-            usable = max(high - low - 2 * pad, (high - low) * 0.5)
-            start = low + (high - low - usable) / 2
-            step = usable / (len(sources) - 1)
-            for index, source in enumerate(sources):
-                spots[source] = start + step * index
-        landings.append(spots)
+    ends = _allocate_arc_ends(spans, directed)
 
     figure_width, figure_height = 10.0, 11.0
     figure = plt.figure(figsize=(figure_width, figure_height), facecolor=LIGHT)
@@ -780,21 +815,23 @@ def save_chord_diagram(
     for source in range(count):
         for target in range(count):
             weight = directed[source][target]
-            if weight <= 0 or target not in slices[source] or source not in landings[target]:
+            source_span = ends[source].get(('out', target))
+            incoming_span = ends[target].get(('in', source))
+            if weight <= 0 or source_span is None or incoming_span is None:
                 continue
             pair = tuple(sorted((source, target)))
             emphasized = pair in strong
-            drawings.append((2 if emphasized else 1, source, target, emphasized))
+            drawings.append((2 if emphasized else 1, source, target, source_span, incoming_span, emphasized))
     drawings.sort(key=lambda item: item[0])
 
-    for rank, source, target, emphasized in drawings:
-        alpha = 0.82 if emphasized else 0.45
+    for rank, source, target, source_span, incoming_span, emphasized in drawings:
+        alpha = 0.80 if emphasized else 0.45
         axis.add_patch(
             PathPatch(
-                _directed_ribbon(slices[source][target], landings[target][source], inner),
+                _directed_ribbon(source_span, _target_span(source_span, incoming_span), inner),
                 facecolor=colors[source],
                 edgecolor=WHITE,
-                linewidth=0.8,
+                linewidth=0.6,
                 alpha=alpha,
                 joinstyle='round',
                 capstyle='round',
