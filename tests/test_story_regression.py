@@ -1751,6 +1751,78 @@ def test_drama_keeps_own_turn_digits_and_a_distinct_counter_moment():
     assert drama.count('onboarding plan for her team') == 1
 
 
+def test_short_drama_uses_the_next_turn_instead_of_stubbing():
+    stephen = {
+        'utterances': [
+            {
+                'speaker': 'A',
+                'text': 'We should try the new onboarding plan before the hour ends.',
+                'start': 0,
+                'end': 4000,
+            },
+            {
+                'speaker': 'A',
+                'text': 'the budget can wait until Monday',
+                'start': 8000,
+                'end': 12000,
+            },
+        ]
+    }
+    rendered = render_personal_section(
+        'drama',
+        {
+            'patterns': [{
+                'quotes': [{'text': 'We should try the new onboarding plan before the hour ends.', 'ts': '0:00'}],
+                'pattern': 'You set the plan in the first line',
+                'twist': 'the next voice took the turn',
+                'cost': 'a question',
+                'gift': 'a clear start',
+            }],
+            'exception': {
+                'quote': 'We should try the new onboarding plan before the hour ends.',
+                'ts': '0:00',
+                'what_happened': 'you named the plan',
+            },
+        },
+        transcript=stephen,
+        label='A',
+        facts=FACTS,
+        forbidden=[],
+    )
+    assert 'budget can wait' in rendered['drama']
+    assert rendered['drama'].count('onboarding plan') == 1
+
+    lynae = {
+        'utterances': [
+            {'speaker': 'L', 'text': 'I keep the thread', 'start': 0, 'end': 2000},
+            {'speaker': 'L', 'text': 'Name the owner', 'start': 4000, 'end': 6000},
+        ]
+    }
+    short = render_personal_section(
+        'drama',
+        {
+            'patterns': [{
+                'quotes': [{'text': 'I keep the thread', 'ts': '0:00'}],
+                'pattern': 'You set the plan in the first line',
+                'twist': 'the next voice took the turn',
+                'cost': 'a question',
+                'gift': 'a clear start',
+            }],
+            'exception': {
+                'quote': 'I keep the thread',
+                'ts': '0:00',
+                'what_happened': 'you named the thread',
+            },
+        },
+        transcript=lynae,
+        label='L',
+        facts=FACTS,
+        forbidden=[],
+    )
+    assert 'I keep the thread' in short['drama']
+    assert 'Name the owner' in short['drama']
+
+
 def test_second_person_check_ignores_words_inside_quotes():
     from lib.story_validation import reject_craft_violations
 

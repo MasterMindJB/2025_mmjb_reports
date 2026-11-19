@@ -36,15 +36,18 @@ def _fallback_event(events: list[dict], rows: list) -> dict | None:
         text = str(event.get('text') or '').strip()
         if _INTRO.search(text) or is_logistics(text):
             return False
-        if len(re.findall(r"[A-Za-z']+", text)) < 6:
+        words = len(re.findall(r"[A-Za-z']+", text))
+        if words < 3:
             return False
         if require_topic and keys and not on_topic(text, keys):
             return False
-        return closing_clip(text) is not None
+        if words >= 6:
+            return closing_clip(text) is not None
+        return True
 
-    pool = [event for event in events if usable(event, True)] or [
-        event for event in events if usable(event, False)
-    ]
+    long = [event for event in events if usable(event, True) and len(re.findall(r"[A-Za-z']+", str(event.get('text') or ''))) >= 6]
+    short = [event for event in events if usable(event, False)]
+    pool = long or short
     if not pool:
         return None
     return max(pool, key=lambda event: len(re.findall(r"[A-Za-z']+", str(event.get('text') or ''))))

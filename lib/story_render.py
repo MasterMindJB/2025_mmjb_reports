@@ -1141,12 +1141,10 @@ def render_drama(
             raise OutputParserException('each pattern needs 1 to 3 quotes')
         rendered_quotes = []
         for item in quotes:
-            text, turn_id = own_quote_turn(
-                str(item.get('text') or ''), str(item.get('ts') or ''), transcript, label
+            when, text, turn_id = _drama_quote(
+                str(item.get('text') or ''), str(item.get('ts') or ''), transcript, label, seen_turns
             )
-            if _word_count(text) < 6:
-                raise OutputParserException('drama quote is under 6 words')
-            rendered_quotes.append((str(item.get('ts')).strip(), text))
+            rendered_quotes.append((when, text))
             seen_quotes.add(_normalize_quote(text))
             seen_turns.add(turn_id)
         pattern_text = _prose(
@@ -1181,17 +1179,13 @@ def render_drama(
     exception = data.get('exception') if isinstance(data.get('exception'), dict) else None
     if not exception:
         raise OutputParserException('drama needs an exception')
-    exception_quote, exception_turn = own_quote_turn(
-        str(exception.get('quote') or ''), str(exception.get('ts') or ''), transcript, label
+    exception_ts, exception_quote, exception_turn = _drama_counter(
+        str(exception.get('quote') or ''),
+        str(exception.get('ts') or ''),
+        transcript,
+        label,
+        seen_turns,
     )
-    if _word_count(exception_quote) < 6:
-        raise OutputParserException('drama quote is under 6 words')
-    exception_ts = str(exception.get('ts')).strip()
-    if exception_turn in seen_turns:
-        replacement = _next_distinct_turn(transcript, label, seen_turns)
-        if replacement is None:
-            raise OutputParserException('drama counter-moment must come from a different turn')
-        exception_ts, exception_quote, exception_turn = replacement
     happened = _prose(
         str(exception.get('what_happened') or ''), corpus, 'what_happened',
         forbidden_names=forbidden, transcript=transcript, speaker_label=label,
@@ -1209,22 +1203,89 @@ def render_drama(
     return capitalize_sentences(rendered)
 
 
-def _next_distinct_turn(transcript, label: str, used: set[str]) -> tuple[str, str, str] | None:
-    """The next turn by this speaker that is not already quoted in the section."""
+def _speaker_turns(transcript, label: str) -> list[tuple[int, str, str, str]]:
+    """(word count, clock, text, turn id) for this speaker's turns of at least 3 words."""
     from lib.story_evidence import clock
 
+    found = []
     for index, row in enumerate((transcript or {}).get('utterances') or []):
         if row.get('speaker') != label:
             continue
+        text = str(row.get('text') or '').strip()
+        words = _word_count(text)
+        if words < 3:
+            continue
         turn_id = str(row.get('start') if row.get('start') is not None else index)
+        found.append((words, clock(row.get('start')), text, turn_id))
+    return found
+
+
+def _quote_floor(transcript, label: str) -> int:
+    """A short speaker may be quoted from 3 words. Everyone else still needs 6."""
+    turns = _speaker_turns(transcript, label)
+    if turns and max(item[0] for item in turns) < 6:
+        return 3
+    return 6
+
+
+def _next_distinct_turn(transcript, label: str, used: set[str]) -> tuple[str, str, str] | None:
+    """The next unused turn of at least 3 words. A full sentence wins, then any short line."""
+    sentences = []
+    shorts = []
+    for _words, when, text, turn_id in _speaker_turns(transcript, label):
         if turn_id in used:
             continue
-        text = str(row.get('text') or '').strip()
         clip = closing_clip(text)
-        if clip is None or _word_count(clip) < 6:
-            continue
-        return clock(row.get('start')), clip, turn_id
-    return None
+        if clip is not None:
+            sentences.append((when, clip, turn_id))
+        elif _word_count(text) >= 3:
+            shorts.append((when, text, turn_id))
+    pool = sentences or shorts
+    if not pool:
+        return None
+    return pool[0]
+
+
+def _drama_quote(text: str, timestamp: str, transcript, label: str, used: set[str]) -> tuple[str, str, str]:
+    """A quote of at least the speaker's floor. A too-short line uses their longest turn."""
+    from lib.story_evidence import clock
+
+    floor = _quote_floor(transcript, label)
+    try:
+        shown, turn_id = own_quote_turn(text, timestamp, transcript, label)
+    except OutputParserException:
+        shown, turn_id = '', ''
+    if shown and turn_id not in used and _word_count(shown) >= floor:
+        return str(timestamp or '').strip() or clock(None), shown, turn_id
+    replacement = _next_distinct_turn(transcript, label, used)
+    if replacement is not None:
+        return replacement
+    if shown and _word_count(shown) >= 3:
+        return str(timestamp or '').strip() or clock(None), shown, turn_id
+    raise OutputParserException('drama quote is under 3 words')
+
+
+def _drama_counter(
+    text: str, timestamp: str, transcript, label: str, used: set[str]
+) -> tuple[str, str, str]:
+    """Same-turn counter-moments are replaced before the quote is validated."""
+    from lib.story_evidence import clock
+
+    shown, turn_id = '', ''
+    try:
+        shown, turn_id = own_quote_turn(text, timestamp, transcript, label)
+    except OutputParserException:
+        shown, turn_id = '', ''
+    if shown and turn_id not in used and _word_count(shown) >= _quote_floor(transcript, label):
+        return str(timestamp or '').strip() or clock(None), shown, turn_id
+    replacement = _next_distinct_turn(transcript, label, used)
+    if replacement is not None:
+        return replacement
+    if _quote_floor(transcript, label) == 3 and shown and _word_count(shown) >= 3:
+        return str(timestamp or '').strip() or clock(None), shown, turn_id
+    if turn_id and turn_id in used:
+        raise OutputParserException('drama counter-moment must come from a different turn')
+    raise OutputParserException('drama quote is under 3 words')
 
 
 def _normalize_quote(text: str) -> str:
