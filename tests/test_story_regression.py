@@ -187,7 +187,8 @@ def test_group_character_accepts_one_fact_and_the_page_holds_the_chord(tmp_path)
         cast='Who talks to whom.',
     )
     assert resolved['resolution'].startswith('The meeting closed on')
-    assert 'numbers' in resolved['resolution']
+    assert 'Monday' in resolved['resolution']
+    assert 'as stated by' not in resolved['resolution'].lower()
     image = tmp_path / 'chord.png'
     Image.new('RGB', (400, 400), 'white').save(image)
     pdf = MM_PDF(path_report_assets=__import__('pathlib').Path('report_assets'))
@@ -417,6 +418,125 @@ def test_group_headline_and_halfway_target_are_about_the_room():
     assert 2 <= len(sentences) <= 3
     assert '20% interaction' in rendered['character']
     assert 'Leslie' in rendered['character']
+
+
+def test_clock_uses_hours_after_sixty_minutes():
+    from lib.story_evidence import clock
+    from lib.story_validation import own_quote
+
+    assert clock((108 * 60 + 43) * 1000) == '1:48:43'
+    assert clock(160 * 60 * 1000) == '2:40:00'
+    assert clock(38 * 1000) == '0:38'
+    transcript = {
+        'utterances': [
+            {
+                'speaker': 'A',
+                'text': 'We should try the new onboarding plan today.',
+                'start': (108 * 60 + 43) * 1000,
+                'end': (108 * 60 + 50) * 1000,
+            }
+        ]
+    }
+    shown = own_quote('We should try the new onboarding plan today.', '108:43', transcript, 'A')
+    assert 'onboarding' in shown
+
+
+def test_facilitator_is_not_cut_to_an_even_share_and_later_talk_is_not_zero():
+    from lib.story_render import one_thing_from_gap, unique_habits
+
+    annie = one_thing_from_gap(
+        share=24, speaker_count=14, questions=2, question_average=1, facilitator=True,
+    )
+    assert '7% talk time' not in annie[0]
+    assert 'even share' not in annie[1]
+    habits = unique_habits([
+        {
+            'label': 'A', 'role': 'facilitator', 'share': 24, 'speaker_count': 14,
+            'questions': 2, 'question_average': 1, 'turn_words': 0, 'session_turn_words': 0,
+            'early': None, 'late': None,
+        },
+    ])
+    assert '7%' not in habits['A'][0]
+    later = one_thing_from_gap(
+        share=20, speaker_count=7, questions=2, question_average=1, early=0, late=40,
+    )
+    assert 'Target: 0%' not in later[0]
+    assert 'Target: 20%' in later[0]
+
+
+def test_signature_keeps_a_reading_that_only_has_to_name_the_bigram():
+    from lib.llm_functions import _signature_fields
+    import json
+
+    long_line = 'You reach for "we should" when they want the room to move and then you keep going past the point today indeed.'
+    parsed = _signature_fields(
+        json.dumps({
+            'what': long_line,
+            'so_what': 'They hear the phrase as the way you open a new point in the room.',
+            'now_what': 'You can pause once before you lean on that phrase again today.',
+        }),
+        'we should try the plan',
+        'we should',
+    )
+    assert 'we should' in parsed['what'].lower()
+    assert len(parsed['what'].split()) <= 25
+    with pytest.raises(ValueError):
+        _signature_fields(
+            json.dumps({
+                'what': 'You reach for another line when the room is waiting on you today.',
+                'so_what': 'It gives you a moment to decide what you want to say next.',
+                'now_what': 'You can pause once before you lean on that phrase again today.',
+            }),
+            '',
+            'we should',
+        )
+
+
+def test_closing_line_skips_fragments_and_the_next_sentence_is_capitalized():
+    from lib.story_render import render_group_section, substantive_line
+
+    assert not substantive_line('It.')
+    assert not substantive_line("So you're")
+    assert not substantive_line('Could we check the budget first?')
+    assert substantive_line('That might work if we start Monday.')
+    facts = {
+        'interaction': {'value': 42, 'unit': 'percent', 'line': '42% interaction'},
+        'participation': {'value': 80, 'unit': 'percent', 'line': '80% participation'},
+    }
+    rendered = render_group_section(
+        'resolution',
+        {'claim': 'you told the room where the budget stood, as stated by "Ric Viers"'},
+        transcript=synthetic_transcript(),
+        facts=facts,
+        cast='',
+    )
+    assert '. You told' in rendered['resolution']
+    assert 'as stated by' not in rendered['resolution'].lower()
+    with pytest.raises(OutputParserException):
+        render_group_section(
+            'goal',
+            {'claim': "Annie's theme for the whole hour"},
+            transcript=synthetic_transcript(),
+            facts=facts,
+            cast='',
+        )
+
+
+def test_gift_is_a_noun_phrase_and_one_turn_stays_singular():
+    from lib.story_render import _gets_you, turns_sentence
+
+    assert _gets_you('a clear start') == 'It gets you a clear start.'
+    with pytest.raises(OutputParserException):
+        _gets_you('establish')
+    assert '1 turn' in turns_sentence(1)
+    assert '1 turns' not in turns_sentence(1)
+    for options in list(TRANSITIONS.values()) + list(GROUP_TRANSITIONS.values()):
+        for line in options:
+            assert line not in {
+                'Here is where the session landed.',
+                'One change follows from the largest gap.',
+                'That is the shape of the session.',
+            }
 
 
 def test_fill_metric_ignores_the_footer(tmp_path):

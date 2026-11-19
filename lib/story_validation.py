@@ -145,6 +145,16 @@ def _quote_in_turn(quote: str, raw: str) -> str | None:
     return _shown(squashed, squashed_quote)
 
 
+def _same_clock(given: str, shown: str) -> bool:
+    """108:43 and 1:48:43 are the same moment."""
+    try:
+        from lib.story_evidence import format_clock_seconds
+
+        return format_clock_seconds(clock_to_ms(given) // 1000) == shown
+    except OutputParserException:
+        return False
+
+
 def own_quote(text: str, timestamp: str, transcript: dict | None, label: str) -> str:
     """Accept a quote only when it is this speaker's line, in that turn's own words and clock."""
     from lib.story_evidence import clock
@@ -159,7 +169,8 @@ def own_quote(text: str, timestamp: str, transcript: dict | None, label: str) ->
         shown = _quote_in_turn(cleaned, str(row.get('text') or ''))
         if shown is None:
             continue
-        if given == clock(row.get('start')):
+        shown_clock = clock(row.get('start'))
+        if given == shown_clock or _same_clock(given, shown_clock):
             return shown
     _fail(f'quote is not inside a turn by {label}: {cleaned}')
     return cleaned

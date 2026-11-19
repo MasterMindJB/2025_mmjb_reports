@@ -162,6 +162,39 @@ def test_neighboring_labels_and_the_wordmark_do_not_overlap(tmp_path: Path):
                 assert not _boxes_overlap(mark, legend)
 
 
+def test_fourteen_speaker_labels_stay_on_the_canvas(tmp_path: Path):
+    names = [
+        'Stephanie Barnes',
+        'Audience member 2',
+        'Audience member 3',
+        'Corey',
+        'Annie Green',
+        'Ric Viers',
+        'Leslie',
+        'Speaker H',
+        'Speaker I',
+        'Jordy ipecker',
+        'Dana Okonkwo',
+        'Fran Ibarra',
+        'Host',
+        'Speaker N',
+    ]
+    sequence = []
+    for index, name in enumerate(names):
+        sequence += [name, names[(index + 1) % len(names)]]
+    boxes: dict = {}
+    save_chord_diagram(sequence, tmp_path / 'fourteen.png', names=names, layout_boxes=boxes)
+    width, height = boxes['canvas']
+    assert len(boxes['labels']) == 14
+    for index, label in enumerate(boxes['labels']):
+        assert label[0] >= -1, names[index]
+        assert label[2] <= width + 1, names[index]
+        assert label[1] >= -1
+        assert label[3] <= height + 1
+        for other in boxes['labels'][index + 1:]:
+            assert not _boxes_overlap(label, other)
+
+
 def test_caption_when_nobody_follows_a_different_person():
     names, directed = directed_follows(['Ada', 'Ada'], names=['Ada', 'Bea'])
     assert chord_caption(names, directed) == 'No one spoke immediately after anyone else.'

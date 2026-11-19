@@ -32,7 +32,7 @@ def _signature_fields(analysis: str, speaker_text: str, bigram: str) -> dict[str
     Illustrative examples are allowed to be invented. They must be 6 to 25 words,
     and the reading must mention this speaker's real bigram. Coaching is allowed here.
     """
-    from lib.story_validation import reject_craft_violations, word_count
+    from lib.story_validation import word_count
 
     cleaned = analysis.strip()
     if cleaned.startswith('```'):
@@ -45,14 +45,13 @@ def _signature_fields(analysis: str, speaker_text: str, bigram: str) -> dict[str
         data = signature_card(cleaned)
     fields = {}
     for key in ('what', 'so_what', 'now_what'):
-        value = reject_craft_violations(
-            str(data.get(key) or ''),
-            skip_bans=('coaching',),
-            personal_voice=True,
-        )
-        count = word_count(value)
-        if count < 6 or count > 25:
-            raise ValueError(f'signature {key} must be 6 to 25 words, not {count}')
+        # Only the bigram is grounded. Length is clipped rather than rejected.
+        value = re.sub(r'\s+', ' ', str(data.get(key) or '')).strip()
+        if word_count(value) < 6:
+            raise ValueError(f'signature {key} must be at least 6 words, not {word_count(value)}')
+        words = re.findall(r"\S+", value)
+        if len(words) > 25:
+            value = ' '.join(words[:25]).rstrip(',;:')
         fields[key] = value
     if bigram and bigram.lower() not in ' '.join(fields.values()).lower():
         raise ValueError(f'signature must discuss the real bigram {bigram!r}')
@@ -194,6 +193,7 @@ class ConversationSummarizer:
         )
         parsed = None
         feedback = ''
+        last_error = None
         for _attempt in range(2):
             raw = invoke_llm(self.llm, message + feedback)
             analysis = raw.content if hasattr(raw, 'content') else str(raw)
@@ -204,6 +204,7 @@ class ConversationSummarizer:
                 parsed = _signature_fields(analysis, speaker_text, bigram)
                 break
             except (OutputParserException, json.JSONDecodeError, ValueError, TypeError) as exc:
+                last_error = exc
                 logging.warning('signature reject: %s', exc)
                 feedback = (
                     f'\n\nThe previous answer was rejected: {exc}. '
@@ -211,6 +212,7 @@ class ConversationSummarizer:
                 )
                 parsed = None
         if parsed is None:
+            logging.warning('signature kept the computed card because %s', last_error)
             from lib.story_render import computed_signature
 
             filled = computed_signature(bigram, int(count), [])

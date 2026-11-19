@@ -937,6 +937,7 @@ def _record_layout_boxes(figure, axis, sink: dict) -> None:
         )
         for boxes in grouped.values()
     ]
+    sink['canvas'] = (float(renderer.width), float(renderer.height))
     sink['wordmark'] = []
     sink['legend'] = []
     sink['captions'] = []
@@ -983,8 +984,11 @@ def save_chord_diagram(
     )
     axis.set_aspect('equal')
     axis.axis('off')
-    axis.set_xlim(-1.06, 1.06)
-    axis.set_ylim(-1.06, 1.06)
+    # Past eight people the names need margin. A wider view shrinks the circle
+    # on the canvas without changing ribbon geometry or colors.
+    view = 1.06 if count <= 8 else 1.72
+    axis.set_xlim(-view, view)
+    axis.set_ylim(-view, view)
     axis.set_facecolor('none')
     axis.set_clip_on(False)
     axis.set_zorder(4)

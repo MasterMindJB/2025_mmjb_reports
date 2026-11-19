@@ -10,13 +10,23 @@ import re
 from lib.names import display_name
 
 
+def format_clock_seconds(seconds: int) -> str:
+    """m:ss, or h:mm:ss once the clock reaches 60 minutes."""
+    seconds = max(0, int(seconds))
+    minutes, secs = divmod(seconds, 60)
+    if minutes >= 60:
+        hours, minutes = divmod(minutes, 60)
+        return f'{hours}:{minutes:02d}:{secs:02d}'
+    return f'{minutes}:{secs:02d}'
+
+
 def clock(milliseconds) -> str:
     """Nearest whole second, so a turn at 37.6s is shown as 0:38, not 0:37."""
     try:
         seconds = max(0, int(round(float(milliseconds) / 1000.0)))
     except (TypeError, ValueError):
         return '0:00'
-    return f'{seconds // 60}:{seconds % 60:02d}'
+    return format_clock_seconds(seconds)
 
 
 def _rows(transcript: dict | None) -> list[dict]:

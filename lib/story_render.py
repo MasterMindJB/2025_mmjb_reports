@@ -55,20 +55,20 @@ TRANSITIONS = {
         'The pattern in the wording is next.',
         'Here is the repeated move.',
     ),
-    'after_drama': (
-        'Here is where the session landed.',
+        'after_drama': (
+        'The last turns show where the exchange settled.',
         'The outcome follows from those turns.',
     ),
     'after_resolution': (
         'The single move with the most effect is next.',
-        'One change follows from the largest gap.',
+        'The largest gap points to the next move.',
     ),
 }
 
 GROUP_TRANSITIONS = {
     'after_character': (
         'The numbers describe the room. The aim comes next.',
-        'That is the shape of the session.',
+        'Those rates describe this session.',
     ),
     'after_goal': (
         'Here is what made the exchange hard.',
@@ -84,7 +84,7 @@ GROUP_TRANSITIONS = {
     ),
     'after_resolution': (
         'The move for the whole room is next.',
-        'One change follows from the largest gap.',
+        'The largest gap points to the next move.',
     ),
 }
 
@@ -122,6 +122,48 @@ def computed_signature(bigram: str, count: int, quotes: list[str]) -> dict[str, 
     }
 
 
+def _gets_you(phrase: str) -> str:
+    """A noun phrase after 'gets you'. A bare verb is not a noun phrase."""
+    words = (phrase or '').strip().rstrip('.').split()
+    if not words:
+        raise OutputParserException('gift must be a noun phrase')
+    first = words[0].lower().strip('.,')
+    if first in {'a', 'an', 'the', 'your', 'one', 'some', 'this', 'that'} or len(words) >= 2:
+        return f'It gets you {" ".join(words)}.'
+    raise OutputParserException('gift must be a noun phrase such as "a clear start"')
+
+
+def _strip_stated_by(text: str) -> str:
+    return re.sub(r'\s*,?\s*as stated by\s+"[^"]*"', '', text or '', flags=re.I).strip()
+
+
+def _cap_sentence(text: str) -> str:
+    text = (text or '').strip()
+    if text[:1].islower():
+        return text[0].upper() + text[1:]
+    return text
+
+
+def substantive_line(text: str) -> bool:
+    """A closing line needs six words and must not be a question opener."""
+    words = re.findall(r"[A-Za-z']+", text or '')
+    if len(words) < 6:
+        return False
+    if (text or '').strip().endswith('?'):
+        return False
+    if words[0].lower() in {'what', 'why', 'how', 'when', 'where', 'who', 'which'}:
+        return False
+    return True
+
+
+def last_substantive_utterance(rows: list) -> dict | None:
+    for row in reversed(rows or []):
+        text = str(row.get('text') or '').strip()
+        if substantive_line(text):
+            return row
+    return None
+
+
 def clip_clause(text: str, limit: int = 25) -> str:
     """One sentence or clause, capped so a whole turn is not pasted."""
     sentence = re.split(r'(?<=[.!?])\s+', (text or '').strip())[0]
@@ -141,6 +183,7 @@ def ranked_kinds(
     session_turn_words: float = 0,
     early: int | None = None,
     late: int | None = None,
+    facilitator: bool = False,
 ) -> list[str]:
     """Gaps this person does not already meet, largest first.
 
@@ -152,7 +195,7 @@ def ranked_kinds(
     if int(questions) < 1 or int(questions) < int(question_average):
         gap = max(1, int(question_average) - int(questions))
         options.append(('questions', gap))
-    if int(share) > average + 10:
+    if not facilitator and int(share) > average + 10:
         options.append(('talk_high', int(share) - average))
     elif int(share) < average - 5:
         options.append(('talk_low', average - int(share)))
@@ -181,7 +224,7 @@ def improve_toward(current: int, norm: int, *, increase: bool) -> int:
     return norm if norm < current else max(0, current - 1)
 
 
-def _habit(kind: str, *, share, speaker_count, questions, question_average, turn_words, session_turn_words, early, late):
+def _habit(kind: str, *, share, speaker_count, questions, question_average, turn_words, session_turn_words, early, late, facilitator=False):
     average = room_average(speaker_count)
     if kind == 'questions':
         target = improve_toward(int(questions), max(int(question_average), int(questions) + 1), increase=True)
@@ -207,8 +250,11 @@ def _habit(kind: str, *, share, speaker_count, questions, question_average, turn
     if kind == 'thirds':
         start = int(early or 0)
         end = int(late or 0)
-        increase = end < start
-        target = improve_toward(end, start, increase=increase)
+        balance = max(1, int(round((start + end) / 2)))
+        increase = end < balance
+        target = improve_toward(end, balance, increase=increase)
+        if target < 1:
+            target = 1
         sentence = f'Wait through the opening before the long story. Target: {target}% in the last third.'
         why = f'Talk time moves from {start}% in the first third to {end}% in the last.'
         return sentence, why
@@ -218,6 +264,10 @@ def _habit(kind: str, *, share, speaker_count, questions, question_average, turn
         why = f'You are at {int(share)}% talk time, above an even share of {average}%.'
         return sentence, why
     if kind == 'beat':
+        if facilitator:
+            sentence = 'Pause after a point and hand the turn on. Target: 1 handoff before the next stretch.'
+            why = 'You are running the room, so the useful change is how you hand the turn on.'
+            return sentence, why
         sentence = 'Pause once before you take the next turn. Target: 1 pause before the second point.'
         why = f'You are at {int(share)}% talk time, near an even share of {room_average(speaker_count)}%.'
         return sentence, why
@@ -237,6 +287,7 @@ def one_thing_from_gap(
     session_turn_words: float = 0,
     early: int | None = None,
     late: int | None = None,
+    facilitator: bool = False,
 ) -> tuple[str, str]:
     kind = ranked_kinds(
         share=share,
@@ -247,6 +298,7 @@ def one_thing_from_gap(
         session_turn_words=session_turn_words,
         early=early,
         late=late,
+        facilitator=facilitator,
     )[0][0]
     return _habit(
         kind,
@@ -258,7 +310,26 @@ def one_thing_from_gap(
         session_turn_words=session_turn_words,
         early=early,
         late=late,
+        facilitator=facilitator,
     )
+
+
+def _runs_agenda(person: dict, people: list[dict]) -> bool:
+    """A facilitator, moderator, or host is not scored against an even share.
+
+    In a large room the unique top talker is the person running the agenda.
+    """
+    role = str(person.get('role') or '').lower()
+    if role in {'facilitator', 'moderator', 'host'}:
+        return True
+    count = int(person.get('speaker_count') or 0)
+    if count < 8 or not people:
+        return False
+    mine = int(person.get('share') or 0)
+    top = max(int(other.get('share') or 0) for other in people)
+    if mine != top or mine <= room_average(count) + 10:
+        return False
+    return sum(int(other.get('share') or 0) == top for other in people) == 1
 
 
 def unique_habits(people: list[dict]) -> dict[str, tuple[str, str]]:
@@ -274,6 +345,7 @@ def unique_habits(people: list[dict]) -> dict[str, tuple[str, str]]:
             session_turn_words=person.get('session_turn_words') or 0,
             early=person.get('early'),
             late=person.get('late'),
+            facilitator=_runs_agenda(person, people),
         )
 
     used: set[str] = set()
@@ -293,6 +365,7 @@ def unique_habits(people: list[dict]) -> dict[str, tuple[str, str]]:
                 'session_turn_words': person.get('session_turn_words') or 0,
                 'early': person.get('early'),
                 'late': person.get('late'),
+                'facilitator': _runs_agenda(person, people),
             })
             if sentence not in used:
                 used.add(sentence)
@@ -310,6 +383,7 @@ def unique_habits(people: list[dict]) -> dict[str, tuple[str, str]]:
                 session_turn_words=person.get('session_turn_words') or 0,
                 early=person.get('early'),
                 late=person.get('late'),
+                facilitator=_runs_agenda(person, people),
             )
             sentence = f'{sentence} You are at {int(person["share"])}% now.'
             used.add(sentence)
@@ -705,7 +779,9 @@ def render_drama(data: dict, transcript, label: str, corpus: str, forbidden: lis
             sentences.append(f'At {extra_when} you said "{extra_said}".')
         sentences.append(pattern_text if pattern_text.endswith('.') else pattern_text + '.')
         sentences.append(f"Here's what's interesting: {twist.rstrip('.')}.")
-        sentences.append(f"It's doing a job for you. It buys {gift.rstrip('.')}. It also costs {cost.rstrip('.')}.")
+        sentences.append(
+            f"It's doing a job for you. {_gets_you(gift)} It also costs {cost.rstrip('.')}."
+        )
         mights += len(re.findall(r'\bmight\b', ' '.join(sentences).lower()))
     exception = data.get('exception') if isinstance(data.get('exception'), dict) else None
     if not exception:
@@ -790,24 +866,23 @@ def render_group_section(section: str, data: dict, *, transcript, facts: dict, c
             raise OutputParserException('group character needs at least one rate fact')
         return {'headline': headline, 'character': group_character_copy(facts)}
     if section in ('goal', 'resolution'):
-        claim = _prose(str(data.get('claim') or ''), corpus, section)
-        closing = ''
-        rows = (transcript or {}).get('utterances') or []
-        for row in reversed(rows):
-            text = str(row.get('text') or '').strip()
-            if text:
-                closing = clip_clause(text, 12)
-                break
+        claim = _prose(_strip_stated_by(str(data.get('claim') or '')), corpus, section)
+        closing_row = last_substantive_utterance((transcript or {}).get('utterances') or [])
+        closing = clip_clause(str(closing_row.get('text') or ''), 18) if closing_row else ''
         if section == 'goal':
-            return {'goal': f'The turns keep testing one aim: {claim.rstrip(".")}.'}
+            if re.search(r"\b[A-Z][a-z]+(?:'s|’s)\b", claim) or re.search(r'\bas stated by\b', claim, re.I):
+                raise OutputParserException('group goal must be the room\'s topic, not one person\'s theme')
+            return {'goal': f'The turns keep returning to {claim.rstrip(".")}.'}
         closing_fact = facts.get('_closing') or {}
         speaker = closing_fact.get('name') or 'the last voice'
-        spoken = closing_fact.get('text') or closing
+        spoken = _strip_stated_by(closing_fact.get('text') or closing)
+        claim = _strip_stated_by(claim)
+        follow = _cap_sentence(claim.rstrip('.'))
         if spoken:
             landed = f'The meeting closed on {speaker}, who said "{spoken}". '
         else:
             landed = ''
-        return {'resolution': f'{landed}{claim.rstrip(".")}.'}
+        return {'resolution': f'{landed}{follow}.'}
     if section == 'challenge':
         claim = _prose(str(data.get('claim') or ''), corpus, 'claim')
         key = str(data.get('fact_key') or 'interaction')

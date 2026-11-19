@@ -163,8 +163,9 @@ def _talk_share(story: dict, folder: Path) -> Path:
 
 
 def _clock_label(seconds: float) -> str:
-    whole = max(0, int(seconds))
-    return f'{whole // 60}:{whole % 60:02d}'
+    from lib.story_evidence import format_clock_seconds
+
+    return format_clock_seconds(int(seconds))
 
 
 def _timeline(story: dict, folder: Path) -> Path | None:

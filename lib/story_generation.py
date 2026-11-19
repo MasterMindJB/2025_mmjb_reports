@@ -366,14 +366,14 @@ def generate_group_draft(
         portrait['low_share'] = min(item[1] for item in shares)
         portrait['high_share'] = max(item[1] for item in shares)
     facts['_portrait'] = portrait
-    for row in reversed(transcript.get('utterances') or []):
-        text = str(row.get('text') or '').strip()
-        if text:
-            facts['_closing'] = {
-                'name': name_by_label.get(row.get('speaker')) or 'the last voice',
-                'text': clip_clause(text, 12),
-            }
-            break
+    from lib.story_render import last_substantive_utterance
+
+    closing_row = last_substantive_utterance(transcript.get('utterances') or [])
+    if closing_row:
+        facts['_closing'] = {
+            'name': name_by_label.get(closing_row.get('speaker')) or 'the last voice',
+            'text': clip_clause(str(closing_row.get('text') or ''), 18),
+        }
     evidence = facts_prompt(
         facts,
         [],
@@ -437,7 +437,7 @@ def generate_report_stories(
             progress_dir=progress_dir,
         )
         personal[label] = draft
-        profiles.append({'label': label, **stats})
+        profiles.append({'label': label, 'role': speaker_map[label].get('role'), **stats})
         fallbacks.extend(f'{label}:{section}' for section in draft.get('fallback_sections') or [])
     for label, (sentence, why) in unique_habits(profiles).items():
         personal[label]['one_thing'] = sentence

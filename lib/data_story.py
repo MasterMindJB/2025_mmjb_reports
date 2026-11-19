@@ -12,11 +12,9 @@ from lib.names import display_name
 
 
 def _clock(milliseconds) -> str:
-    try:
-        seconds = max(0, int(float(milliseconds) / 1000))
-    except (TypeError, ValueError):
-        return '0:00'
-    return f'{seconds // 60}:{seconds % 60:02d}'
+    from lib.story_evidence import clock
+
+    return clock(milliseconds)
 
 
 def _lines(transcript: dict | None, label: str) -> list[dict]:
@@ -281,7 +279,7 @@ def personal_story(
         if thin:
             drama = (
                 f'At {when} you said "{said}". '
-                f'You held {share_pct}% of the talk time across {turn_count} turns, '
+                f'You held {share_pct}% of the talk time across {turn_count} {"turn" if turn_count == 1 else "turns"}, '
                 f'so the pattern is when you chose to enter, not a long story.'
             )
         else:
@@ -301,7 +299,7 @@ def personal_story(
     )
     if thin:
         resolution = (
-            f'You used {turn_count} turns and left the longer story to the room. '
+            f'You used {turn_count} {"turn" if turn_count == 1 else "turns"} and left the longer story to the room. '
             'One extra clause the next time you enter would give that short line a point.'
         )
     else:
@@ -456,15 +454,14 @@ def group_story(
         'The turns stayed inside a few voices, so a point could end before someone new answered.'
     )
     drama = cast or 'Who talks to whom, and who nobody answered.'
+    from lib.story_render import last_substantive_utterance
+
     last_name = 'the last voice'
     last_line = ''
-    for utterance in reversed((transcript or {}).get('utterances') or []):
-        text = str(utterance.get('text') or '').strip()
-        if text:
-            last_line = clip_clause(text, 12)
-            label = utterance.get('speaker')
-            last_name = (names or {}).get(label) or last_name
-            break
+    closing_row = last_substantive_utterance((transcript or {}).get('utterances') or [])
+    if closing_row:
+        last_line = clip_clause(str(closing_row.get('text') or ''), 18)
+        last_name = (names or {}).get(closing_row.get('speaker')) or last_name
     if last_line:
         resolution = (
             f'The meeting closed on {last_name}, who said "{last_line}". '
