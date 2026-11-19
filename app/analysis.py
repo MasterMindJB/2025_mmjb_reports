@@ -50,13 +50,11 @@ def build_gemini_llm(settings=None):
 
 
 def apply_speaker_roles(speaker_map: dict, roles_by_label: dict[str, str] | None, participant_labels: set[str]) -> dict:
-    """The stock pipeline has to see facilitator and host before One Thing is chosen."""
+    """Roles come from the confirmed map. A panelist is never inferred to be the facilitator."""
+    del participant_labels
     for label, info in speaker_map.items():
-        role = (roles_by_label or {}).get(label)
-        if not role and label not in participant_labels:
-            role = 'facilitator'
-        if role:
-            info['role'] = role
+        role = (roles_by_label or {}).get(label) or info.get('role') or 'participant'
+        info['role'] = role
     return speaker_map
 
 

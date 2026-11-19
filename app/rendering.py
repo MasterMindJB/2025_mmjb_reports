@@ -44,9 +44,7 @@ class PdfReportRenderer:
 
         roles_by_name = {}
         for label, info in bundle.speaker_map.items():
-            role = (roles_by_label or {}).get(label, 'participant')
-            if label not in participant_labels and role == 'participant':
-                role = 'facilitator'
+            role = (roles_by_label or {}).get(label) or info.get('role') or 'participant'
             roles_by_name[info['name']] = role
 
         with _PLOT_LOCK:

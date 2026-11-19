@@ -691,6 +691,26 @@ def test_signature_ban_list_rejects_leverage_and_cache_notices_a_gap():
     assert _signatures_present({'A': {'personal_signature_phrase': {'bigram': 'we should'}}})
 
 
+def test_panelists_are_not_inferred_to_be_facilitators():
+    from app.analysis import apply_speaker_roles
+
+    speaker_map = {
+        'A': {'name': 'Annie'},
+        'B': {'name': 'Eden'},
+        'C': {'name': 'Stephanie'},
+        'D': {'name': 'Jrick'},
+        'H': {'name': 'Host'},
+    }
+    roles = {
+        'A': 'facilitator', 'B': 'participant', 'C': 'participant',
+        'D': 'participant', 'H': 'host',
+    }
+    apply_speaker_roles(speaker_map, roles, {'B', 'C', 'D'})
+    assert speaker_map['A']['role'] == 'facilitator'
+    assert speaker_map['H']['role'] == 'host'
+    assert [speaker_map[label]['role'] for label in ('B', 'C', 'D')] == ['participant'] * 3
+
+
 def test_stock_pipeline_puts_the_facilitator_role_on_the_speaker_map():
     from app.analysis import apply_speaker_roles
 
