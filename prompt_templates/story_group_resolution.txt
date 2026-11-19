@@ -1,0 +1,11 @@
+{craft}
+
+Section: resolution
+Audience: group
+Write the RESOLUTION for the room: where the conversation landed.
+Do not invent a number. Do not include anyone's personal tic.
+Return JSON with keys body, transition.
+transition is one unused Resolution>One Thing sentence.
+
+Evidence:
+{evidence}

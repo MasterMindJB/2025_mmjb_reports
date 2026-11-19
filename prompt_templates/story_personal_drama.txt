@@ -1,0 +1,13 @@
+{craft}
+
+Section: drama
+Audience: personal
+Write the DRAMA in this order: mirror, pattern, twist, cost and gift, then the exception.
+Use their exact words from the evidence, with the timestamp. Max one might.
+Frame any signature phrase as 'This phrase often reads as...', after their quote, with what the next speaker did. Do not invent a study. Do not name another participant.
+The sting is in the middle. End on the moment they did the better thing.
+Return JSON with keys body, transition.
+transition is one unused Drama>Resolution sentence.
+
+Evidence:
+{evidence}

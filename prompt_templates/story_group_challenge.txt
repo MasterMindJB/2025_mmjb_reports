@@ -1,0 +1,10 @@
+{craft}
+
+Section: challenge
+Audience: group
+Write the CHALLENGE for the room. One measured rate from the evidence.
+Return JSON with keys body, transition.
+transition is one unused Challenge>Drama sentence.
+
+Evidence:
+{evidence}

@@ -52,6 +52,7 @@ class PdfReportRenderer:
         with _PLOT_LOCK:
             charts = render_charts(transcript, bundle.tables, reports_dir, roles=roles_by_name)
             group_path = reports_dir / 'group.pdf'
+            stories = getattr(bundle, 'stories', None) or {}
             create_report_group(
                 images_barplot=charts.barplots,
                 image_convo_sentiment_evo=charts.convo_sentiment,
@@ -72,6 +73,7 @@ class PdfReportRenderer:
                 speaker_map=bundle.speaker_map,
                 link_feedback=feedback_url or None,
                 include_individual_sections=False,
+                story_draft=stories.get('group'),
             )
             amase_values, amase_explanations = framework_frames(
                 participant_analysis, 'personal_framework_amase'
@@ -84,6 +86,7 @@ class PdfReportRenderer:
             )
             create_report_personal(
                 transcript=transcript,
+                story_drafts=stories.get('personal'),
                 path_report_assets=self.assets,
                 path_reports_dir=reports_dir,
                 df_nice_stats_data=bundle.tables.df_nice_stats_data,

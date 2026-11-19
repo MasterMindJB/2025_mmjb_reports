@@ -1,0 +1,13 @@
+{craft}
+
+Section: character
+Audience: personal
+Write the CHARACTER headline and one short paragraph.
+Headline: 12 words or fewer. Describe the move, not a type.
+Then stop. The three numbers are already computed in the evidence. Do not add a fourth figure.
+Do not name another participant. Do not invent a quote, a count, or a rate.
+Return JSON with keys headline, body, transition.
+transition is one unused Character>Goal sentence.
+
+Evidence:
+{evidence}

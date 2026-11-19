@@ -41,23 +41,36 @@ def _heading(pdf, text: str) -> None:
     pdf.cell(w=0, h=8, text=text, ln=True)
 
 
-def _body(pdf, text: str) -> None:
+def _body(pdf, text: str, size: int = 11) -> None:
+    if not text:
+        return
     pdf.set_x(pdf.l_margin)
-    pdf.set_font('Poppins', '', 11)
+    pdf.set_font('Poppins', '', size)
     pdf.set_text_color(20, 33, 74)
-    pdf.multi_cell(w=0, text=text or '')
+    pdf.multi_cell(w=0, text=text)
     pdf.ln(1)
+
+
+def _transition(pdf, text: str) -> None:
+    if not text:
+        return
+    pdf.set_x(pdf.l_margin)
+    pdf.set_font('Poppins', 'i', 11)
+    pdf.set_text_color(85, 98, 138)
+    pdf.multi_cell(w=0, text=text)
+    pdf.ln(1)
+    pdf.set_text_color(20, 33, 74)
 
 
 def _callout(pdf, title: str, text: str) -> None:
     _room(pdf, 40)
     pdf.set_x(pdf.l_margin)
     pdf.set_fill_color(244, 248, 252)
-    pdf.set_font('Poppins', 'b', 12)
+    pdf.set_font('Poppins', 'b', 16)
     pdf.set_text_color(28, 44, 91)
-    pdf.multi_cell(w=0, h=6, text=title, fill=True)
+    pdf.multi_cell(w=0, h=8, text=title, fill=True)
     pdf.set_x(pdf.l_margin)
-    pdf.set_font('Poppins', '', 11)
+    pdf.set_font('Poppins', '', 12)
     pdf.set_text_color(20, 33, 74)
     pdf.multi_cell(w=0, text=text, fill=True)
     pdf.ln(2)
@@ -143,15 +156,15 @@ def write_personal_report(pdf, story: dict, chart_dir: Path) -> None:
     pdf.multi_cell(w=0, text=story['headline'])
     pdf.ln(1)
     _heading(pdf, 'Character')
-    _body(
-        pdf,
-        f"Share of talk {story['share']:.0f}%. Turns {story['turns']}. "
-        f"Questions {story['questions']}. Pace {story['wpm']:.0f} words per minute.",
-    )
+    for line in story.get('numbers') or []:
+        _body(pdf, line)
+    _body(pdf, story.get('character_body') or '')
     _image(pdf, _talk_share(story, chart_dir))
     _callout(pdf, 'One thing', story['one_thing'])
+    _transition(pdf, (story.get('transitions') or {}).get('after_character'))
     _heading(pdf, 'Goal')
     _body(pdf, story['goal'])
+    _transition(pdf, (story.get('transitions') or {}).get('after_goal'))
     _heading(pdf, 'Challenge')
     _body(pdf, story['challenge'])
     for item in story.get('contributions') or []:
@@ -160,6 +173,7 @@ def write_personal_report(pdf, story: dict, chart_dir: Path) -> None:
         if quote or tag:
             _body(pdf, f'{tag} "{quote}"'.strip())
     _image(pdf, _timeline(story, chart_dir))
+    _transition(pdf, (story.get('transitions') or {}).get('after_challenge'))
     _heading(pdf, 'Drama')
     _body(pdf, story['drama'])
     card = story['signature']
@@ -174,14 +188,16 @@ def write_personal_report(pdf, story: dict, chart_dir: Path) -> None:
     for label, key in (('What?', 'what'), ('So, what?', 'so_what'), ('Now, what?', 'now_what')):
         if card.get(key):
             _body(pdf, f'{label} {card[key]}')
+    _transition(pdf, (story.get('transitions') or {}).get('after_drama'))
     _heading(pdf, 'Resolution')
     _body(pdf, story['resolution'])
+    _transition(pdf, (story.get('transitions') or {}).get('after_resolution'))
     _heading(pdf, 'One thing')
     _callout(pdf, story['one_thing'], story['why'])
     if story.get('actions'):
-        _body(pdf, 'Supporting moves, all about the next conversation:')
+        _body(pdf, 'Supporting moves for the next conversation:', size=9)
         for item in story['actions']:
-            _body(pdf, f"{item.get('title') or 'Try this'}. {item.get('action') or ''}".strip())
+            _body(pdf, f"{item.get('title') or 'Next'}. {item.get('action') or ''}".strip(), size=9)
     _heading(pdf, 'Appendix: style lenses')
     _body(pdf, 'These lenses stay in the file for now. Each line is only the top result.')
     for name, line in story['appendix'].items():
@@ -196,11 +212,15 @@ def write_group_story(pdf, story: dict, chord_path, chord_pairs) -> None:
     pdf.multi_cell(w=0, text=story['headline'])
     _heading(pdf, 'Character')
     _body(pdf, story['character'])
+    _transition(pdf, (story.get('transitions') or {}).get('after_character'))
     _heading(pdf, 'Goal')
     _body(pdf, story['goal'])
+    _transition(pdf, (story.get('transitions') or {}).get('after_goal'))
     _heading(pdf, 'Challenge')
     _body(pdf, story['challenge'])
+    _transition(pdf, (story.get('transitions') or {}).get('after_challenge'))
     _heading(pdf, 'Drama')
+    _body(pdf, story.get('drama') or '')
     _body(
         pdf,
         'Who spoke right after whom. A wider ribbon means those two followed each other more often. '
@@ -213,7 +233,9 @@ def write_group_story(pdf, story: dict, chord_path, chord_pairs) -> None:
     from lib.pdf_functions import _add_direction_table
 
     _add_direction_table(pdf, chord_pairs or [])
+    _transition(pdf, (story.get('transitions') or {}).get('after_drama'))
     _heading(pdf, 'Resolution')
     _body(pdf, story['resolution'])
+    _transition(pdf, (story.get('transitions') or {}).get('after_resolution'))
     _heading(pdf, 'One thing')
     _callout(pdf, story['one_thing'], story['why'])

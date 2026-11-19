@@ -12,6 +12,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from app.interfaces import AnalysisBundle
 from lib.llm_functions import ConversationSummarizer
 from lib.report_stats import compute_session_tables
+from lib.story_generation import generate_report_stories
 
 PROMPT_DIR = Path(__file__).resolve().parents[1] / 'prompt_templates'
 LLM_COLUMNS = [
@@ -111,4 +112,13 @@ class GeminiAnalysis:
             speakers_expected=len(participant_names),
             force_regen=True,
         )
-        return AnalysisBundle(speaker_map, summaries, speaker_analysis, tables)
+        stories = generate_report_stories(
+            llm,
+            transcript=transcript,
+            speaker_map=speaker_map,
+            participant_labels=participant_labels,
+            participation=tables.gini_reverse_interventions,
+            interaction=tables.gini_reverse_interactions,
+            word_interaction=tables.gini_reverse_interactions_both_wrd_cnt,
+        )
+        return AnalysisBundle(speaker_map, summaries, speaker_analysis, tables, stories)

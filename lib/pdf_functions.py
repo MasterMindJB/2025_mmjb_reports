@@ -490,6 +490,7 @@ def create_report_group(
     include_individual_sections: bool = False,
     path_image_matrix: Path | None = None,
     chord_pairs: list | None = None,
+    story_draft: dict | None = None,
 ):
     logging.info('Creating PDF report.')
 
@@ -501,11 +502,17 @@ def create_report_group(
         link_feedback=link_feedback,
     )
 
+    cast = 'Who talks to whom, and who nobody answered.'
+    if chord_pairs:
+        left, right, forward, back = chord_pairs[0][:4]
+        cast = f'Who talks to whom: {left} and {right} lead with {int(forward) + int(back)}.'
     story = group_story(
         summaries=summaries,
         participation=gini_reverse_interventions,
         interaction=gini_reverse_interactions,
         word_interaction=gini_reverse_interactions_both_wrd_cnt,
+        cast=cast,
+        draft=story_draft,
     )
     write_group_story(pdf, story, path_image_chord, chord_pairs)
     if pdf.link_feedback:
@@ -531,6 +538,7 @@ def create_report_personal(
     df_framework_doshas_explanation: pd.DataFrame,
     file_name_prefix: Optional[str] = None,
     transcript: dict | None = None,
+    story_drafts: dict | None = None,
 ):
     logging.info('Creating personal PDF reports for each speaker.')
 
@@ -562,6 +570,7 @@ def create_report_personal(
                 'dosha_values': df_framework_doshas_values,
                 'dosha_notes': df_framework_doshas_explanation,
             },
+            draft=(story_drafts or {}).get(speaker),
         )
         pdf = MM_PDF(
             path_report_assets=path_report_assets,

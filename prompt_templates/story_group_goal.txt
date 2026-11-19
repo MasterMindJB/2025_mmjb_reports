@@ -1,0 +1,11 @@
+{craft}
+
+Section: goal
+Audience: group
+Write the GOAL the room was working toward, inferred from the session, not from a written brief.
+Do not invent a quote or a number.
+Return JSON with keys body, transition.
+transition is one unused Goal>Challenge sentence.
+
+Evidence:
+{evidence}

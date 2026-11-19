@@ -1,0 +1,11 @@
+{craft}
+
+Section: one_thing
+Audience: personal
+Write the ONE THING in 25 words or fewer.
+Start with one allowed verb. Include the trigger moment and the target number from the evidence.
+No also. No second habit. The why line uses their number and the target.
+Return JSON with keys one_thing, why.
+
+Evidence:
+{evidence}

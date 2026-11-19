@@ -1,0 +1,12 @@
+{craft}
+
+Section: goal
+Audience: personal
+Write the GOAL in second person. Say it is inferred from what they said.
+One checkable quote with its timestamp is enough. No new number beyond the evidence.
+Do not name another participant.
+Return JSON with keys body, transition.
+transition is one unused Goal>Challenge sentence.
+
+Evidence:
+{evidence}

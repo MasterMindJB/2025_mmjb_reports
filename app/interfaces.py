@@ -17,11 +17,19 @@ class TranscriptionProvider(Protocol):
 
 
 class AnalysisBundle:
-    def __init__(self, speaker_map: dict, summaries: dict, speaker_analysis: dict, tables: SessionTables):
+    def __init__(
+        self,
+        speaker_map: dict,
+        summaries: dict,
+        speaker_analysis: dict,
+        tables: SessionTables,
+        stories: dict | None = None,
+    ):
         self.speaker_map = speaker_map
         self.summaries = summaries
         self.speaker_analysis = speaker_analysis
         self.tables = tables
+        self.stories = stories or {}
 
 
 class AnalysisProvider(Protocol):

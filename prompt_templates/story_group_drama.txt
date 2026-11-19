@@ -1,0 +1,11 @@
+{craft}
+
+Section: drama
+Audience: group
+Write one line that names the pattern: who talks to whom, and who nobody answered.
+Use only the cast line in the evidence. The chart is shown under your line. Do not invent a count.
+Return JSON with keys body, transition.
+transition is one unused Drama>Resolution sentence.
+
+Evidence:
+{evidence}

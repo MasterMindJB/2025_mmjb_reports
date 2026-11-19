@@ -8,9 +8,7 @@ from __future__ import annotations
 
 import re
 
-from lib.names import display_name, short_name
-
-HEDGES = ('maybe', 'might', 'i think', 'kind of', 'sort of', 'perhaps', 'just')
+from lib.names import display_name
 
 
 def _clock(milliseconds) -> str:
@@ -121,23 +119,11 @@ def signature_card(analysis: str) -> dict[str, str]:
     return parts
 
 
-def _headline(name: str, share: float, questions: int, role: str) -> str:
-    who = short_name(name)
-    question_word = 'question' if int(questions) == 1 else 'questions'
-    return (
-        f'{who} was the room\'s {role}: {share:.0f}% of the words, '
-        f'{int(questions)} {question_word}.'
-    )
-
-
-def _role_label(share: float, questions: int, turns: int) -> str:
-    if questions >= 2 and share < 40:
-        return 'questioner'
-    if share >= 35:
-        return 'storyteller'
-    if turns <= 1:
-        return 'listener'
-    return 'contributor'
+def _append_note(text: str, note: str) -> str:
+    note = (note or '').strip()
+    if not note or note in (text or ''):
+        return text
+    return f'{text} {note}'.strip()
 
 
 def personal_story(
@@ -148,6 +134,7 @@ def personal_story(
     transcript: dict | None,
     stats_frame,
     framework: dict,
+    draft: dict | None = None,
 ) -> dict:
     name = display_name(info.get('name') or label)
     lines = _lines(transcript, label)
@@ -166,66 +153,111 @@ def personal_story(
         questions = sum(str(row.get('text') or '').count('?') for row in lines)
     turns = int(_stat(stats_frame, name, 'Total Interactions', len(lines)))
     wpm = float(_stat(stats_frame, name, 'Words Per Minute (WPM)', 0))
-    role = _role_label(share, questions, turns)
-    joined = ' '.join(str(row.get('text') or '') for row in lines)
-    lowered = joined.lower()
-    i_count = len(re.findall(r'\bi\b', lowered))
-    we_count = len(re.findall(r'\bwe\b', lowered))
-    hedge_count = sum(lowered.count(hedge) for hedge in HEDGES)
+    from lib.story_evidence import before_after, halfway_target, quote_events
+
+    events = quote_events(transcript, label)
+    session_turns = len((transcript or {}).get('utterances') or []) or int(turns)
+    question_values = []
+    if stats_frame is not None and 'Questions Asked' in getattr(stats_frame, 'columns', []):
+        for row_name in stats_frame.index:
+            if row_name == 'Average':
+                continue
+            question_values.append(int(float(stats_frame.loc[row_name, 'Questions Asked'] or 0)))
+    session_question_average = (
+        int(round(sum(question_values) / len(question_values))) if question_values else int(questions)
+    )
+    rest = max(0, 100 - int(round(share)))
+    target = halfway_target(int(questions), 3 if int(questions) < 3 else int(questions))
+    early_late = before_after(transcript, label)
+    first_event = events[0] if events else None
+    last_event = events[-1] if events else None
+    opening = first_event['text'] if first_event else ''
+    opening_time = first_event['time'] if first_event else '0:00'
+    next_text = first_event['next_text'] if first_event else ''
     signature = analysis.get('personal_signature_phrase') or {}
     bigram = str(signature.get('bigram') or '')
     phrase_quotes = quotes_for_phrase(lines, bigram)
-    evidence = phrase_quotes or quotes_for_phrase(lines, '', limit=2)
     cards = signature_card(str(signature.get('analysis') or ''))
-    first = lines[0]['text'] if lines else 'you did not take a turn'
-    last = lines[-1]['text'] if lines else ''
+    share_pct = int(round(share))
+    question_count = int(questions)
+    turn_count = int(turns)
+    numbers = [
+        (
+            f'{share_pct}% talk time: you held the floor most of the way, '
+            'more than the rest of the room.'
+        ),
+        (
+            f'{question_count} questions: you stated the point without asking, '
+            'against the session average.'
+        ),
+        f'{turn_count} turns: you entered the conversation {turn_count} times.',
+    ]
+    headline = 'Opened on the plan, then got specific.' if opening else 'Held the floor for most of the session.'
     goal = (
-        f'Inferred from what you said, not from a stated agenda: you opened with '
-        f'"{first}". That is the aim this read uses.'
+        f'Inferred from what you said: you came to move the plan forward. '
+        f'At {opening_time} you said "{opening}".'
+        if opening
+        else 'Inferred from what you said: the aim is the job in your first turn.'
     )
-    if questions < 2:
+    if early_late:
         challenge = (
-            f'You asked {int(questions)} questions across {int(turns)} turns. '
-            f'The room heard your point before it heard your curiosity. '
-            + (f'At {evidence[0]}.' if evidence else '')
+            f'{early_late}. You asked {question_count} questions, '
+            'so the point landed before a question did.'
         )
-        one_thing = (
-            'Ask one open question before your second story; target 3+ questions next session.'
-        )
-        why = 'A question hands the next turn to someone else and tests the story you are about to tell.'
     else:
-        challenge = (
-            f'You carried {share:.0f}% of the speaking time. Holding the floor that long '
-            f'makes it harder for a quieter person to enter. '
-            + (f'At {evidence[0]}.' if evidence else '')
+        challenge = f'You asked {question_count} questions across {turn_count} turns.'
+    if opening and next_text and last_event and last_event['time'] != opening_time:
+        drama = (
+            f'At {opening_time} you said "{opening}". '
+            'You might already know this about yourself: this phrase often reads as a bid to get moving. '
+            f'Here\'s what\'s interesting: the next speaker said "{next_text}". '
+            'It\'s doing a job for you. It buys a start. It also costs the question. '
+            f'The one moment it didn\'t happen was {last_event["time"]}, '
+            'and that\'s when you got specific.'
         )
-        one_thing = 'Stop after your point and leave one full silence; target under 25% of the words next session.'
-        why = 'The extra pause is where someone else can add the fact you do not have.'
-    we_line = (
-        f'You used "I" {i_count} times and "we" {we_count} times. '
-        f'Hedges such as "might" or "I think" showed up {hedge_count} times.'
-    )
-    drama = (
-        'You might already know this about yourself. '
-        + (
-            f'People who say "{bigram}" a lot tend to lean on that phrase while they find the next idea. '
-            if bigram
-            else 'No two-word phrase stood out often enough to call a signature. '
+    elif opening:
+        drama = (
+            f'At {opening_time} you said "{opening}". '
+            'This phrase often reads as a bid to get moving, right after your own words.'
         )
-        + we_line
-    )
+    else:
+        drama = 'No turn in this session gives a line to mirror.'
     resolution = (
-        f'By the end you had said: "{last}". '
-        f'{info.get("personal_summary") or ""} '
-        f'{analysis.get("personal_super_power") or ""}'
-    ).strip()
+        f'At {last_event["time"]} you said "{last_event["text"]}".'
+        if last_event
+        else 'The session ended without another turn from you.'
+    )
+    one_thing = f'Ask one question before you offer the plan. Target: {target} questions.'
+    why = f'You asked {question_count} questions, so {target} is the halfway step.'
+    transitions = {
+        'after_character': "That's who showed up. Here's what they came to do.",
+        'after_goal': "It didn't go to plan, and not only because of you.",
+        'after_challenge': 'Now the interesting part.',
+        'after_drama': 'So how did it end?',
+        'after_resolution': 'If you change one thing next time, make it this.',
+    }
+    draft = draft or {}
+    if draft.get('headline'):
+        headline = draft['headline']
+    character_body = draft.get('character_body') or ''
+    goal = draft.get('goal') or goal
+    challenge = draft.get('challenge') or challenge
+    drama = draft.get('drama') or drama
+    resolution = draft.get('resolution') or resolution
+    one_thing = draft.get('one_thing') or one_thing
+    why = draft.get('why') or why
+    transitions.update(draft.get('transitions') or {})
+    resolution = _append_note(resolution, str(info.get('personal_summary') or ''))
+    resolution = _append_note(resolution, str(analysis.get('personal_super_power') or ''))
     actions = list(info.get('personal_action_items') or [])[:3]
     return {
         'name': name,
-        'headline': _headline(name, share, questions, role),
+        'headline': headline,
+        'character_body': character_body,
+        'numbers': numbers,
         'share': share,
-        'turns': int(turns),
-        'questions': int(questions),
+        'turns': turn_count,
+        'questions': question_count,
         'wpm': wpm,
         'words': int(words),
         'goal': goal,
@@ -234,6 +266,7 @@ def personal_story(
         'resolution': resolution,
         'one_thing': one_thing,
         'why': why,
+        'transitions': transitions,
         'actions': actions,
         'signature': {
             'phrase': bigram,
@@ -253,29 +286,60 @@ def personal_story(
     }
 
 
-def group_story(*, summaries: dict, participation: float, interaction: float, word_interaction: float) -> dict:
-    kind = 'a serial panel, not a discussion' if interaction < 0.6 else 'a real exchange'
-    headline = (
-        f'This conversation was {kind}: the interaction score was {round(100 * interaction)}%.'
+def group_story(
+    *,
+    summaries: dict,
+    participation: float,
+    interaction: float,
+    word_interaction: float,
+    cast: str = '',
+    draft: dict | None = None,
+) -> dict:
+    from lib.story_evidence import halfway_target
+
+    interaction_pct = int(round(100 * interaction))
+    participation_pct = int(round(100 * participation))
+    word_pct = int(round(100 * word_interaction))
+    target = halfway_target(interaction_pct, 70 if interaction_pct < 70 else interaction_pct)
+    headline = f'A serial panel at {interaction_pct}% interaction.'
+    character = (
+        f'{participation_pct}% participation, against {word_pct}% of the words exchanged. '
+        + ('A few voices carried the airtime.' if participation < 0.75 else 'Airtime was fairly shared.')
     )
+    goal = 'Inferred from the session, not from a written brief.'
+    challenge = f'Interaction was {interaction_pct}%, so answers went to the center of the room.'
+    drama = cast or 'Who talks to whom, and who nobody answered.'
+    resolution = ''
+    one_thing = f'Ask one question back before the next decision. Target: {target}% interaction.'
+    why = f'Interaction was {interaction_pct}%, so {target}% is the halfway step.'
+    transitions = {
+        'after_character': "That's who showed up. Here's what they came to do.",
+        'after_goal': "It didn't go to plan, and not only because of you.",
+        'after_challenge': 'Now the interesting part.',
+        'after_drama': 'So how did it end?',
+        'after_resolution': 'If you change one thing next time, make it this.',
+    }
+    draft = draft or {}
+    if draft.get('headline'):
+        headline = draft['headline']
+    character = draft.get('character') or character
+    goal = draft.get('goal') or goal
+    challenge = draft.get('challenge') or challenge
+    drama = draft.get('drama') or drama
+    resolution = draft.get('resolution') or resolution
+    one_thing = draft.get('one_thing') or one_thing
+    why = draft.get('why') or why
+    transitions.update(draft.get('transitions') or {})
+    goal = _append_note(goal, str(summaries.get('conversation_summary_short') or ''))
+    resolution = _append_note(resolution, str(summaries.get('conversation_summary_long') or ''))
     return {
         'headline': headline,
-        'character': (
-            f'Participation was {round(100 * participation)}% and word interaction was '
-            f'{round(100 * word_interaction)}%. '
-            + ('A few voices carried the airtime.' if participation < 0.75 else 'Airtime was fairly shared.')
-        ),
-        'goal': (
-            'Inferred from the session summary, not from a written brief: '
-            + str(summaries.get('conversation_summary_short') or summaries.get('conversation_title') or '')
-        ),
-        'challenge': (
-            'The hard part is structural. When the interaction score is low, people answer the '
-            'facilitator instead of each other, so a point can land without being tested.'
-        ),
-        'resolution': str(summaries.get('conversation_summary_long') or ''),
-        'one_thing': (
-            'Before the next decision, ask the quietest person one open question and wait for the answer.'
-        ),
-        'why': 'A discussion is not a series of reports to the center of the room.',
+        'character': character,
+        'goal': goal,
+        'challenge': challenge,
+        'drama': drama,
+        'resolution': resolution,
+        'one_thing': one_thing,
+        'why': why,
+        'transitions': transitions,
     }

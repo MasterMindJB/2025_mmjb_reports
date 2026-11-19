@@ -1,0 +1,10 @@
+{craft}
+
+Section: one_thing
+Audience: group
+Write the ONE THING for the team in 25 words or fewer.
+Start with one allowed verb. Use the target number from the evidence. No also.
+Return JSON with keys one_thing, why.
+
+Evidence:
+{evidence}
