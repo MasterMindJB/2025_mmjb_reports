@@ -168,6 +168,7 @@ def generate_session(
         reports_dir = session_root(settings, session_id) / 'reports'
         if staging.exists():
             shutil.rmtree(staging)
+        staging.mkdir(parents=True, exist_ok=True)
         rendered = renderer.render(
             transcript=transcript,
             bundle=bundle,

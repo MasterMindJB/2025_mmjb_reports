@@ -453,6 +453,94 @@ def test_gemini_settings_are_checked_at_startup(monkeypatch):
         raise AssertionError('a zero Gemini timeout should be rejected')
 
 
+def test_generate_session_substitutes_a_repeated_drama_turn(tmp_path):
+    """The live story path, not a direct render call, replaces a repeated counter-moment."""
+    from app.analysis import GeminiAnalysis
+    from app.services import generate_session
+    from lib.session_window import parse_clock_ms
+    from tests.fakes import FakeLLM
+
+    class SameTurnDramaLLM(FakeLLM):
+        def _reply(self, text: str) -> str:
+            reply = super()._reply(text)
+            if 'BATCH:' in text and 'BATCH: group' not in text and 'FACTS' in text:
+                payload = json.loads(reply)
+                drama = payload.get('drama') or {}
+                quotes = ((drama.get('patterns') or [{}])[0].get('quotes') or [{}])
+                if quotes and quotes[0].get('text'):
+                    drama['exception'] = {
+                        'quote': quotes[0]['text'],
+                        'ts': quotes[0]['ts'],
+                        'what_happened': 'you named the plan',
+                    }
+                    payload['drama'] = drama
+                return json.dumps(payload)
+            return reply
+
+    captured = {}
+
+    class CaptureRenderer:
+        def render(self, **kwargs):
+            captured['stories'] = getattr(kwargs['bundle'], 'stories', {})
+            return []
+
+    rows = [
+        {
+            'speaker': 'S',
+            'text': 'We should try the new onboarding plan before the hour ends.',
+            'start': 0,
+            'end': 4000,
+        },
+        {
+            'speaker': 'S',
+            'text': 'the budget can wait until Monday',
+            'start': 8000,
+            'end': 12000,
+        },
+        {
+            'speaker': 'H',
+            'text': 'Thank you all for coming to the session today.',
+            'start': 16000,
+            'end': 20000,
+        },
+    ]
+    app, _transcription = build_client(tmp_path)
+    app.state.analysis = GeminiAnalysis(llm=SameTurnDramaLLM())
+    app.state.renderer = CaptureRenderer()
+    db = app.state.db
+    transcript_path = tmp_path / 'transcript.json'
+    transcript_path.write_text(json.dumps({'utterances': rows}), encoding='utf-8')
+    session_id = db.create_session(
+        client='Northwind',
+        group_name='Full Sail',
+        session_name='Take a Position',
+        session_date='2026-11-18',
+        speakers_expected=2,
+        recording_path='',
+        recording_filename='',
+        created_at='2026-11-19T00:00:00+00:00',
+        window_end_ms=parse_clock_ms('1:00'),
+    )
+    db.update_session(session_id, transcript_path=str(transcript_path), status='naming')
+    db.replace_speakers(session_id, [{'label': 'S', 'samples': []}, {'label': 'H', 'samples': []}])
+    for speaker in db.list_speakers(session_id):
+        if speaker['label'] == 'S':
+            db.update_speaker(
+                speaker['id'], name='Stephen', email='stephen@example.com',
+                role='participant', name_status='confirmed',
+            )
+        else:
+            db.update_speaker(
+                speaker['id'], name='Host', email='', role='host', name_status='confirmed',
+            )
+    generate_session(
+        db, app.state.analysis, app.state.renderer, app.state.transcription, app.state.settings, session_id,
+    )
+    drama = captured['stories']['personal']['S']['drama']
+    assert 'budget can wait' in drama
+    assert 'different turn' not in drama
+
+
 def test_generate_session_stamps_the_host_before_the_closer(tmp_path):
     """Unannotated AssemblyAI rows plus the speaker map. Annie's thanks is the closer."""
     from app.interfaces import AnalysisBundle

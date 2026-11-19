@@ -169,8 +169,7 @@ def _talk_sides(gift: str, cost: str) -> tuple[str, str]:
     """Cost and gift describe how this person talks, not someone inside an anecdote."""
     blob = f'{gift} {cost}'
     anecdote = re.search(r'\b(employee|her story|his story|their story)\b', blob, re.I)
-    about_you = re.search(r'\byou\b', blob, re.I)
-    if anecdote or not about_you:
+    if anecdote:
         return (
             'What it gets you: you put the point in your own words.',
             'What it costs you: the next voice has to answer that move.',
@@ -1213,7 +1212,9 @@ def render_drama(
     sentences = []
     mights = 0
     seen_quotes: set[str] = set()
-    seen_turns: set[str] = set(_quote_log(facts) or [])
+    # Distinct inside Drama. A turn already used in Goal must not make the
+    # counter-moment fail when this speaker still has another line.
+    seen_turns: set[str] = set()
     allowed_numbers = {
         str(item['value'])
         for item in (facts or {}).values()
@@ -1401,6 +1402,8 @@ def _drama_counter(
     if shown and turn_id not in used and _word_count(shown) >= _quote_floor(transcript, label):
         return str(timestamp or '').strip() or clock(None), shown, turn_id
     replacement = _next_distinct_turn(transcript, label, used)
+    if replacement is None and turn_id:
+        replacement = _next_distinct_turn(transcript, label, {turn_id})
     if replacement is not None:
         return replacement
     if _quote_floor(transcript, label) == 3 and shown and _word_count(shown) >= 3:
