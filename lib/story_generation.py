@@ -283,6 +283,11 @@ def _fill_sections(llm, *, audience, sections, evidence, render, progress_path, 
                 reasons[section] = str(exc)
                 still.append(section)
                 continue
+            if not isinstance(rendered, dict):
+                logging.warning('story reject [%s]: render did not return an object', section)
+                reasons[section] = 'section render must be an object'
+                still.append(section)
+                continue
             draft.update(rendered)
             draft.setdefault('accepted', [])
             if section not in draft['accepted']:
