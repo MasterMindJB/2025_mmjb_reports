@@ -500,8 +500,17 @@ def _handed_to(transcript: dict | None, label: str) -> str:
     ranked = sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:3]
     if not ranked:
         return ''
-    listed = ', '.join(f'{name} {count}' for name, count in ranked)
-    return f'Handed to: {listed}.'
+    from lib.readability import reading_grade
+
+    def _line(items) -> str:
+        listed = ', '.join(f'{name} {count}' for name, count in items)
+        return f'Passed to {listed}.'
+
+    line = _line(ranked)
+    if reading_grade(line) > 6:
+        short = [(str(name).split()[0], count) for name, count in ranked]
+        line = _line(short)
+    return line
 
 
 def _appendix(framework: dict, name: str) -> dict:
@@ -534,6 +543,13 @@ def _meeting_topics(transcript: dict | None, limit: int = 3) -> list[str]:
             counts[token] = counts.get(token, 0) + 1
     ranked = sorted(counts, key=lambda item: (-counts[item], item))
     return ranked[:limit]
+
+
+def _talk_least(shares) -> str:
+    rows = [(str(name), int(value)) for name, value in (shares or []) if str(name) != 'Average']
+    if not rows:
+        return ''
+    return min(rows, key=lambda item: (item[1], item[0]))[0]
 
 
 def _duration_shares(transcript, names) -> list[tuple[str, int]]:
@@ -671,6 +687,16 @@ def group_story(
         one_thing = draft_one
     if draft_why and not narrative_problems(draft_why):
         why = draft_why
+    from lib.story_render import recruits_someone_else
+
+    quiet = _talk_least(shares)
+    roster = [str(name) for name, _value in (shares or [])]
+    if quiet and recruits_someone_else(character, quiet, roster):
+        character = group_character_copy(facts)
+    if quiet and recruits_someone_else(one_thing, quiet, roster):
+        one_thing = f'Next time, ask {quiet} to speak before the next choice.'
+    if quiet and recruits_someone_else(why, quiet, roster):
+        why = f'Next time, leave one reply for {quiet}.'
     if draft.get('transitions'):
         transitions = draft['transitions']
     portrait = facts.get('_portrait') or {}
@@ -684,7 +710,7 @@ def group_story(
         'one_thing': one_thing,
         'why': why,
         'pattern_why': group_pattern_why(portrait, shares),
-        'caveat': group_caveat(portrait),
+        'caveat': group_caveat(portrait, shares),
         'transitions': transitions,
         'numbers': group_plain_numbers(
             interaction_pct,

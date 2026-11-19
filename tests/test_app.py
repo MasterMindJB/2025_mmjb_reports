@@ -186,12 +186,12 @@ def test_full_flow_keeps_individual_reports_private(tmp_path):
             'AMASE_TOKEN_Blake_Chen',
         ):
             assert foreign not in alex
-        before_handoff = alex.split('Handed to:')[0]
+        before_handoff = alex.split('Passed to')[0]
         assert 'Blake Chen' not in before_handoff
         assert 'Casey Quinn' not in before_handoff
         assert 'PERSONAL_SUMMARY_TOKEN_ALEX' not in blake
         assert 'QUOTE_TAG_ALEX' not in blake
-        assert 'Alex Rivera' not in blake.split('Handed to:')[0]
+        assert 'Alex Rivera' not in blake.split('Passed to')[0]
         assert 'GROUP_LONG_TOKEN' not in group
         assert 'GROUP_SHORT_TOKEN' not in group
         for private in (
@@ -211,7 +211,7 @@ def test_full_flow_keeps_individual_reports_private(tmp_path):
         assert 'MasterMind' not in group
         assert 'Harkness Training Solutions' in group
         assert 'Top pairs, each direction' not in group
-        assert 'Most exchanges ran through' in group
+        assert 'Most exchanges ran through' not in group
 
         sent = client.post(
             '/sessions/1/send',

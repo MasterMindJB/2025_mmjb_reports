@@ -2070,7 +2070,7 @@ def test_group_pair_table_keeps_four_and_signature_stays_with_its_line(tmp_path)
     text = '\n'.join(page.extract_text() or '' for page in PdfReader(tmp_path / 'group.pdf').pages)
     assert 'Top pairs, each direction' not in text
     assert 'One way' not in text
-    assert 'Most exchanges ran through Person 5.' in text
+    assert 'Most exchanges ran through' not in text
     assert 'Person 0' not in text
 
     personal = MM_PDF(path_report_assets=__import__('pathlib').Path('report_assets'))

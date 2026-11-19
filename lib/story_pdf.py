@@ -580,14 +580,8 @@ def _top_exchange(pairs) -> str:
 
 
 def _chord_hero(pdf, chord_path, pairs=None) -> None:
-    """The diagram sits under the headline. It stays on this page, scaled to leave room below."""
-    top = _display_name(_top_exchange(pairs))
-    finding = (
-        f'Most exchanges ran through {top}.'
-        if top
-        else 'Who spoke right after whom. A wider ribbon means those two followed each other more often.'
-    )
-    _body(pdf, finding)
+    """The diagram sits under the headline. Its own title already states the finding."""
+    del pairs
     pdf._chord_page = pdf.page
     if not chord_path or not Path(chord_path).is_file():
         return

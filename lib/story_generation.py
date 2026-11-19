@@ -318,10 +318,10 @@ def _parse_safely(llm, prompt: str):
 def generate_personal_draft(
     llm, *, transcript, label, info, stats, forbidden_names, progress_dir=None
 ) -> dict:
-    del forbidden_names, progress_dir
+    del forbidden_names
     from lib.personal_narrative import build_personal_story
 
-    return build_personal_story(llm, transcript, label, info, stats)
+    return build_personal_story(llm, transcript, label, info, stats, progress_dir=progress_dir)
 
 
 def generate_group_draft(
@@ -374,8 +374,11 @@ def generate_group_draft(
 
     least = least_connected_names(order, directed)
     if least:
-        portrait['least'] = least[0] if len(least) == 1 else ' and '.join(least)
+        portrait['least_connected'] = least[0] if len(least) == 1 else ' and '.join(least)
         portrait['least_names'] = least
+    facts['_shares'] = list(shares)
+    if shares:
+        portrait['least'] = min(shares, key=lambda item: (item[1], item[0]))[0]
     facts['_portrait'] = portrait
     facts['_names'] = [info.get('name') for info in speaker_map.values() if info.get('name')]
     from lib.session_window import closer_turn

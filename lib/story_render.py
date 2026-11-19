@@ -931,10 +931,11 @@ def group_pattern_why(portrait: dict, shares=None) -> str:
     return f'{opening} Next time, ask {quiet} before you decide.'
 
 
-def group_caveat(portrait: dict) -> str:
-    """One caveat. No quote, and no count of who followed whom."""
+def group_caveat(portrait: dict, shares=None) -> str:
+    """One caveat. The person we ask is the one who talked least, not who was least connected."""
     pair = (portrait or {}).get('pair') or ()
-    least = (portrait or {}).get('least') or 'the quiet person'
+    _most, least_talk = _talk_ends(shares or [])
+    least = least_talk or (portrait or {}).get('least') or 'the quiet person'
     if len(pair) >= 2 and pair[0] and pair[1]:
         return (
             f'A point can end with {pair[0]} and {pair[1]} before {least} speaks. '
@@ -1117,9 +1118,21 @@ def group_character_copy(facts: dict) -> str:
         sentences.append(f'{name} said the last line: "{quote}"')
     elif name:
         sentences.append(f'{name} said the last line.')
-    ask = least_talk or portrait.get('least') or 'the quiet person'
+    ask = least_talk or portrait.get('least') or 'the person who talked the least'
     sentences.append(f'Next time, who will ask {ask} to speak sooner?')
     return close_quotes(' '.join(sentences))
+
+
+def recruits_someone_else(text: str, quiet: str, names: list[str]) -> bool:
+    """True when a line asks a person to speak who is not the lowest talk share."""
+    for name in names:
+        if not name or name == quiet:
+            continue
+        if re.search(rf'\b(?:ask|invite)\s+{re.escape(name)}\b', text or '', re.I):
+            return True
+        if re.search(rf'\bleave (?:one reply|that reply) for {re.escape(name)}\b', text or '', re.I):
+            return True
+    return False
 
 
 def close_quotes(text: str) -> str:
@@ -1607,7 +1620,8 @@ def render_one_thing(
         raise OutputParserException('one thing behavior is over 18 words')
     meta = facts.get('_meta') or {}
     if 'interaction' in facts and 'questions' not in facts:
-        least = (facts.get('_portrait') or {}).get('least') or 'one quiet person'
+        _most, least_talk = _talk_ends(facts.get('_shares') or [])
+        least = least_talk or (facts.get('_portrait') or {}).get('least') or 'the person who talked the least'
         sentence = f'Ask {least} to speak before the next choice.'
         why = f'Next time, leave one reply for {least}.'
         return sentence, why
