@@ -128,17 +128,26 @@ class ConversationSummarizer:
     def signature_phrase(self, speaker_text: str) -> dict | None:
         """Most frequent bigram for one speaker, plus the sociolinguist's reading of it.
 
-        Uses prompt_templates/personal_signature_phrase.txt verbatim. Returns None when
-        the speaker said fewer than two words.
+        Uses prompt_templates/personal_signature_phrase.txt verbatim, then adds this
+        person's own lines that contain the phrase. Returns None when the speaker
+        said fewer than two words.
         """
+        from lib.data_story import signature_examples
         from lib.report_stats import top_bigram
 
         found = top_bigram(speaker_text)
         if found is None:
             return None
         bigram, count = found
-        analysis = self.chains_with_retry['personal_signature_phrase'].invoke({'bigram': bigram})
-        return {'bigram': bigram, 'count': int(count), 'analysis': analysis}
+        prompt = self.get_prompt_template(Path('personal_signature_phrase.txt')).format(bigram=bigram)
+        examples = signature_examples(speaker_text, bigram)
+        message = prompt if not examples else prompt + '\n\nLines this person actually said:\n' + examples
+        raw = self.llm.invoke(message)
+        analysis = raw.content if hasattr(raw, 'content') else str(raw)
+        if isinstance(analysis, list):
+            analysis = ' '.join(str(part) for part in analysis)
+        analysis = validate_llm_output('personal_signature_phrase', str(analysis))
+        return {'bigram': bigram, 'count': int(count), 'analysis': analysis, 'examples': examples}
 
     def speaker_map_rename(self) -> JSON:
         """Shows some information from the speaker maps and asks for the names of the speakers so that the speaker map has real names.

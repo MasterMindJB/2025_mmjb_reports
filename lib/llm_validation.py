@@ -139,6 +139,18 @@ def _errors(data) -> dict:
     return cleaned
 
 
+FORBIDDEN_VOICE = ('as an ai', 'as a sociolinguist', 'i felt')
+
+
+def _reject_narration(name: str, text: str) -> None:
+    lowered = text.lower()
+    for phrase in FORBIDDEN_VOICE:
+        if phrase in lowered:
+            _fail(f'{name} must not say {phrase!r}')
+    if text.count('|') >= 4:
+        _fail(f'{name} must not contain a markdown table')
+
+
 def validate_llm_output(name: str, data):
     """Return cleaned output, or raise OutputParserException."""
     if name == 'personal_key_contributions':
@@ -156,5 +168,7 @@ def validate_llm_output(name: str, data):
     if name in TEXT_OUTPUTS:
         if not isinstance(data, str) or not data.strip():
             _fail(f'{name} must be a non-empty string')
-        return data.strip()
+        cleaned = data.strip()
+        _reject_narration(name, cleaned)
+        return cleaned
     _fail(f'No validator is registered for {name}')

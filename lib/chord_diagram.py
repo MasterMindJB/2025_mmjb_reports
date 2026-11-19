@@ -121,9 +121,11 @@ def transition_ribbons(
 
 
 def _short_name(name: str, names: list[str]) -> str:
-    first = name.split(' ', 1)[0]
-    if sum(other.split(' ', 1)[0] == first for other in names) == 1:
-        return first
+    from lib.names import short_name
+
+    label = short_name(name)
+    if sum(short_name(other) == label for other in names) == 1:
+        return label
     return name
 
 

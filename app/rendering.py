@@ -83,6 +83,7 @@ class PdfReportRenderer:
                 participant_analysis, 'personal_framework_doshas'
             )
             create_report_personal(
+                transcript=transcript,
                 path_report_assets=self.assets,
                 path_reports_dir=reports_dir,
                 df_nice_stats_data=bundle.tables.df_nice_stats_data,
