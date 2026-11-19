@@ -63,7 +63,7 @@ Individual PDFs keep the current sections, including Enneagram, Doshas, and AMAS
 
 The group PDF is the session summary: participation counts, the group narrative, and the charts. It does not include per-person quotes, action items, or personal summaries. Those used to be printed for every speaker in the group file. They now appear only in that speaker's own PDF.
 
-The group report opens with a chord diagram drawn locally in matplotlib. A ribbon is how many times one person's turn was immediately followed by the other's, in either direction. Facilitators and actors stay on the diagram and are hatched. Names are not sent to a chart service. A numeric matrix of the same turns is a secondary view.
+The group report opens with a chord diagram drawn locally in matplotlib. Each arc is one person. A ribbon leaves the person who spoke first, in that person's color, and narrows toward the person who spoke next. The three strongest pairs stay dark; a single follow is faded. Facilitators and actors stay on the diagram and are hatched. Names are not sent to a chart service. A small table lists the top pairs in each direction, and a numeric matrix remains as a secondary view.
 
 ## Environment
 

@@ -61,6 +61,7 @@ class PdfReportRenderer:
                 image_action_items=charts.action_items,
                 path_image_chord=charts.chord_path,
                 path_image_matrix=charts.matrix_path,
+                chord_pairs=charts.chord_pairs,
                 path_report_assets=self.assets,
                 path_file=group_path,
                 summaries=bundle.summaries,

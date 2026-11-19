@@ -207,9 +207,7 @@ def test_full_flow_keeps_individual_reports_private(tmp_path):
             assert private not in group
         assert 'MasterMind' not in group
         assert 'Harkness Training Solutions' in group
-        assert 'Ribbon width is the number of times' in group
-        assert 'diarized turns' in group
-        assert 'navy hatch' in group
+        assert 'Top pairs, each direction' in group
 
         sent = client.post(
             '/sessions/1/send',

@@ -26,7 +26,7 @@ import pandas as pd
 import PIL.Image
 import seaborn as sns
 
-from lib.chord_diagram import save_chord_diagram
+from lib.chord_diagram import directed_follows, pair_directions, save_chord_diagram
 from lib.helper_functions import barplot, figure_to_image, gini
 
 NICE_STATS_COL_NAME = {
@@ -74,6 +74,7 @@ class ChartImages:
     action_items: PIL.Image.Image
     chord_path: Path
     matrix_path: Path
+    chord_pairs: list
 
 
 def idea_count(text: str) -> int:
@@ -328,6 +329,11 @@ def render_charts(
     roster = [str(name) for name in tables.df_speaker_stats.index]
     chord_path = dest_dir / 'who_talks_with_whom.png'
     save_chord_diagram(sequence, chord_path, names=roster, roles=roles or {})
+    _pair_names, directed = directed_follows(sequence, roster)
+    chord_pairs = [
+        (left, right, forward, back)
+        for left, right, forward, back, _total in pair_directions(_pair_names, directed)[:6]
+    ]
     matrix_path = dest_dir / 'transition_matrix.png'
     _save_transition_heatmap(tables.interactions_prev, matrix_path)
     return ChartImages(
@@ -339,6 +345,7 @@ def render_charts(
         action_items=action_items,
         chord_path=chord_path,
         matrix_path=matrix_path,
+        chord_pairs=chord_pairs,
     )
 
 

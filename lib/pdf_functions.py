@@ -5,7 +5,6 @@ from typing import Optional, TypeAlias
 
 import pandas as pd
 
-from lib.chord_diagram import CHORD_DEFINITION
 from lib.helper_functions import spider_chart_0to5
 
 logger_PIL = logging.getLogger('PIL')
@@ -221,6 +220,37 @@ def pdf_filename_for(name: str) -> str:
     return f'{cleaned or "participant"}.pdf'
 
 
+def _add_direction_table(pdf: 'MM_PDF', pairs: list) -> None:
+    pdf.set_font('KulimPark', '', 11)
+    pdf.cell(w=0, h=7, text='Top pairs, each direction', align='L', ln=True)
+    if not pairs:
+        pdf.set_font('KulimPark-light', '', 10)
+        pdf.multi_cell(w=0, text='No turn was immediately followed by a different person.')
+        pdf.set_font('KulimPark', '', 12)
+        return
+    pdf.set_font('KulimPark', '', 8)
+    with pdf.table(
+        text_align=['LEFT', 'LEFT', 'LEFT'],
+        col_widths=(3, 2, 2),
+        borders_layout='MINIMAL',
+        line_height=pdf.font_size * 1.35,
+        first_row_as_headings=True,
+    ) as table:
+        header = table.row()
+        header.cell('Pair')
+        header.cell('One way')
+        header.cell('The other way')
+        for name_a, name_b, first_way, other_way in pairs[:6]:
+            short_a = name_a.split(' ', 1)[0]
+            short_b = name_b.split(' ', 1)[0]
+            row = table.row()
+            row.cell(f'{name_a}  and  {name_b}')
+            row.cell(f'{short_a} then {short_b}: {first_way}')
+            row.cell(f'{short_b} then {short_a}: {other_way}')
+    pdf.set_font('KulimPark', '', 12)
+    pdf.ln(2)
+
+
 def _sorted_speakers(speaker_map: dict):
     return sorted(
         [(speaker, speaker_map[speaker]['name']) for speaker in speaker_map], key=lambda item: item[1]
@@ -402,6 +432,7 @@ def create_report_group(
     link_feedback: str,
     include_individual_sections: bool = False,
     path_image_matrix: Path | None = None,
+    chord_pairs: list | None = None,
 ):
     logging.info('Creating PDF report.')
 
@@ -460,11 +491,10 @@ def create_report_group(
     pdf.add_page()
     link_chord = pdf.add_link()
     pdf.add_title_1(text='Who talks with whom', link_dest=link_chord)
-    pdf.image(path_image_chord, x='C', w=pdf.epw * 0.92)
-    pdf.ln(2)
-    pdf.set_font('KulimPark-light', '', 10)
-    pdf.multi_cell(w=0, text=CHORD_DEFINITION, align='J')
+    pdf.image(path_image_chord, x='C', w=pdf.epw * 0.96)
+    pdf.ln(1)
     pdf.set_font('KulimPark', '', 12)
+    _add_direction_table(pdf, chord_pairs or [])
 
     # Table of Contents
     link_convo_stats = pdf.add_link()
