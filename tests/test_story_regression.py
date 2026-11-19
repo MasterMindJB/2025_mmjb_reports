@@ -1409,6 +1409,41 @@ def test_resolution_uses_the_host_closer_and_a_what_happened_clause():
     assert personal['resolution'].startswith('What happened is you recognize your specific talents.')
 
 
+def test_dr_annie_green_matches_annie_green_and_seth_does_not():
+    from lib.story_render import render_group_section
+    from lib.story_validation import reject_craft_violations
+
+    assert 'Annie' in reject_craft_violations(
+        'Annie carried the point for the room today.',
+        confirmed_names=['Dr. Annie Green'],
+    )
+    assert 'Green' in reject_craft_violations(
+        'Green carried the point for the room today.',
+        confirmed_names=['Dr. Annie Green'],
+    )
+
+    facts = {
+        'interaction': {'value': 20, 'line': '20% interaction', 'unit': 'percent'},
+        '_names': ['Dr. Annie Green'],
+    }
+    rendered = render_group_section(
+        'resolution',
+        {'claim': 'Annie Green closed the hour on the workflow'},
+        transcript=synthetic_transcript(),
+        facts=facts,
+        cast='',
+    )
+    assert 'Annie Green' in rendered['resolution']
+    with pytest.raises(OutputParserException, match='Seth'):
+        render_group_section(
+            'resolution',
+            {'claim': 'Seth closed the hour on the budget'},
+            transcript=synthetic_transcript(),
+            facts=facts,
+            cast='',
+        )
+
+
 def test_resolution_rejects_an_unconfirmed_name_and_a_session_begins_line():
     from lib.story_render import render_group_section
 

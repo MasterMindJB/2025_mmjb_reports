@@ -373,14 +373,40 @@ _KEEP_NAME = {
 }
 
 
+_HONORIFICS = {'dr', 'prof', 'professor', 'mr', 'ms', 'mrs'}
+
+
+def name_forms(name: str) -> set[str]:
+    """Full name without an honorific, plus the first name, the last name, and First Last."""
+    tokens = re.findall(r"[A-Za-z']+", name or '')
+    while tokens and tokens[0].casefold() in _HONORIFICS:
+        tokens = tokens[1:]
+    forms = set()
+    if not tokens:
+        return forms
+    forms.add(' '.join(tokens).casefold())
+    forms.add(tokens[0].casefold())
+    forms.add(tokens[-1].casefold())
+    if len(tokens) >= 2:
+        forms.add(f'{tokens[0]} {tokens[-1]}'.casefold())
+    return forms
+
+
+def confirmed_name_forms(names: list[str] | None) -> set[str]:
+    forms = set()
+    for name in names or []:
+        folded = (name or '').casefold()
+        if folded:
+            forms.add(folded)
+        forms.update(name_forms(name))
+    return forms
+
+
 def unconfirmed_personal_name(text: str, confirmed: list[str] | None) -> str | None:
     """A capitalized name that is not one of the confirmed speaker names."""
     if not confirmed:
         return None
-    allowed = set()
-    for name in confirmed:
-        allowed.add(name.casefold())
-        allowed.update(part.casefold() for part in re.findall(r"[A-Za-z']+", name) if len(part) > 1)
+    allowed = confirmed_name_forms(confirmed)
     allowed.update(word.casefold() for word in _KEEP_NAME)
     for match in re.finditer(r'\b([A-Z][a-z]{2,})\b', text or ''):
         word = match.group(1)
@@ -467,13 +493,7 @@ def reject_craft_violations(
     if transcript is not None:
         quotes_belong_to_speaker(cleaned, transcript, speaker_label)
     if participant_names is not None:
-        allowed = {name.casefold() for name in participant_names}
-        allowed.update(
-            part.casefold()
-            for name in participant_names
-            for part in name.split()
-            if len(part) > 2
-        )
+        allowed = confirmed_name_forms(participant_names)
         for person in _named_people(cleaned):
             if person.casefold() not in allowed and not person.casefold().startswith('speaker '):
                 _fail(f'story text names someone who is not in the session: {person}')
