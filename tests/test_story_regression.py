@@ -1207,6 +1207,45 @@ def test_a_turn_that_ends_with_thanks_is_still_the_closer():
     assert trimmed['utterances'][-1]['text'].endswith('Thank you all for coming.')
 
 
+def test_speaker_e_fragment_cannot_replace_the_hosts_thanks_closer():
+    from lib.session_window import closer_turn
+
+    def turn(minute, speaker, text, role='participant', name=None):
+        start = minute * 60 * 1000
+        row = {
+            'speaker': speaker, 'role': role, 'text': text,
+            'start': start, 'end': start + 20_000,
+        }
+        if name:
+            row['name'] = name
+        return row
+
+    rows = [
+        turn(
+            index, 'A',
+            'The knowledge systems still hide the design until the workflow is named by the room.',
+            'moderator', 'Annie Green',
+        )
+        for index in range(8)
+    ]
+    host = turn(
+        12, 'A',
+        'The knowledge systems still hide the design until the workflow is named. Thank you all for coming.',
+        'facilitator', 'Annie Green',
+    )
+    fragment = (
+        'this era, like as users, as participants, et cetera the knowledge systems '
+        'still hide the design until the workflow ends today.'
+    )
+    assert len(fragment.split()) == 21
+    speaker_e = turn(16, 'E', fragment, 'participant', 'Speaker E')
+    rows.extend([host, speaker_e])
+    chosen = closer_turn(rows)
+    assert 'Thank you all for coming' not in chosen['text']
+    assert chosen['text'].startswith('The knowledge systems still hide the design')
+    assert 'et cetera' not in chosen['text']
+
+
 def test_resolution_rejects_an_unconfirmed_name_and_a_session_begins_line():
     from lib.story_render import render_group_section
 

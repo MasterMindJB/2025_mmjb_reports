@@ -201,26 +201,83 @@ def window_through_closing(rows: list) -> list:
     return usable[: end + 1]
 
 
+_PLACEHOLDER = re.compile(
+    r'^(speaker\s+[a-z0-9]+|[a-z]|audience member(?:\s+\d+)?)$',
+    re.I,
+)
+
+
+def _is_host(row: dict) -> bool:
+    return str(row.get('role') or '').lower() in {'host', 'facilitator', 'moderator'}
+
+
+def _confirmed_panelist(row: dict) -> bool:
+    """A named panelist. Speaker E and other placeholders do not qualify."""
+    if not _panel_voice(row) or _is_host(row):
+        return False
+    name = str(row.get('name') or row.get('speaker') or '').strip()
+    return bool(name) and _PLACEHOLDER.match(name) is None
+
+
+def _full_sentence(text: str) -> bool:
+    from lib.story_render import closing_clip
+
+    body = (text or '').strip()
+    if re.search(r'\bet cetera\b|\betc\.?\b', body, re.I):
+        return False
+    return closing_clip(body) is not None
+
+
 def closer_turn(rows: list) -> dict | None:
-    """The last substantive on-topic turn. Trailing thanks in that turn are removed."""
+    """The closer stops at the host's thanks. A later fragment cannot replace it.
+
+    A later turn can replace it only when a confirmed-name panelist speaks a full
+    sentence of at least 25 words. Placeholder speakers never qualify.
+    """
+    from lib.story_render import _word_count, closing_clip, is_logistics
+
     usable = [row for row in rows or [] if str(row.get('text') or '').strip()]
     keys = topic_keys(usable)
-    last_on = _last_substantive_index(usable, keys) if len(keys) >= 2 else None
-    if last_on is None:
-        from lib.story_render import closing_clip, is_logistics
-
+    window = window_through_closing(usable)
+    chosen: tuple[dict, str] | None = None
+    frozen = False
+    for row in window:
+        text = str(row.get('text') or '')
+        body = substantive_body(text)
+        host_thanks = _is_host(row) and is_closing_cue(text)
+        if frozen:
+            if (
+                _confirmed_panelist(row)
+                and _word_count(body) >= 25
+                and _full_sentence(body)
+                and not is_logistics(body)
+            ):
+                chosen = (row, body)
+            continue
+        if host_thanks:
+            if _word_count(body) >= 6 and closing_clip(body) and not is_closing_cue(body):
+                chosen = (row, body)
+            frozen = True
+            continue
+        if is_closing_cue(body) or is_logistics(text):
+            continue
+        if _word_count(body) < 6 or closing_clip(body) is None:
+            continue
+        if len(keys) >= 2 and not on_topic(body, keys):
+            continue
+        chosen = (row, body)
+    if chosen is None:
         for row in reversed(_legacy_tail(usable)):
             text = substantive_body(str(row.get('text') or ''))
-            if is_closing_cue(text) or is_logistics(text):
+            if is_closing_cue(text) or is_logistics(text) or closing_clip(text) is None:
                 continue
-            if closing_clip(text):
-                chosen = dict(row)
-                chosen['text'] = text
-                return chosen
+            chosen = (row, text)
+            break
+    if chosen is None:
         return None
-    chosen = dict(usable[last_on])
-    chosen['text'] = substantive_body(str(chosen.get('text') or ''))
-    return chosen
+    result = dict(chosen[0])
+    result['text'] = chosen[1]
+    return result
 
 
 def apply_session_window(transcript: dict, start_ms: int | None = None, end_ms: int | None = None) -> dict:
