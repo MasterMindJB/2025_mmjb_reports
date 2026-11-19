@@ -1122,6 +1122,8 @@ def test_fallback_skips_repetition_and_an_introduction():
     assert 'Repetition.' not in story['drama']
     assert 'my name is' not in story['drama'].lower()
     assert 'knowledge systems' in story['drama']
+    assert 'You came in to move the work' not in story['goal']
+    assert 'knowledge systems' in story['goal']
 
 
 def test_plain_goal_prose_is_wrapped_and_empty_number_keys_use_facts(caplog):
@@ -1168,6 +1170,288 @@ def test_plain_goal_prose_is_wrapped_and_empty_number_keys_use_facts(caplog):
         forbidden=[],
     )
     assert 'talk time' in mapped['numbers'][0]
+
+
+def test_a_turn_that_ends_with_thanks_is_still_the_closer():
+    from lib.session_window import apply_session_window, closer_turn
+
+    def turn(minute, speaker, text, role='participant'):
+        start = minute * 60 * 1000
+        return {
+            'speaker': speaker, 'role': role, 'text': text,
+            'start': start, 'end': start + 20_000,
+        }
+
+    rows = [
+        turn(index, 'A' if index % 2 == 0 else 'B',
+             'The knowledge systems still hide the design until the workflow is named by the room.',
+             'moderator' if index % 2 == 0 else 'participant')
+        for index in range(20)
+    ]
+    closing = turn(
+        21, 'A',
+        'The knowledge systems still hide the design until the workflow is named. Thank you all for coming.',
+        'moderator',
+    )
+    venue = turn(
+        28, 'B',
+        'The knowledge systems closed about 9… they were gone after the hour.',
+        'participant',
+    )
+    rows.extend([closing, venue])
+    chosen = closer_turn(rows)
+    assert chosen['text'].endswith('named.')
+    assert 'Thank you all for coming.' not in chosen['text']
+    trimmed = apply_session_window({'utterances': rows})
+    assert 'closed about 9' not in ' '.join(row['text'] for row in trimmed['utterances'])
+    assert trimmed['utterances'][-1]['text'].endswith('Thank you all for coming.')
+
+
+def test_resolution_rejects_an_unconfirmed_name_and_a_session_begins_line():
+    from lib.story_render import render_group_section
+
+    facts = {
+        'interaction': {'value': 20, 'line': '20% interaction', 'unit': 'percent'},
+        '_names': ['Annie Green'],
+    }
+    with pytest.raises(OutputParserException, match='Seth'):
+        render_group_section(
+            'resolution',
+            {'claim': 'Seth closed the hour on the budget'},
+            transcript=synthetic_transcript(),
+            facts=facts,
+            cast='',
+        )
+    with pytest.raises(OutputParserException, match='The session begins with'):
+        render_group_section(
+            'resolution',
+            {'claim': 'The session begins with the budget talk'},
+            transcript=synthetic_transcript(),
+            facts=facts,
+            cast='',
+        )
+
+
+def test_jrick_headline_cannot_use_someone_elses_dating_coach_line():
+    transcript = {
+        'utterances': [
+            {
+                'speaker': 'J',
+                'text': 'The knowledge systems still hide the design until the workflow is named.',
+                'start': 0,
+                'end': 4000,
+            },
+            {
+                'speaker': 'B',
+                'text': 'I work as a research engineer and dating coach on the side now.',
+                'start': 4000,
+                'end': 8000,
+            },
+        ]
+    }
+    kept = render_personal_section(
+        'character',
+        {'headline': 'the knowledge systems hide the design', 'number_keys': ['talk_share']},
+        transcript=transcript,
+        label='J',
+        facts=FACTS,
+        forbidden=[],
+    )
+    assert kept['headline'][0].isupper()
+    assert len(kept['headline'].split()) <= 14
+    with pytest.raises(OutputParserException, match='research engineer'):
+        render_personal_section(
+            'character',
+            {'headline': 'A research engineer and dating coach', 'number_keys': ['talk_share']},
+            transcript=transcript,
+            label='J',
+            facts=FACTS,
+            forbidden=[],
+        )
+
+
+def test_goal_prefixes_and_gerunds_become_a_base_verb():
+    from lib.story_render import goal_line
+
+    assert goal_line('to identify where value breaks') == (
+        'The room set out to identify where value breaks.'
+    )
+    assert goal_line('I want to identify where value breaks', personal=True) == (
+        'You set out to identify where value breaks.'
+    )
+    assert goal_line('we need to maintain personal autonomy') == (
+        'The room set out to maintain personal autonomy.'
+    )
+    assert goal_line('the goal is to identify where value breaks') == (
+        'The room set out to identify where value breaks.'
+    )
+    assert goal_line('identifying where value breaks') == (
+        'The room set out to identify where value breaks.'
+    )
+    assert goal_line('you maintaining personal autonomy', personal=True) == (
+        'You set out to maintain personal autonomy.'
+    )
+
+
+def test_drama_counter_moment_must_be_a_different_turn_and_cost_keeps_fact_digits():
+    opening = 'We should try the new onboarding plan.'
+    same_turn = {
+        'utterances': [
+            {
+                'speaker': 'A',
+                'text': 'We should try the new onboarding plan. That might work if we start Monday.',
+                'start': 0,
+                'end': 8000,
+            },
+        ]
+    }
+    with pytest.raises(OutputParserException, match='different turn'):
+        render_personal_section(
+            'drama',
+            {
+                'patterns': [{
+                    'quotes': [{'text': 'We should try the new onboarding plan', 'ts': '0:00'}],
+                    'pattern': 'You set the plan in the first line',
+                    'twist': 'the next voice took the turn',
+                    'cost': 'a delay of 3 years',
+                    'gift': 'a clear start',
+                }],
+                'exception': {
+                    'quote': 'That might work if we start Monday',
+                    'ts': '0:00',
+                    'what_happened': 'you named Monday',
+                },
+            },
+            transcript=same_turn,
+            label='A',
+            facts=FACTS,
+            forbidden=[],
+        )
+    kept = render_personal_section(
+        'drama',
+        {
+            'patterns': [{
+                'quotes': [{'text': opening, 'ts': '0:00'}],
+                'pattern': 'You set the plan in the first line',
+                'twist': 'the next voice took the turn',
+                'cost': 'a delay of 3 years',
+                'gift': 'a clear start',
+            }],
+            'exception': {
+                'quote': 'That might work if we start Monday.',
+                'ts': '0:11',
+                'what_happened': 'you named Monday',
+            },
+        },
+        transcript=synthetic_transcript(),
+        label='A',
+        facts={**FACTS, 'questions': {'value': 3, 'line': '3 questions.', 'unit': 'questions'}},
+        forbidden=[],
+    )
+    assert '3 years' in kept['drama']
+    stripped = render_personal_section(
+        'drama',
+        {
+            'patterns': [{
+                'quotes': [{'text': opening, 'ts': '0:00'}],
+                'pattern': 'You set the plan in the first line',
+                'twist': 'the next voice took the turn',
+                'cost': 'a delay of 9 years',
+                'gift': 'a clear start',
+            }],
+            'exception': {
+                'quote': 'That might work if we start Monday.',
+                'ts': '0:11',
+                'what_happened': 'you named Monday',
+            },
+        },
+        transcript=synthetic_transcript(),
+        label='A',
+        facts=FACTS,
+        forbidden=[],
+    )
+    assert '9' not in stripped['drama']
+
+
+def test_second_person_check_ignores_words_inside_quotes():
+    from lib.story_validation import reject_craft_violations
+
+    kept = reject_craft_violations(
+        'You said "they left the room after the hour." and you stayed with the plan.',
+        speaker_label='A',
+    )
+    assert 'they left' in kept
+    with pytest.raises(OutputParserException, match="'they'"):
+        reject_craft_violations(
+            'You said they left the room after the hour and you stayed.',
+            speaker_label='A',
+        )
+
+
+def test_group_pair_table_keeps_four_and_signature_stays_with_its_line(tmp_path):
+    from PIL import Image
+    from pypdf import PdfReader
+
+    from lib.pdf_functions import MM_PDF
+    from lib.story_pdf import write_group_story, write_personal_report
+
+    image = tmp_path / 'chord.png'
+    Image.new('RGB', (400, 400), 'white').save(image)
+    pdf = MM_PDF(path_report_assets=__import__('pathlib').Path('report_assets'))
+    pairs = [(f'Person {index}', f'Other {index}', index, 1) for index in range(6)]
+    story = {
+        'headline': 'The room kept handing the turn across',
+        'character': 'Interaction moved between the voices in the room.',
+        'goal': 'The room set out to identify the plan.',
+        'challenge': 'A point could finish inside one voice.',
+        'drama': 'Who talks to whom, and who nobody answered.',
+        'resolution': 'The meeting closed on the budget.',
+        'one_thing': 'Name one reply before the next decision. Target: 56% interaction.',
+        'why': 'Interaction is 42%, so 56% is a step up.',
+        'transitions': {},
+    }
+    write_group_story(pdf, story, image, pairs)
+    pdf.output(tmp_path / 'group.pdf')
+    text = '\n'.join(page.extract_text() or '' for page in PdfReader(tmp_path / 'group.pdf').pages)
+    assert 'Person 0' in text
+    assert 'Person 3' in text
+    assert 'Person 4' not in text
+    assert 'Person 5' not in text
+
+    personal = MM_PDF(path_report_assets=__import__('pathlib').Path('report_assets'))
+    long_drama = ' '.join(['You set the point and the next voice took it up before the hour moved on.'] * 40)
+    write_personal_report(
+        personal,
+        {
+            'headline': 'You came in and set a point down',
+            'numbers': ['8% talk time: below the room average.'],
+            'character_body': 'You set one point down.',
+            'share': 8,
+            'goal': 'You set one point down.',
+            'challenge': 'You set one point down.',
+            'drama': long_drama,
+            'resolution': 'You set one point down.',
+            'one_thing': 'Ask one question before you add another point. Target: 4 questions.',
+            'why': 'You asked 1 question, against 4 questions for the session.',
+            'transitions': {},
+            'signature': {
+                'phrase': 'we should', 'count': 2, 'quotes': [],
+                'what': 'You reach for it when you want the room to move with you today.',
+                'so_what': '', 'now_what': '',
+            },
+            'lines': [],
+            'appendix': {},
+        },
+        tmp_path / 'charts',
+    )
+    personal.output(tmp_path / 'personal.pdf')
+    for page in PdfReader(tmp_path / 'personal.pdf').pages:
+        page_text = page.extract_text() or ''
+        if 'Your signature phrase' in page_text:
+            assert 'You reach for it' in page_text
+            break
+    else:
+        raise AssertionError('signature heading missing')
     opening = 'We should try the new onboarding plan.'
     with pytest.raises(OutputParserException):
         _render(
