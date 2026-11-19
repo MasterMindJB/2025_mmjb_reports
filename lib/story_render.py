@@ -212,7 +212,7 @@ _BASE_VERBS = {
     'use', 'wait', 'help', 'get', 'let', 'put', 'take', 'bring', 'tell', 'talk',
     'call', 'work', 'learn', 'lead', 'join', 'offer', 'focus', 'change', 'grow',
     'see', 'know', 'think', 'feel', 'read', 'write', 'hear', 'meet', 'reach',
-    'support', 'explore', 'discuss', 'turn', 'add', 'bring',
+    'support', 'explore', 'discuss', 'turn', 'add', 'bring', 'recognize',
 }
 _FRAME_VERBS = {
     'aim', 'aims', 'are', 'involve', 'involves', 'is', 'need', 'needs', 'seek',
@@ -278,6 +278,18 @@ def verb_phrase(claim: str) -> str:
             phrase = ' '.join(words_out[:15])
         return phrase
     raise OutputParserException('goal must be a verb phrase starting with a base verb')
+
+
+def _what_happened(claim: str) -> str:
+    """A bare imperative becomes a what-happened clause."""
+    body = (claim or '').strip().rstrip('.')
+    if not body or re.match(r'^(what happened|you)\b', body, re.I):
+        return body
+    first = re.sub(r'[^\w]', '', body.split()[0])
+    if _base_verb(first):
+        lowered = body[0].lower() + body[1:]
+        return f'What happened is you {lowered}'
+    return body
 
 
 def goal_line(claim: str, *, personal: bool = False) -> str:
@@ -1284,8 +1296,9 @@ def render_personal_section(section: str, data: dict, *, transcript, label: str,
         )
         quote = data.get('quote') if isinstance(data.get('quote'), dict) else {}
         text = own_quote(str(quote.get('text') or ''), str(quote.get('ts') or ''), transcript, label)
+        happened = _what_happened(claim)
         return {'resolution': capitalize_sentences(
-            f'At {quote.get("ts")} you said "{text}". {claim.rstrip(".")}.'
+            f'{happened.rstrip(".")}. At {quote.get("ts")} you said "{text}".'
         )}
     if section == 'one_thing':
         sentence, why = render_one_thing(
@@ -1338,7 +1351,17 @@ def render_group_section(section: str, data: dict, *, transcript, facts: dict, c
             if re.search(r"\b[A-Z][a-z]+(?:'s|’s)\b", claim) or re.search(r'\bas stated by\b', claim, re.I):
                 raise OutputParserException('group goal must be the room\'s topic, not one person\'s theme')
             return {'goal': goal_line(claim, personal=False)}
+        from lib.session_window import closer_turn
+
         closing_fact = facts.get('_closing') or {}
+        if not str(closing_fact.get('text') or '').strip():
+            closer = closer_turn((transcript or {}).get('utterances') or [])
+            if closer:
+                closing_fact = {
+                    'name': closer.get('name') or 'the last voice',
+                    'text': closer.get('text') or '',
+                }
+                closing = ''
         speaker = closing_fact.get('name') or 'the last voice'
         spoken = closing_clip(_strip_stated_by(closing_fact.get('text') or closing)) or ''
         if spoken and _word_count(spoken) < 6:

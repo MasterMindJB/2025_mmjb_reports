@@ -1289,6 +1289,68 @@ def test_speaker_e_fragment_cannot_replace_the_hosts_thanks_closer():
     assert 'et cetera' not in chosen['text']
 
 
+def test_resolution_uses_the_host_closer_and_a_what_happened_clause():
+    from lib.story_generation import _coerce_payload
+    from lib.story_render import render_group_section
+
+    wrapped = _coerce_payload('The room named the workflow before it closed.', 'resolution')
+    assert wrapped == {'claim': 'The room named the workflow before it closed.'}
+
+    def turn(minute, speaker, text, role='participant', name=None):
+        start = minute * 60 * 1000
+        row = {
+            'speaker': speaker, 'role': role, 'text': text,
+            'start': start, 'end': start + 20_000,
+        }
+        if name:
+            row['name'] = name
+        return row
+
+    rows = [
+        turn(
+            index, 'A',
+            'The knowledge systems still hide the design until the workflow is named by the room.',
+            'moderator', 'Annie Green',
+        )
+        for index in range(8)
+    ]
+    rows.append(turn(
+        12, 'A',
+        'The knowledge systems still hide the design until the workflow is named. Thank you all for coming.',
+        'facilitator', 'Annie Green',
+    ))
+    rows.append(turn(
+        16, 'E',
+        'this era, like as users, as participants, et cetera the knowledge systems still hide the design until the workflow ends today.',
+        'participant', 'Speaker E',
+    ))
+    rendered = render_group_section(
+        'resolution',
+        {'claim': 'the room named the workflow'},
+        transcript={'utterances': rows},
+        facts={'interaction': {'value': 23, 'line': '23% interaction'}},
+        cast='',
+    )
+    assert 'Speaker E' not in rendered['resolution']
+    assert 'et cetera' not in rendered['resolution']
+    assert 'Thank you all for coming' not in rendered['resolution']
+    assert 'The meeting closed on Annie Green' in rendered['resolution']
+    assert 'knowledge systems still hide the design' in rendered['resolution']
+
+    personal = render_personal_section(
+        'resolution',
+        {
+            'claim': 'Recognize your specific talents',
+            'quote': {'text': 'We should try the new onboarding plan.', 'ts': '0:00'},
+        },
+        transcript=synthetic_transcript(),
+        label='A',
+        facts=FACTS,
+        forbidden=[],
+    )
+    assert personal['resolution'].startswith('What happened is you recognize your specific talents.')
+
+
 def test_resolution_rejects_an_unconfirmed_name_and_a_session_begins_line():
     from lib.story_render import render_group_section
 

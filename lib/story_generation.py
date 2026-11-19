@@ -237,6 +237,9 @@ def _coerce_payload(payload, section: str):
                     return payload
                 logging.warning('story section goal arrived as non-JSON string')
                 return {'claim': text}
+            if section == 'resolution' and text:
+                logging.warning('story section resolution arrived as non-JSON string')
+                return {'claim': text}
             return payload
         if isinstance(parsed, (dict, list)):
             return _coerce_payload(parsed, section)
@@ -414,9 +417,10 @@ def generate_group_draft(
         portrait['high_share'] = max(item[1] for item in shares)
     facts['_portrait'] = portrait
     facts['_names'] = [info.get('name') for info in speaker_map.values() if info.get('name')]
-    from lib.story_render import closing_clip, last_substantive_utterance
+    from lib.session_window import closer_turn
+    from lib.story_render import closing_clip
 
-    closing_row = last_substantive_utterance(transcript.get('utterances') or [])
+    closing_row = closer_turn(transcript.get('utterances') or [])
     if closing_row:
         spoken = closing_clip(str(closing_row.get('text') or ''))
         if spoken:

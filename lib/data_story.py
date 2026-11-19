@@ -496,11 +496,12 @@ def group_story(
         'The turns stayed inside a few voices, so a point could end before someone new answered.'
     )
     drama = cast or 'Who talks to whom, and who nobody answered.'
-    from lib.story_render import closing_clip, last_substantive_utterance
+    from lib.session_window import closer_turn
+    from lib.story_render import closing_clip
 
     last_name = 'the last voice'
     last_line = ''
-    closing_row = last_substantive_utterance((transcript or {}).get('utterances') or [])
+    closing_row = closer_turn((transcript or {}).get('utterances') or [])
     if closing_row:
         last_line = closing_clip(str(closing_row.get('text') or '')) or ''
         last_name = (names or {}).get(closing_row.get('speaker')) or last_name
