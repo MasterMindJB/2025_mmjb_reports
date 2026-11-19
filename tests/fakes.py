@@ -52,6 +52,8 @@ class FakeLLM(BaseChatModel):
         return ChatResult(generations=[ChatGeneration(message=AIMessage(content=self._reply(text)))])
 
     def _reply(self, text: str) -> str:
+        if 'BATCH:' in text and 'FACTS' in text:
+            return _batch_reply(text)
         if 'Section:' in text and 'FACTS' in text:
             return _story_reply(text)
         who = _who(text)
@@ -103,12 +105,26 @@ def _own_quotes(text: str):
     return re.findall(r'ts=(\d+:\d+) text=(.+)', text.split('NEXT SPEAKER')[0])
 
 
+def _batch_reply(text: str) -> str:
+    import json
+    import re
+
+    audience = 'group' if 'BATCH: group' in text else 'personal'
+    sections = (
+        ('character', 'goal', 'challenge', 'drama', 'resolution', 'one_thing')
+    )
+    payload = {}
+    for section in sections:
+        payload[section] = json.loads(_story_reply(f'Section: {section}\n{text}'))
+    return json.dumps(payload)
+
+
 def _story_reply(text: str) -> str:
     """Structured fields only. Digits stay in target_value, not in the prose."""
     import re
 
     section = re.search(r'Section: (\w+)', text).group(1)
-    audience = 'group' if 'Audience: group' in text else 'personal'
+    audience = 'group' if ('Audience: group' in text or 'BATCH: group' in text) else 'personal'
     if audience == 'group':
         target = int(_fact(text, 'target_interaction'))
         if section == 'character':
@@ -184,7 +200,7 @@ class FlakyStoryLLM(FakeLLM):
     remaining_bad: int = 1
 
     def _reply(self, text: str) -> str:
-        if self.remaining_bad and 'Section:' in text and 'FACTS' in text:
+        if self.remaining_bad and 'BATCH:' in text and 'FACTS' in text:
             self.remaining_bad -= 1
             return 'not-json'
         return super()._reply(text)

@@ -41,9 +41,32 @@ def _heading(pdf, text: str) -> None:
     pdf.cell(w=0, h=8, text=text, ln=True)
 
 
+def _paragraph_height(pdf, text: str, size: int) -> float:
+    pdf.set_font('Poppins', '', size)
+    width = max(pdf.epw, 1)
+    lines = 0
+    for paragraph in (text or '').split('\n'):
+        words = paragraph.split()
+        if not words:
+            lines += 1
+            continue
+        current = ''
+        lines += 1
+        for word in words:
+            trial = f'{current} {word}'.strip()
+            if pdf.get_string_width(trial) <= width:
+                current = trial
+            else:
+                lines += 1
+                current = word
+    return max(lines, 1) * pdf.font_size * 1.45
+
+
 def _body(pdf, text: str, size: int = 11) -> None:
     if not text:
         return
+    if pdf.h - pdf.get_y() - pdf.b_margin < _paragraph_height(pdf, text, size):
+        pdf.add_page()
     pdf.set_x(pdf.l_margin)
     pdf.set_font('Poppins', '', size)
     pdf.set_text_color(20, 33, 74)
@@ -188,7 +211,6 @@ def write_personal_report(pdf, story: dict, chart_dir: Path) -> None:
     card = story['signature']
     _room(pdf, 40)
     _body(pdf, 'Your signature phrase:')
-    _kicker(pdf, 'Your signature phrase')
     if card.get('phrase'):
         _body(pdf, f'You said "{card["phrase"]}" {card.get("count") or 0} times.')
     for quote in card.get('quotes') or []:
@@ -204,7 +226,7 @@ def write_personal_report(pdf, story: dict, chart_dir: Path) -> None:
     _heading(pdf, 'One thing')
     _callout(pdf, story['one_thing'], story['why'])
     _heading(pdf, 'Appendix: style lenses')
-    _body(pdf, 'These lenses stay in the file for now. Each line is only the top result.')
+    _body(pdf, 'Top result for each lens.')
     for name, line in story['appendix'].items():
         _body(pdf, f'{name}: {line}')
 
@@ -224,16 +246,17 @@ def write_group_story(pdf, story: dict, chord_path, chord_pairs) -> None:
     _heading(pdf, 'Challenge')
     _body(pdf, story['challenge'])
     _transition(pdf, (story.get('transitions') or {}).get('after_challenge'))
-    pdf.add_page()
     _heading(pdf, 'Drama')
     _body(pdf, story.get('drama') or '')
     _body(
         pdf,
         'Who spoke right after whom. A wider ribbon means those two followed each other more often. '
-        'Color is the person who spoke first. The clock runs from the start of the session to the end.',
+        'Color is the person who spoke first.',
     )
+    rows = max(1, len(chord_pairs or []))
+    if pdf.h - pdf.get_y() - pdf.b_margin < 90 + rows * 8:
+        pdf.add_page()
     if chord_path and Path(chord_path).is_file():
-        _room(pdf, 70)
         pdf.image(str(chord_path), x='C', w=pdf.epw * 0.92)
         pdf.ln(1)
     from lib.pdf_functions import _add_direction_table

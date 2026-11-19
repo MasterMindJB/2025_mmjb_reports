@@ -290,7 +290,7 @@ def _add_direction_table(pdf: 'MM_PDF', pairs: list) -> None:
         header.cell('Pair', style=heading)
         header.cell('One way', style=heading)
         header.cell('The other way', style=heading)
-        for index, (name_a, name_b, first_way, other_way) in enumerate(pairs[:6]):
+        for index, (name_a, name_b, first_way, other_way) in enumerate(pairs):
             from lib.names import short_name
 
             short_a = short_name(name_a)
@@ -491,6 +491,7 @@ def create_report_group(
     path_image_matrix: Path | None = None,
     chord_pairs: list | None = None,
     story_draft: dict | None = None,
+    transcript: dict | None = None,
 ):
     logging.info('Creating PDF report.')
 
@@ -513,6 +514,7 @@ def create_report_group(
         word_interaction=gini_reverse_interactions_both_wrd_cnt,
         cast=cast,
         draft=story_draft,
+        transcript=transcript,
     )
     write_group_story(pdf, story, path_image_chord, chord_pairs)
     if pdf.link_feedback:

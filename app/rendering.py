@@ -74,6 +74,7 @@ class PdfReportRenderer:
                 link_feedback=feedback_url or None,
                 include_individual_sections=False,
                 story_draft=stories.get('group'),
+                transcript=transcript,
             )
             amase_values, amase_explanations = framework_frames(
                 participant_analysis, 'personal_framework_amase'

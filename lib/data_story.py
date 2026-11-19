@@ -181,7 +181,14 @@ def personal_story(
     bigram = str(signature.get('bigram') or '')
     phrase_quotes = quotes_for_phrase(lines, bigram)
     cards = signature_card(str(signature.get('analysis') or ''))
-    from lib.story_render import count_label, pick_transitions, questions_sentence, share_sentence, turns_sentence
+    from lib.story_render import (
+        clip_clause,
+        one_thing_from_gap,
+        pick_transitions,
+        questions_sentence,
+        share_sentence,
+        turns_sentence,
+    )
 
     share_pct = int(round(share))
     question_count = int(questions)
@@ -198,49 +205,49 @@ def personal_story(
         questions_sentence(question_count, session_question_average),
         turns_sentence(turn_count),
     ]
-    if opening:
-        snippet = ' '.join(opening.split()[:5])
-        headline = f"'{snippet}': where you began."
+    used_quotes: set[str] = set()
+
+    def _once(event):
+        if not event:
+            return None
+        clause = clip_clause(event['text'])
+        key = clause.lower()
+        if not clause or key in used_quotes:
+            return None
+        used_quotes.add(key)
+        return clause, event['time']
+
+    opening_bit = _once(first_event)
+    later_bit = _once(last_event)
+    if opening_bit:
+        clause, _when = opening_bit
+        headline = clause if len(clause.split()) <= 12 else ' '.join(clause.split()[:12])
     else:
-        headline = 'You took your turns in this session.'
-    goal = (
-        f'Inferred from what you said: you came to move the plan forward. '
-        f'At {opening_time} you said "{opening}".'
-        if opening
-        else 'Inferred from what you said: the aim is the job in your first turn.'
-    )
-    if early_late:
-        challenge = (
-            f'{early_late}. You asked {question_count} questions, '
-            'so the point landed before a question did.'
-        )
+        headline = turns_sentence(turn_count)
+    if opening_bit:
+        goal = f'Inferred from the opening line at {opening_bit[1]}.'
     else:
-        challenge = f'You asked {question_count} questions across {turn_count} turns.'
-    if opening and last_event and last_event['time'] != opening_time:
+        goal = 'Inferred from the turns in this session.'
+    question_line = questions_sentence(question_count, session_question_average)
+    challenge = f'{early_late} {question_line}'.strip() if early_late else question_line
+    if opening_bit and later_bit:
         drama = (
-            f'At {opening_time} you said "{opening}". '
-            'This phrase often reads as a bid to get moving. '
-            "Here's what's interesting: the next speaker took the next turn. "
-            "It's doing a job for you. It buys a start. It also costs the question. "
-            f"The one moment it didn't happen was {last_event['time']}, "
-            'and that\'s when you got specific.'
+            f'At {opening_bit[1]} you said "{opening_bit[0]}". '
+            f'A later line, at {later_bit[1]}, was "{later_bit[0]}".'
         )
-    elif opening:
-        drama = (
-            f'At {opening_time} you said "{opening}". '
-            'This phrase often reads as a bid to get moving, right after your own words.'
-        )
+    elif opening_bit:
+        drama = f'At {opening_bit[1]} you said "{opening_bit[0]}".'
     else:
-        drama = 'No turn in this session gives a line to mirror.'
+        drama = 'No turn in this session gives a line to quote.'
     resolution = (
-        f'At {last_event["time"]} you said "{last_event["text"]}".'
-        if last_event
-        else 'The session ended without another turn from you.'
+        f'{turns_sentence(turn_count)} {question_line} '
+        'The gap in those counts is the part to change.'
     )
-    one_thing = f'Ask one question before your second turn. Target: {count_label(target, "question")}.'
-    why = (
-        f'You asked {count_label(question_count, "question")}, '
-        f'so {count_label(target, "question")} is the halfway step.'
+    one_thing, why = one_thing_from_gap(
+        share=share_pct,
+        speaker_count=speaker_count,
+        questions=question_count,
+        question_average=session_question_average,
     )
     transitions = pick_transitions(label)
     draft = draft or {}
@@ -257,12 +264,16 @@ def personal_story(
     why = draft.get('why') or why
     if draft.get('transitions'):
         transitions = draft['transitions']
-    if 'what' in signature or signature.get('computed'):
+    if signature.get('what') or signature.get('so_what') or signature.get('now_what'):
         cards = {
             'what': signature.get('what') or '',
             'so_what': signature.get('so_what') or '',
             'now_what': signature.get('now_what') or '',
         }
+    if not cards.get('what'):
+        from lib.story_render import computed_signature
+
+        cards = computed_signature(bigram, int(signature.get('count') or 0), phrase_quotes)
     return {
         'name': name,
         'headline': headline,
@@ -300,6 +311,20 @@ def personal_story(
     }
 
 
+def _meeting_topics(transcript: dict | None, limit: int = 3) -> list[str]:
+    from lib.story_validation import GLUE_WORDS
+
+    counts: dict[str, int] = {}
+    for utterance in (transcript or {}).get('utterances') or []:
+        for word in re.findall(r"[A-Za-z']{5,}", str(utterance.get('text') or '')):
+            token = word.lower()
+            if token in GLUE_WORDS:
+                continue
+            counts[token] = counts.get(token, 0) + 1
+    ranked = sorted(counts, key=lambda item: (-counts[item], item))
+    return ranked[:limit]
+
+
 def group_story(
     *,
     summaries: dict,
@@ -308,6 +333,7 @@ def group_story(
     word_interaction: float,
     cast: str = '',
     draft: dict | None = None,
+    transcript: dict | None = None,
 ) -> dict:
     from lib.story_evidence import halfway_target
 
@@ -315,20 +341,38 @@ def group_story(
     participation_pct = int(round(100 * participation))
     word_pct = int(round(100 * word_interaction))
     target = halfway_target(interaction_pct, 70 if interaction_pct < 70 else interaction_pct)
-    headline = f'A serial panel at {interaction_pct}% interaction.'
+    headline = f'A session at {interaction_pct}% interaction.'
     character = (
-        f'{participation_pct}% participation, against {word_pct}% of the words exchanged. '
+        f'{participation_pct}% participation. {word_pct}% of the words were exchanged across turns. '
         + ('A few voices carried the airtime.' if participation < 0.75 else 'Airtime was fairly shared.')
     )
-    goal = 'Inferred from the session, not from a written brief.'
-    challenge = f'Interaction was {interaction_pct}%, so answers went to the center of the room.'
+    topics = _meeting_topics(transcript)
+    if len(topics) >= 2:
+        listed = ', '.join(topics[:-1]) + f', and {topics[-1]}'
+        goal = f'The turns keep returning to {listed}.'
+    elif topics:
+        goal = f'The turns keep returning to {topics[0]}.'
+    else:
+        goal = f'The turns are the record of the meeting. Interaction was {interaction_pct}%.'
+    challenge = f'Interaction was {interaction_pct}%.'
     drama = cast or 'Who talks to whom, and who nobody answered.'
-    resolution = ''
+    last_line = ''
+    for utterance in reversed((transcript or {}).get('utterances') or []):
+        text = str(utterance.get('text') or '').strip()
+        if text:
+            from lib.story_render import clip_clause
+
+            last_line = clip_clause(text, 12)
+            break
+    if last_line:
+        resolution = f'The meeting closed on "{last_line}". Interaction finished at {interaction_pct}%.'
+    else:
+        resolution = f'Interaction finished at {interaction_pct}%.'
     one_thing = f'Ask one question back before the next decision. Target: {target}% interaction.'
     why = f'Interaction was {interaction_pct}%, so {target}% is the halfway step.'
     from lib.story_render import pick_transitions
 
-    transitions = pick_transitions('group')
+    transitions = pick_transitions('group', group=True)
     draft = draft or {}
     if draft.get('headline'):
         headline = draft['headline']

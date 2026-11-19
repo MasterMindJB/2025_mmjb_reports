@@ -167,6 +167,20 @@ def pair_directions(
     return pairs
 
 
+def visible_chord_pairs(names: list[str], directed: list[list[int]]) -> list[tuple]:
+    """Every pair the diagram draws, including a single exchange on a group of seven or fewer.
+
+    Larger groups hide flows under 3 percent of the turns. The table uses the same cutoff.
+    """
+    total = sum(sum(row) for row in directed)
+    fade = 0.03 * total if len(names) > 7 else 0
+    shown = []
+    for left, right, forward, back, weight in pair_directions(names, directed):
+        if weight > 0 and weight + 1e-9 >= fade:
+            shown.append((left, right, forward, back))
+    return shown
+
+
 def chord_caption(names: list[str], directed: list[list[int]]) -> str:
     """One sentence naming the strongest pairs and the least connected people."""
     pairs = pair_directions(names, directed)

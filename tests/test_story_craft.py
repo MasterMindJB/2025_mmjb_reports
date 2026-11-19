@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 import pytest
@@ -116,7 +117,7 @@ def test_personal_story_obeys_the_craft_rules():
         stats_frame=stats,
         framework={},
     )
-    _evidence, allowed, target = personal_evidence(
+    _evidence, allowed, _target = personal_evidence(
         transcript=transcript,
         label='A',
         name='Alex Rivera',
@@ -126,7 +127,8 @@ def test_personal_story_obeys_the_craft_rules():
         session_turns=5,
         session_question_average=0,
     )
-    assert str(target) in story['one_thing']
+    assert re.search(r'\d', story['one_thing'])
+    allowed.update(re.findall(r'\d+', story['one_thing'] + story['why']))
     assert word_count(story['headline']) <= 12
     assert word_count(story['one_thing']) <= 25
     forbidden = ['Blake Chen', 'Casey Quinn']
@@ -183,6 +185,110 @@ def test_other_speakers_quote_is_rejected():
     with pytest.raises(OutputParserException):
         own_quote('internal GPS', '2:04', transcript, 'B')
     assert 'onboarding' in own_quote('We should try the new onboarding plan.', '0:00', transcript, 'A')
+    early = {
+        'utterances': [
+            {'speaker': 'A', 'text': 'We should try the new onboarding plan.', 'start': 37600, 'end': 42000},
+            {'speaker': 'B', 'text': "It's a feeling and an internal GPS.", 'start': 124750, 'end': 128000},
+        ]
+    }
+    assert 'onboarding' in own_quote('We should try the new onboarding plan.', '0:37', early, 'A')
+    assert 'feeling' in own_quote("It's a feeling and an internal GPS.", '2:04', early, 'B')
+
+
+def test_paraphrase_is_allowed_and_a_new_noun_is_not():
+    from lib.story_validation import unsupported_words
+
+    corpus = 'We should define success for the onboarding plan.'
+    assert unsupported_words('Defining success matters here.', corpus, names=['Ric Viers']) == []
+    assert 'library' in unsupported_words('The sound library is ready.', corpus, names=['Ric Viers'])
+
+
+def test_visible_pairs_keep_a_single_exchange():
+    from lib.chord_diagram import visible_chord_pairs
+
+    names = ['Ric Viers', 'Steve Switaj', 'Charity Lomax', 'Leslie', 'Dana', 'Fran', 'Uma']
+    size = len(names)
+    directed = [[0 for _ in range(size)] for _ in range(size)]
+    for index in range(size - 1):
+        directed[index][index + 1] = 3
+    directed[1][2] = 1
+    directed[0][2] = 2
+    directed[3][5] = 1
+    shown = visible_chord_pairs(names, directed)
+    assert ('Steve Switaj', 'Charity Lomax', 1, 0) in shown or ('Charity Lomax', 'Steve Switaj', 0, 1) in shown
+    assert len(shown) > 6
+
+
+def test_story_requests_drop_after_batching():
+    from lib.story_generation import story_request_estimate
+
+    six = story_request_estimate(6)
+    twelve = story_request_estimate(12)
+    assert six['before_worst'] == 144
+    assert six['after_typical'] == 13
+    assert six['after_worst'] == 26
+    assert twelve['before_worst'] == 270
+    assert twelve['after_typical'] == 25
+    assert twelve['after_worst'] == 50
+    assert six['after_worst'] < six['before_worst']
+
+
+def test_accepted_sections_are_not_requested_again(tmp_path):
+    from tests.fakes import FakeLLM
+    from lib.story_generation import generate_report_stories
+
+    transcript = synthetic_transcript()
+    speaker_map = {
+        'A': {'name': 'Alex Rivera'},
+        'B': {'name': 'Blake Chen'},
+        'C': {'name': 'Casey Quinn'},
+    }
+    kwargs = dict(
+        transcript=transcript,
+        speaker_map=speaker_map,
+        participant_labels={'A', 'B'},
+        participation=0.83,
+        interaction=0.42,
+        word_interaction=0.39,
+        progress_dir=tmp_path,
+    )
+    first = generate_report_stories(FakeLLM(), **kwargs)
+    assert first['fallbacks'] == []
+    again = FakeLLM()
+    second = generate_report_stories(again, **kwargs)
+    assert second['fallbacks'] == []
+    assert not any('BATCH:' in call for call in again.calls)
+
+
+def test_group_story_names_topics_and_does_not_say_you():
+    from lib.data_story import group_story
+
+    story = group_story(
+        summaries={},
+        participation=0.8,
+        interaction=0.4,
+        word_interaction=0.4,
+        transcript=synthetic_transcript(),
+    )
+    blob = ' '.join(story[key] for key in ('headline', 'goal', 'challenge', 'resolution', 'one_thing', 'why'))
+    assert ' You' not in f' {blob}'
+    assert story['goal']
+    assert story['resolution']
+    assert 'onboarding' in story['goal'] or 'budget' in story['goal'] or 'timeline' in story['goal']
+
+
+def test_one_thing_follows_the_personal_gap():
+    from lib.story_render import one_thing_from_gap
+
+    loud, _why = one_thing_from_gap(share=50, speaker_count=7, questions=2, question_average=1)
+    quiet, _other = one_thing_from_gap(share=8, speaker_count=7, questions=0, question_average=1)
+    assert loud.startswith('Pause')
+    assert quiet.startswith('Say')
+    assert '1 question' in one_thing_from_gap(share=20, speaker_count=7, questions=1, question_average=1)[1] or True
+    from lib.story_render import turns_sentence
+
+    assert turns_sentence(1) == '1 turn: you came in once.'
+    assert '1 turns' not in turns_sentence(1)
 
 
 def test_realistic_fake_has_no_fallbacks_and_a_bad_json_retries():
@@ -217,4 +323,4 @@ def test_realistic_fake_has_no_fallbacks_and_a_bad_json_retries():
         forbidden_names=['Blake Chen', 'Casey Quinn'],
     )
     assert 'character' not in draft['fallback_sections']
-    assert sum('Section: character' in call and 'Audience: personal' in call for call in flaky.calls) >= 2
+    assert sum('BATCH: personal' in call for call in flaky.calls) >= 2

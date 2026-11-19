@@ -120,5 +120,6 @@ class GeminiAnalysis:
             participation=tables.gini_reverse_interventions,
             interaction=tables.gini_reverse_interactions,
             word_interaction=tables.gini_reverse_interactions_both_wrd_cnt,
+            progress_dir=work_dir / 'story_progress',
         )
         return AnalysisBundle(speaker_map, summaries, speaker_analysis, tables, stories)

@@ -11,8 +11,9 @@ from lib.names import display_name
 
 
 def clock(milliseconds) -> str:
+    """Nearest whole second, so a turn at 37.6s is shown as 0:38, not 0:37."""
     try:
-        seconds = max(0, int(float(milliseconds) / 1000))
+        seconds = max(0, int(round(float(milliseconds) / 1000.0)))
     except (TypeError, ValueError):
         return '0:00'
     return f'{seconds // 60}:{seconds % 60:02d}'

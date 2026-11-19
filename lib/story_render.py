@@ -52,24 +52,47 @@ SCHEMAS = {
 
 TRANSITIONS = {
     'after_character': (
-        "That's who showed up. Here's what they came to do.",
-        'You walked in with one job.',
+        'The numbers are the picture. The aim is next.',
+        'That is the shape of the turns.',
     ),
     'after_goal': (
-        "It didn't go to plan, and not only because of you.",
-        'Three things stood in the way.',
+        'Here is what got in the way.',
+        'The obstacles were in the turns themselves.',
     ),
     'after_challenge': (
-        'The other side made it hard. Some of it was you.',
-        'Now the interesting part.',
+        'The pattern in the wording is next.',
+        'Here is the repeated move.',
     ),
     'after_drama': (
-        'So how did it end?',
-        "Here's where it landed.",
+        'Here is where the session landed.',
+        'The outcome follows from those turns.',
     ),
     'after_resolution': (
-        'If you change one thing next time, make it this.',
-        'One move would change the most.',
+        'The highest-leverage move is next.',
+        'One change follows from the largest gap.',
+    ),
+}
+
+GROUP_TRANSITIONS = {
+    'after_character': (
+        'The numbers describe the room. The aim comes next.',
+        'That is the shape of the session.',
+    ),
+    'after_goal': (
+        'Here is what made the exchange hard.',
+        'The obstacles show up in the turn pattern.',
+    ),
+    'after_challenge': (
+        'The chord shows who followed whom.',
+        'The pattern of turns is next.',
+    ),
+    'after_drama': (
+        'Here is where the meeting landed.',
+        'The outcome follows from those turns.',
+    ),
+    'after_resolution': (
+        'The move for the whole room is next.',
+        'One change follows from the largest gap.',
     ),
 }
 
@@ -78,13 +101,77 @@ GROUP_NUMBER_KEYS = ('participation', 'interaction', 'word_interaction')
 VERBS = ('pause', 'ask', 'name', 'repeat', 'count', 'stop', 'wait', 'say')
 
 
-def pick_transitions(seed: str) -> dict[str, str]:
-    """Each seam gets one stock line, rotated so a report does not use the whole first column."""
+def pick_transitions(seed: str, *, group: bool = False) -> dict[str, str]:
+    """Each seam gets one stock line, rotated so a report does not repeat the same sentence."""
+    options_for = GROUP_TRANSITIONS if group else TRANSITIONS
     base = sum(ord(char) for char in (seed or 'session'))
     chosen = {}
-    for index, (seam, options) in enumerate(TRANSITIONS.items()):
+    for index, (seam, options) in enumerate(options_for.items()):
         chosen[seam] = options[(base + index) % len(options)]
     return chosen
+
+
+def computed_signature(bigram: str, count: int, quotes: list[str]) -> dict[str, str]:
+    """A real reading when the model does not return What / So, what / Now, what."""
+    shown = ''
+    if quotes:
+        raw = re.sub(r'^\d+:\d+\s*', '', str(quotes[0])).strip().strip('"')
+        shown = clip_clause(raw, 20)
+    times = count_label(int(count or 0), 'time')
+    if bigram:
+        what = f'You reach for "{bigram}" while finding the next point.'
+        so_what = f'It showed up {times} in this session.'
+        if shown:
+            so_what = f'{so_what} One line was "{shown}".'
+    else:
+        what = 'No two-word phrase repeated often enough to name.'
+        so_what = 'The turns do not lean on one repeated pair.'
+    return {
+        'what': what,
+        'so_what': so_what,
+        'now_what': 'Pause once before using the phrase again.',
+    }
+
+
+def clip_clause(text: str, limit: int = 25) -> str:
+    """One sentence or clause, capped so a whole turn is not pasted."""
+    sentence = re.split(r'(?<=[.!?])\s+', (text or '').strip())[0]
+    words = sentence.split()
+    if len(words) <= limit:
+        return sentence.strip()
+    return ' '.join(words[:limit]).rstrip(',;:')
+
+
+def one_thing_from_gap(
+    *,
+    share: int,
+    speaker_count: int,
+    questions: int,
+    question_average: int,
+) -> tuple[str, str]:
+    """The habit follows this person's largest gap, not one question line for everyone."""
+    average = room_average(speaker_count)
+    share_gap = int(share) - average
+    question_gap = max(int(question_average), 1) - int(questions)
+    if share_gap > 5 and share_gap >= question_gap:
+        target = halfway_target(int(share), max(average, 25) if int(share) > 25 else int(share))
+        if target == int(share):
+            target = max(0, int(share) - 1)
+        sentence = f'Pause after the point. Target: {target}% talk time.'
+        why = f'Talk time is {int(share)}%, {share_relation(share, speaker_count)}.'
+        return sentence, why
+    if share_gap < -5 and -share_gap >= max(question_gap, 0):
+        target = halfway_target(int(share), average)
+        sentence = f'Say one added point before handing the turn on. Target: {target}% talk time.'
+        why = f'Talk time is {int(share)}%, {share_relation(share, speaker_count)}.'
+        return sentence, why
+    target = halfway_target(int(questions), 3 if int(questions) < 3 else int(questions))
+    sentence = f'Ask one question before the second long turn. Target: {count_label(target, "question")}.'
+    why = (
+        f'{questions_sentence(questions, question_average)} '
+        f'{count_label(target, "question")} is the halfway step.'
+    )
+    return sentence, why
 
 
 def count_label(value: int, singular: str, plural: str | None = None) -> str:
@@ -140,19 +227,32 @@ def rate_sentence(value: int, name: str) -> str:
     return f'{int(value)}% {name}'
 
 
-def _no_digits(text: str, label: str) -> str:
+def _no_digits(text: str, label: str, allowed: set[str] | None = None) -> str:
     cleaned = (text or '').strip()
-    if re.search(r'\d', cleaned):
+    extra = [number for number in re.findall(r'\d+', cleaned) if not allowed or number not in allowed]
+    if extra and allowed is None:
         raise OutputParserException(f'{label} must not contain a digit; facts supply the numbers')
+    if extra and allowed is not None:
+        raise OutputParserException(f'{label} uses numbers that are not in the fact list: {extra}')
     return cleaned
 
 
-def _prose(text: str, corpus: str, label: str, *, forbidden_names: list[str] | None = None) -> str:
-    cleaned = _no_digits(text, label)
+def _prose(
+    text: str,
+    corpus: str,
+    label: str,
+    *,
+    forbidden_names: list[str] | None = None,
+    allowed_numbers: set[str] | None = None,
+    speaker_names: list[str] | None = None,
+) -> str:
+    cleaned = _no_digits(text, label, allowed_numbers)
     if not cleaned:
         raise OutputParserException(f'{label} is empty')
-    reject_craft_violations(cleaned, forbidden_names=forbidden_names)
-    missing = unsupported_words(cleaned, corpus)
+    reject_craft_violations(cleaned, forbidden_names=forbidden_names, allowed_numbers=allowed_numbers)
+    missing = unsupported_words(
+        cleaned, corpus, names=speaker_names, allowed_numbers=allowed_numbers
+    )
     if missing:
         raise OutputParserException(f'{label} uses words that are not in the transcript: {missing}')
     return cleaned

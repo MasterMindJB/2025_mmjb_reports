@@ -103,7 +103,8 @@ def own_quote(text: str, timestamp: str, transcript: dict | None, label: str) ->
             continue
         start = float(row.get('start') or 0)
         end = float(row.get('end') or start)
-        if start <= moment <= end:
+        # A clock rounded to a whole second can sit up to a second outside the turn.
+        if start - 1000 <= moment <= end + 1000:
             return cleaned
     _fail(f'quote is not inside a turn by {label}: {cleaned}')
     return cleaned
@@ -126,19 +127,62 @@ GLUE_WORDS = {
     'interesting', 'specific', 'moment', 'start', 'line', 'buys', 'costs', 'doing',
     'phrase', 'often', 'reads', 'right', 'after', 'open', 'using', 'used', 'reach',
     'familiar', 'second', 'offer', 'target', 'halfway', 'step', 'asked', 'question',
+    'matters', 'means', 'shows', 'helps', 'seems', 'looks', 'feels', 'makes', 'takes',
+    'gives', 'keeps', 'needs', 'wants', 'tries', 'works', 'comes', 'goes', 'says',
+    'tells', 'asks', 'holds', 'stays', 'moves', 'opens', 'closes', 'starts', 'ends',
+    'follows', 'leads', 'brings', 'leaves', 'happens', 'changes', 'remains', 'appears',
+    'becomes', 'includes', 'suggests', 'points', 'shares', 'speaks', 'listens',
+    'responds', 'agrees', 'thinks', 'knows', 'sees', 'hears', 'still', 'really',
+    'already', 'always', 'often', 'sometimes', 'together', 'around', 'through',
+    'during', 'within', 'without', 'between', 'because', 'while', 'clear', 'important',
+    'group', 'people', 'person', 'meeting', 'round', 'table', 'success',
 }
 
 
-def unsupported_words(text: str, corpus: str) -> list[str]:
-    """Content words in text that never appear in the corpus. Glue words are allowed."""
-    blob = _normalize(corpus)
+_SUFFIXES = ('ingly', 'ation', 'ness', 'ment', 'ting', 'ing', 'ied', 'ed', 'es', 'ly', 'er', 'est', 's')
+
+
+def _stem(token: str) -> str:
+    for suffix in _SUFFIXES:
+        if len(token) > len(suffix) + 3 and token.endswith(suffix):
+            return token[: -len(suffix)]
+    return token
+
+
+def unsupported_words(
+    text: str,
+    corpus: str,
+    *,
+    names: list[str] | None = None,
+    allowed_numbers: set[str] | None = None,
+) -> list[str]:
+    """Flag content words that are absent from the transcript.
+
+    Function words, inflections, the speaker's name, and fact-list numbers are allowed.
+    A shared stem of four letters counts as a paraphrase, not a new claim.
+    """
+    corpus_tokens = set(re.findall(r"[a-z']{3,}", (corpus or '').lower()))
+    allowed_names = set()
+    for name in names or []:
+        allowed_names.update(re.findall(r"[a-z']{2,}", name.lower()))
     missing = []
     for word in re.findall(r"[A-Za-z']{4,}", text or ''):
         token = word.lower().strip("'")
-        if token in GLUE_WORDS or len(token) < 4:
+        if token in GLUE_WORDS or token in allowed_names or len(token) < 5:
             continue
-        if token not in blob:
-            missing.append(token)
+        if token.isdigit() or (allowed_numbers and token in allowed_numbers):
+            continue
+        stem = _stem(token)
+        if token in corpus_tokens or stem in corpus_tokens:
+            continue
+        key = stem[:5] if len(stem) >= 5 else stem
+        if len(key) >= 4 and any(
+            item.startswith(key) or key.startswith(item[:5])
+            for item in corpus_tokens
+            if len(item) >= 4
+        ):
+            continue
+        missing.append(token)
     return missing
 
 

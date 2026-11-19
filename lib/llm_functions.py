@@ -153,7 +153,7 @@ class ConversationSummarizer:
         from lib.story_validation import quoted_spans, reject_craft_violations
 
         parsed = None
-        for _attempt in range(3):
+        for _attempt in range(2):
             raw = self.llm.invoke(message)
             analysis = raw.content if hasattr(raw, 'content') else str(raw)
             if isinstance(analysis, list):
@@ -182,15 +182,16 @@ class ConversationSummarizer:
             except (OutputParserException, json.JSONDecodeError, ValueError, TypeError):
                 parsed = None
         if parsed is None:
+            from lib.story_render import computed_signature
+
+            filled = computed_signature(bigram, int(count), [])
             return {
                 'bigram': bigram,
                 'count': int(count),
-                'analysis': '',
+                'analysis': filled['what'],
                 'examples': examples,
                 'computed': True,
-                'what': '',
-                'so_what': '',
-                'now_what': '',
+                **filled,
             }
         return {
             'bigram': bigram,
