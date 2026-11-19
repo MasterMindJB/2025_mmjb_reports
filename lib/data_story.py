@@ -424,14 +424,56 @@ def personal_story(
         },
         'contributions': [],
         'lines': lines,
-        'appendix': {
-            'AMASE': _top_framework(framework.get('amase_values'), framework.get('amase_notes'), name),
-            'Enneagram': _top_framework(
-                framework.get('enneagram_values'), framework.get('enneagram_notes'), name
-            ),
-            'Doshas': _top_framework(framework.get('dosha_values'), framework.get('dosha_notes'), name),
-        },
+        'role': info.get('role') or 'participant',
+        'handed_to': _handed_to(transcript, label),
+        'roster_shares': _roster_shares(stats_frame),
+        'appendix': _appendix(framework, name),
     }
+
+
+def _roster_shares(frame) -> list[tuple[str, float]]:
+    if frame is None or 'Speaking Time (%)' not in getattr(frame, 'columns', []):
+        return []
+    shares = []
+    for person, value in frame['Speaking Time (%)'].items():
+        if str(person) == 'Average':
+            continue
+        shares.append((str(person), float(value or 0)))
+    return shares
+
+
+def _handed_to(transcript: dict | None, label: str) -> str:
+    """Top three people this speaker handed the turn to."""
+    rows = (transcript or {}).get('utterances') or []
+    counts: dict[str, int] = {}
+    for index, row in enumerate(rows[:-1]):
+        if row.get('speaker') != label:
+            continue
+        nxt = rows[index + 1]
+        if nxt.get('speaker') == label:
+            continue
+        name = str(nxt.get('name') or nxt.get('speaker') or '').strip()
+        if not name:
+            continue
+        counts[name] = counts.get(name, 0) + 1
+    ranked = sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:3]
+    if not ranked:
+        return ''
+    listed = ', '.join(f'{name} {count}' for name, count in ranked)
+    return f'Handed to: {listed}.'
+
+
+def _appendix(framework: dict, name: str) -> dict:
+    """AMASE stays. Enneagram and Doshas are opt-in and off unless asked for."""
+    appendix = {
+        'AMASE': _top_framework(framework.get('amase_values'), framework.get('amase_notes'), name),
+    }
+    if framework.get('include_personality'):
+        appendix['Enneagram'] = _top_framework(
+            framework.get('enneagram_values'), framework.get('enneagram_notes'), name
+        )
+        appendix['Doshas'] = _top_framework(framework.get('dosha_values'), framework.get('dosha_notes'), name)
+    return appendix
 
 
 def _meeting_topics(transcript: dict | None, limit: int = 3) -> list[str]:

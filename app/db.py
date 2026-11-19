@@ -88,6 +88,7 @@ SESSION_FIELDS = {
     'progress',
     'window_start_ms',
     'window_end_ms',
+    'include_personality',
 }
 
 
@@ -110,6 +111,10 @@ class Database:
             for column in ('window_start_ms', 'window_end_ms'):
                 if column not in columns:
                     conn.execute(f'ALTER TABLE sessions ADD COLUMN {column} INTEGER')
+            if 'include_personality' not in columns:
+                conn.execute(
+                    'ALTER TABLE sessions ADD COLUMN include_personality INTEGER NOT NULL DEFAULT 0'
+                )
             speaker_columns = {row['name'] for row in conn.execute('PRAGMA table_info(speakers)')}
             if 'name_status' not in speaker_columns:
                 conn.execute(

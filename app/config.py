@@ -32,6 +32,7 @@ class Settings:
     https_only: bool
     gemini_model: str = 'gemini-3.1-flash-lite'
     gemini_timeout_seconds: float = 120.0
+    include_personality: bool = False
 
     @property
     def sends_email(self) -> bool:
@@ -119,4 +120,5 @@ def load_settings() -> Settings:
         https_only=_flag('HTS_HTTPS_ONLY', 'false'),
         gemini_model=gemini_model,
         gemini_timeout_seconds=gemini_timeout_seconds,
+        include_personality=_flag('HTS_PERSONALITY', 'false'),
     )

@@ -112,6 +112,9 @@ class MM_PDF(FPDF):
         self.set_font_to_recall()
 
     def header(self):
+        if getattr(self, '_hts_story', False):
+            self._story_header()
+            return
         if getattr(self, 'brand_canvas', False):
             self._brand_pages.add(self.page)
             self.brand_canvas = False
@@ -130,7 +133,28 @@ class MM_PDF(FPDF):
         self.ln(12)
 
     # Page footer
+    def _story_header(self) -> None:
+        """The official wordmark, at its own aspect ratio, in the site navy."""
+        logo = Path(__file__).resolve().parents[1] / 'assets' / 'logo' / 'wordmark-navy.png'
+        self.set_text_color(28, 44, 91)
+        if logo.is_file():
+            # fpdf cannot draw the SVG <text>, so this is a 168x48 raster of
+            # assets/logo/wordmark-navy.svg painted with the site navy. Height
+            # is set and the width follows, so the mark is not stretched.
+            self.image(str(logo), x=self.l_margin, h=12, keep_aspect_ratio=True)
+        else:
+            self.set_font('Poppins', 'b', 11)
+            self.cell(w=0, h=8, text='HARKNESS', ln=True)
+        self.ln(2)
+
     def footer(self):
+        if getattr(self, '_hts_story', False):
+            self.set_y(-12)
+            self.set_font('Poppins', '', 9)
+            self.set_text_color(28, 44, 91)
+            self.cell(0, 8, 'Harkness Training Solutions 2026', align='L')
+            self.cell(0, 8, f'{self.page_no()}/{{nb}}', align='R')
+            return
         self.set_y(-15)  # Set position of the footer
         branded = self.page in getattr(self, '_brand_pages', ())
         if branded:
@@ -585,6 +609,7 @@ def create_report_personal(
     file_name_prefix: Optional[str] = None,
     transcript: dict | None = None,
     story_drafts: dict | None = None,
+    include_personality: bool = False,
 ):
     logging.info('Creating personal PDF reports for each speaker.')
 
@@ -615,6 +640,7 @@ def create_report_personal(
                 'enneagram_notes': df_framework_enneagram_explanation,
                 'dosha_values': df_framework_doshas_values,
                 'dosha_notes': df_framework_doshas_explanation,
+                'include_personality': include_personality,
             },
             draft=(story_drafts or {}).get(speaker),
         )

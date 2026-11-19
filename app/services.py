@@ -176,6 +176,7 @@ def generate_session(
             participant_labels=participant_labels,
             feedback_url=settings.feedback_url,
             roles_by_label={speaker['label']: speaker['role'] for speaker in speakers},
+            include_personality=bool(session.get('include_personality')) or settings.include_personality,
         )
         if reports_dir.exists():
             shutil.rmtree(reports_dir)

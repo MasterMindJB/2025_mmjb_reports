@@ -26,6 +26,7 @@ class PdfReportRenderer:
         participant_labels: set[str],
         feedback_url: str,
         roles_by_label: dict[str, str] | None = None,
+        include_personality: bool = False,
     ) -> list[RenderedReport]:
         reports_dir.mkdir(parents=True, exist_ok=True)
         participant_map = {
@@ -98,6 +99,7 @@ class PdfReportRenderer:
                 df_framework_enneagram_explanation=enneagram_explanations,
                 df_framework_doshas_values=dosha_values,
                 df_framework_doshas_explanation=dosha_explanations,
+                include_personality=include_personality,
             )
 
         rendered = [

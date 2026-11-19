@@ -305,6 +305,7 @@ def create_app(
         consent: str = Form(''),
         session_start: str = Form(''),
         session_end: str = Form(''),
+        include_personality: str = Form(''),
         recording: UploadFile | None = None,
     ):
         try:
@@ -361,6 +362,8 @@ def create_app(
             window_start_ms=window_start,
             window_end_ms=window_end,
         )
+        if include_personality == 'yes' or settings.include_personality:
+            db.update_session(session_id, include_personality=1)
         root = session_root(settings, session_id)
         root.mkdir(parents=True, exist_ok=True)
         destination = root / f'source{suffix}'

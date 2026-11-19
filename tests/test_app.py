@@ -183,13 +183,14 @@ def test_full_flow_keeps_individual_reports_private(tmp_path):
             'ACTION_TITLE_BLAKE',
             'SUPERPOWER_TOKEN_Blake_Chen',
             'AMASE_TOKEN_Blake_Chen',
-            'Blake Chen',
-            'Casey Quinn',
         ):
             assert foreign not in alex
+        before_handoff = alex.split('Handed to:')[0]
+        assert 'Blake Chen' not in before_handoff
+        assert 'Casey Quinn' not in before_handoff
         assert 'PERSONAL_SUMMARY_TOKEN_ALEX' not in blake
         assert 'QUOTE_TAG_ALEX' not in blake
-        assert 'Alex Rivera' not in blake
+        assert 'Alex Rivera' not in blake.split('Handed to:')[0]
         assert 'GROUP_LONG_TOKEN' not in group
         assert 'GROUP_SHORT_TOKEN' not in group
         for private in (
