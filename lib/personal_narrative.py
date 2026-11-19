@@ -438,11 +438,33 @@ def _record_attempt(progress_dir, label: str, raw: str, reasons: list[str]) -> N
     os.chmod(path, 0o600)
 
 
+def personal_model_name() -> str:
+    """Non-lite flash for the personal call. There is no gemini-3.1-flash on this key."""
+    return os.getenv('GEMINI_PERSONAL_MODEL', 'gemini-3.5-flash')
+
+
+def _model_not_found(exc: BaseException) -> bool:
+    """A 404 from the personal model. Other failures stay failures."""
+    current: BaseException | None = exc
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if getattr(current, 'status_code', None) == 404 or getattr(current, 'code', None) == 404:
+            return True
+        if type(current).__name__.lower() == 'notfound':
+            return True
+        text = str(current).lower()
+        if '404' in text and 'not found' in text:
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
 def for_personal_narrative(llm):
     """Personal narrative uses non-lite flash. Every other call keeps flash-lite.
 
-    gemini-2.5-flash returns 404 for this project's keys, so the call uses
-    gemini-3.1-flash. GEMINI_PERSONAL_MODEL can name a different id.
+    gemini-3.1-flash is not a model on this project's key. The default is
+    gemini-3.5-flash. GEMINI_PERSONAL_MODEL can name a different id.
     A test double is returned unchanged.
     """
     model = getattr(llm, 'model', None)
@@ -454,7 +476,7 @@ def for_personal_narrative(llm):
         return llm
     if not isinstance(llm, ChatGoogleGenerativeAI):
         return llm
-    target = os.getenv('GEMINI_PERSONAL_MODEL', 'gemini-3.1-flash')
+    target = personal_model_name()
     if target == model:
         return llm
     kwargs = {
@@ -471,7 +493,9 @@ def for_personal_narrative(llm):
 
 def build_personal_story(llm, transcript, label: str, info: dict, stats: dict, progress_dir=None) -> dict:
     """One call when there is enough speech. A failed 1 big thing becomes the short report."""
+    fallback = llm
     llm = for_personal_narrative(llm)
+    used_fallback = llm is fallback
     rows = speaker_rows(transcript, label)
     quotes = candidate_quotes([str(row.get('text') or '') for row in rows])
     lines, allowed = computed_numbers(transcript, label, stats)
@@ -484,15 +508,26 @@ def build_personal_story(llm, transcript, label: str, info: dict, stats: dict, p
     failures: list[str] = []
     best_payload = None
     best_found: dict[str, list[str]] = {'one_big_thing': ['response was not JSON']}
-    for _attempt in range(2):
+    attempts = 0
+    while attempts < 2:
         raw_text = ''
         try:
             raw_text = _raw_text(llm.invoke(_prompt(name, lines, quotes, failures, phrase, step)))
             payload = _parse(raw_text)
         except Exception as exc:
+            if not used_fallback and _model_not_found(exc):
+                logging.warning(
+                    'personal model %s returned 404; falling back to %s',
+                    getattr(llm, 'model', None) or personal_model_name(),
+                    getattr(fallback, 'model', None) or 'flash-lite',
+                )
+                llm = fallback
+                used_fallback = True
+                continue
             logging.warning('personal narrative call failed: %s', exc)
             payload = None
             raw_text = raw_text or str(exc)
+        attempts += 1
         if payload is None:
             found = {'one_big_thing': ['response was not JSON']}
         else:

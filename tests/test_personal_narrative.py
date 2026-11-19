@@ -184,3 +184,59 @@ def test_twenty_one_percent_of_seven_is_one_and_a_half_times():
     line = share_relation(21, 7)
     assert '1.5×' in line
     assert '2×' not in line
+
+
+def test_personal_model_404_falls_back_to_flash_lite(monkeypatch, caplog):
+    import logging
+
+    from lib.personal_narrative import moment_word, personal_model_name
+
+    monkeypatch.delenv('GEMINI_PERSONAL_MODEL', raising=False)
+    assert personal_model_name() == 'gemini-3.5-flash'
+    rows = []
+    for row in _long_rows():
+        rows.append({**row, 'text': f"{row['text']} {row['text']}", 'end': row['start'] + 70000})
+    transcript = {'utterances': rows}
+    quotes = candidate_quotes([row['text'] for row in rows])
+    moment = moment_word(quotes, rows)
+    payload = {
+        'headline': 'You held the budget point.',
+        'one_big_thing': (
+            f'You kept the point in one stretch. You said "{quotes[0]}" Will you let the room answer?'
+        ),
+        'why_it_matters': 'The room could not answer while you were still talking.',
+        'yes_but': 'The point was clear. It left no gap for a reply.',
+        'next_rep': f'Next time, ask one question about {moment}.',
+        'number_lines': ['You spoke for 21% of the hour.'],
+        'said_quote': quotes[1],
+    }
+
+    class Missing:
+        model = 'gemini-3.5-flash'
+
+        def invoke(self, prompt):
+            error = RuntimeError('404 Not Found: models/gemini-3.5-flash is not found')
+            error.status_code = 404
+            raise error
+
+    class Lite:
+        model = 'gemini-3.1-flash-lite'
+
+        def __init__(self):
+            self.calls = 0
+
+        def invoke(self, prompt):
+            self.calls += 1
+            return type('Reply', (), {'content': json.dumps(payload)})()
+
+    monkeypatch.setattr('lib.personal_narrative.for_personal_narrative', lambda llm: Missing())
+    lite = Lite()
+    with caplog.at_level(logging.WARNING):
+        story = build_personal_story(
+            lite, transcript, 'A', {'name': 'Ric'},
+            {'share': 21, 'turns': 6, 'questions': 1, 'session_question_average': 1, 'speaker_count': 7},
+        )
+    assert lite.calls == 1
+    assert story['short_mode'] is False
+    assert '404' in caplog.text
+    assert 'gemini-3.1-flash-lite' in caplog.text
