@@ -291,6 +291,7 @@ def personal_story(
         questions_sentence,
         question_number_line,
         share_sentence,
+        session_talk_phrase,
         talk_number_line,
         turns_sentence,
     )
@@ -321,9 +322,9 @@ def personal_story(
 
     turn_median = room_median(turn_values)
     numbers = [
-        talk_number_line(share_pct, speaker_count),
+        talk_number_line(share_pct, speaker_count, session_talk_phrase(transcript)),
         question_number_line(question_count, session_question_average),
-        turns_sentence(turn_count, turn_median),
+        turns_sentence(turn_count, turn_median, int(words) if turn_count == 1 else None),
     ]
     def _substantive(event) -> bool:
         words = re.findall(r"[A-Za-z']+", str((event or {}).get('text') or ''))
@@ -500,17 +501,8 @@ def _handed_to(transcript: dict | None, label: str) -> str:
     ranked = sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:3]
     if not ranked:
         return ''
-    from lib.readability import reading_grade
-
-    def _line(items) -> str:
-        listed = ', '.join(f'{name} {count}' for name, count in items)
-        return f'Passed to {listed}.'
-
-    line = _line(ranked)
-    if reading_grade(line) > 6:
-        short = [(str(name).split()[0], count) for name, count in ranked]
-        line = _line(short)
-    return line
+    listed = ', '.join(f'{name} {count}' for name, count in ranked)
+    return f'Passed to {listed}.'
 
 
 def _appendix(framework: dict, name: str) -> dict:

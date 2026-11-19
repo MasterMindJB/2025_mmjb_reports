@@ -131,8 +131,7 @@ def test_a_quoted_script_may_say_i_and_one_bad_section_stays_full(tmp_path):
         progress_dir=tmp_path,
     )
     assert story['short_mode'] is False
-    assert 'decision' in story['one_big_thing']
-    assert 'I would ask Leslie' not in story['next_rep']
+    assert 'I would ask Leslie' in story['next_rep']
     saved = json.loads((tmp_path / 'checkpoints.json').read_text(encoding='utf-8'))
     assert saved[0]['raw']
     assert 'unquoted first-person' not in ' '.join(saved[0]['reasons'])
@@ -180,6 +179,84 @@ def test_talk_share_not_the_quiet_handoff_is_who_we_ask():
     assert sentence == 'Ask Leslie to speak before the next choice.'
 
 
+def test_quote_ids_are_inserted_and_a_retype_is_dropped():
+    from lib.personal_narrative import apply_quote_ids
+
+    quotes = [
+        'We should try the new onboarding plan.',
+        'The budget can wait until the client signs.',
+    ]
+    placed = apply_quote_ids({
+        'one_big_thing': 'You told one long story with lots of detail. What if you stopped and asked who had tried that?',
+        'one_big_thing_quote': 'Q2',
+        'said_quote': '…a lot of people say. It is very intimidating.',
+        'why_it_matters': 'You said "not the real line" and the room waited.',
+    }, quotes)
+    assert placed['one_big_thing'].count('The budget can wait until the client signs.') == 1
+    assert 'intimidating' not in placed['said_quote']
+    assert placed['said_quote'] == quotes[1]
+    assert 'not the real line' not in placed['why_it_matters']
+
+
+def test_a_garbled_next_rep_and_a_label_headline_fail():
+    from lib.personal_narrative import section_problems, suggested_next_rep
+
+    problems = section_problems({
+        'headline': 'Here is your personal report.',
+        'one_big_thing': 'You told one long story with lots of detail. What if you stopped after one point and asked who had tried that?',
+        'why_it_matters': 'Your voice brings good ideas to the team.',
+        'yes_but': 'The point was clear.',
+        'next_rep': 'Next time, ask about intimidating.',
+        'said_quote': '',
+    }, [], set(), 'budget')
+    assert any('finding' in item for item in problems.get('headline', []))
+    assert any('generic' in item for item in problems.get('why_it_matters', []))
+    assert any('script' in item for item in problems.get('next_rep', []))
+    script = suggested_next_rep(
+        [{'text': 'The work is very intimidating to begin now for a new team today.', 'start': 0, 'end': 70000}],
+        {'share': 20, 'speaker_count': 6, 'questions': 0},
+        'intimidating',
+    )
+    assert script.startswith('Say:')
+    assert 'ask about intimidating' not in script
+
+
+def test_session_length_replaces_of_the_hour():
+    from lib.story_render import session_talk_phrase, talk_number_line
+
+    phrase = session_talk_phrase({'utterances': [
+        {'text': 'Hello there friend.', 'start': 0, 'end': 1000},
+        {'text': 'We should try the plan.', 'start': 60_000, 'end': 480_000},
+    ]})
+    assert phrase == 'this 8-minute talk'
+    line = talk_number_line(21, 6, phrase)
+    assert 'of this 8-minute talk' in line
+    assert 'of the hour' not in line
+
+
+def test_passed_to_keeps_the_full_display_name():
+    from lib.data_story import _handed_to
+
+    line = _handed_to({
+        'utterances': [
+            {'speaker': 'A', 'text': 'The plan needs a budget before we leave today.', 'start': 0, 'end': 4000},
+            {'speaker': 'B', 'name': 'Full Sail Moderator', 'text': 'I can take the next point from here.', 'start': 4000, 'end': 8000},
+            {'speaker': 'A', 'text': 'Then we should ask Stephen before the close.', 'start': 8000, 'end': 12000},
+            {'speaker': 'C', 'name': 'Stephen', 'text': 'I will own the timeline after this.', 'start': 12000, 'end': 16000},
+        ]
+    }, 'A')
+    assert 'Full Sail Moderator' in line
+    assert 'Passed to Full 1' not in line
+
+
+def test_personal_call_uses_a_low_thinking_budget():
+    from lib.personal_narrative import THINKING_BUDGET, personal_client_settings
+
+    settings = personal_client_settings(type('LLM', (), {'timeout': 30})())
+    assert settings['model'] == 'gemini-3.6-flash'
+    assert settings['thinking_budget'] == THINKING_BUDGET == 512
+
+
 def test_twenty_one_percent_of_seven_is_one_and_a_half_times():
     line = share_relation(21, 7)
     assert '1.5×' in line
@@ -192,7 +269,7 @@ def test_personal_model_404_falls_back_to_flash_lite(monkeypatch, caplog):
     from lib.personal_narrative import moment_word, personal_model_name
 
     monkeypatch.delenv('GEMINI_PERSONAL_MODEL', raising=False)
-    assert personal_model_name() == 'gemini-3.5-flash'
+    assert personal_model_name() == 'gemini-3.6-flash'
     rows = []
     for row in _long_rows():
         rows.append({**row, 'text': f"{row['text']} {row['text']}", 'end': row['start'] + 70000})
@@ -201,14 +278,12 @@ def test_personal_model_404_falls_back_to_flash_lite(monkeypatch, caplog):
     moment = moment_word(quotes, rows)
     payload = {
         'headline': 'You held the budget point.',
-        'one_big_thing': (
-            f'You kept the point in one stretch. You said "{quotes[0]}" Will you let the room answer?'
-        ),
-        'why_it_matters': 'The room could not answer while you were still talking.',
+        'one_big_thing': 'You kept the point in one stretch. What if you stopped and asked who had tried that?',
+        'one_big_thing_quote': 'Q1',
+        'why_it_matters': f'The room heard {moment} and could not answer while you kept going.',
         'yes_but': 'The point was clear. It left no gap for a reply.',
-        'next_rep': f'Next time, ask one question about {moment}.',
-        'number_lines': ['You spoke for 21% of the hour.'],
-        'said_quote': quotes[1],
+        'next_rep': f'Say: "I will stop after one point about {moment}, then ask who has tried that."',
+        'said_quote': 'Q2',
     }
 
     class Missing:

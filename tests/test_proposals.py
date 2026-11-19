@@ -124,9 +124,8 @@ def test_talk_most_comes_from_share_not_from_who_followed_whom():
         '_portrait': {'pair': ('Moderator', 'Ric'), 'least': 'G'},
         '_closing': {'name': 'Leslie', 'text': 'The quiet line still closed the hour well.'},
     })
-    assert 'Steve talked the most' in text
-    assert 'Leslie talked the least' in text
-    assert 'back and forth ran between Moderator and Ric' in text
+    assert 'Steve talked the most, and Leslie the least.' in text
+    assert 'back and forth' not in text
     assert 'Moderator and Ric did most of the talking' not in text
     assert 'G spoke the least' not in text
     assert text.count('"') % 2 == 0

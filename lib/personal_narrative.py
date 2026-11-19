@@ -12,6 +12,7 @@ from lib.story_render import (
     question_number_line,
     room_average,
     room_median,
+    session_talk_phrase,
     talk_number_line,
     turns_sentence,
 )
@@ -115,26 +116,22 @@ def moment_word(quotes: list[str], rows: list[dict]) -> str:
 
 
 def suggested_next_rep(rows: list[dict], stats: dict, moment: str = '') -> str:
-    """A next step that matches how this person spoke, and the thing they spoke about."""
+    """A full script the person can say. Not 'ask about' plus one bare word."""
     turns = len(rows)
     words = word_total(rows)
     share = int(stats.get('share') or 0)
     speakers = max(int(stats.get('speaker_count') or 1), 1)
     questions = int(stats.get('questions') or 0)
-    topic = moment or 'that point'
+    topic = moment if moment and not moment.endswith('ing') else 'that point'
     if turns <= 2 and words >= 60:
-        line = f'Next time, stop after two sentences and ask about {topic}.'
-    elif share > room_average(speakers) + 2:
-        line = f'Next time, stop after one point about {topic} and let someone else speak.'
-    elif questions == 0:
-        line = f'Next time, ask one question about {topic}.'
-    elif turns < 3:
-        line = f'Next time, add one more point about {topic}.'
-    else:
-        line = f'Next time, pause after {topic} and invite a reply.'
-    if reading_grade(line) > 6:
-        line = f'Next time, ask about {topic}.'
-    return line
+        return f'Say: "I will stop after two sentences about {topic}, then ask who has tried that."'
+    if share > room_average(speakers) + 2:
+        return f'Say: "I will make one point about {topic}, then hand it to someone else."'
+    if questions == 0:
+        return f'Say: "Before I add to {topic}, I want to ask who has tried that."'
+    if turns < 3:
+        return f'Say: "I will add one short point about {topic}, then ask what you would change."'
+    return f'Say: "I will pause after {topic} and ask who wants to answer."'
 
 
 def speech_headline(rows: list[dict]) -> str:
@@ -208,10 +205,12 @@ def computed_numbers(transcript, label: str, stats: dict) -> tuple[list[str], se
     speakers = int(stats.get('speaker_count') or len(counts) or 1)
     questions = int(stats.get('questions') or 0)
     average = int(stats.get('session_question_average') or 0)
+    span = session_talk_phrase(transcript)
+    own_words = word_total(speaker_rows(transcript, label))
     lines = [
-        talk_number_line(share, speakers),
+        talk_number_line(share, speakers, span),
         question_number_line(questions, average),
-        turns_sentence(mine, median if median is not None else mine),
+        turns_sentence(mine, median if median is not None else mine, own_words if mine == 1 else None),
     ]
     allowed = {
         str(share), str(room_average(speakers)), str(mine), str(median if median is not None else mine),
@@ -221,7 +220,7 @@ def computed_numbers(transcript, label: str, stats: dict) -> tuple[list[str], se
 
 
 def _prompt(name: str, lines: list[str], quotes: list[str], failures: list[str], phrase: str, next_rep: str) -> str:
-    quote_block = '\n'.join(f'{index + 1}. "{quote}"' for index, quote in enumerate(quotes)) or 'None.'
+    quote_block = '\n'.join(f'Q{index + 1}: {quote}' for index, quote in enumerate(quotes)) or 'None.'
     number_block = '\n'.join(f'- {line}' for line in lines)
     retry = ''
     if failures:
@@ -229,26 +228,72 @@ def _prompt(name: str, lines: list[str], quotes: list[str], failures: list[str],
     return (
         f'{PROMPT_MARK}\n'
         f'Write the personal report for {name}. Use only the evidence below.\n'
-        'Style: fifth-grade words, short sentences, second person. '
-        'Headline: one real sentence of 6 words or fewer. '
-        'one_big_thing: the pattern, then quote 1, then a question that names a person or a concrete thing from that quote. '
-        'Do not write "who else should speak about". '
-        'why_it_matters and yes_but: second person. They do not need their own next step. '
-        'next_rep: start with a verb such as stop, ask, name, say, pause, or invite. '
-        'A script may say I inside quote marks, as in Say: "I want your take." '
-        'Use at most one number in a sentence. Copy that number from the lines below. '
-        'number_lines: copy the number lines exactly. '
-        'said_quote: copy quote 2 exactly, one sentence, or "" if there is no quote 2. '
-        'Do not join two sentences, and do not add dots at the start or the end. '
-        'next_rep must follow the suggested next step, including its topic word. '
-        'Never name a metric. Never use interaction, participation, or talk time.\n'
+        'Style: fifth-grade words, short sentences, second person.\n'
+        'Headline: that person\'s finding, 6 words or fewer. Never "Here is your personal report."\n'
+        'one_big_thing: one behavior in plain words, then a question that invites a change. '
+        'Do not type a quote. Put the id in one_big_thing_quote, such as "Q2". Code inserts the words.\n'
+        'Good: You told one long story with lots of detail. What if you stopped after the NBC example and asked who had tried that?\n'
+        'Good: You answered and then kept going. What if you stopped after one point and asked Leslie what she would add?\n'
+        'Bad: You repeated the phrase a niche. Who can speak Farsi?\n'
+        'Bad: Here is your personal report. You said a lot. Who else should speak?\n'
+        'why_it_matters: name this person\'s moment. Not generic praise such as "Your voice brings good ideas to the team."\n'
+        'yes_but: second person, one specific limit.\n'
+        'next_rep: a full script line, as in Say: "I will stop after two sentences, then ask who has tried that." '
+        'Never "ask about" plus one bare word. A script may say I inside the quote marks.\n'
+        'said_quote: a quote id such as "Q2", or "" if there is no Q2. Do not retype the words.\n'
+        'Use at most one number in a sentence. Never name a metric.\n'
         f'{retry}'
         f'NUMBERS\n{number_block}\n'
         f'QUOTES\n{quote_block}\n'
         f'REPEATED PHRASE\n{phrase or "None."}\n'
         f'SUGGESTED NEXT STEP\n{next_rep}\n'
-        'Return JSON only with keys headline, one_big_thing, why_it_matters, yes_but, next_rep, number_lines, said_quote.\n'
+        'Return JSON only with keys headline, one_big_thing, one_big_thing_quote, why_it_matters, yes_but, next_rep, said_quote.\n'
     )
+
+
+def _quote_by_id(token: str, quotes: list[str], default_index: int) -> str:
+    """Q2 means the second candidate. A retyped sentence is not used."""
+    raw = str(token or '').strip().strip('"').strip('“”')
+    match = re.fullmatch(r'Q([1-3])', raw, re.I)
+    if match:
+        index = int(match.group(1)) - 1
+        return quotes[index] if 0 <= index < len(quotes) else ''
+    if raw in quotes:
+        return raw
+    if 0 <= default_index < len(quotes):
+        return quotes[default_index]
+    return ''
+
+
+def _strip_typed_quotes(text: str) -> str:
+    cleaned = re.sub(r'(?:"[^"]*"|“[^”]*”)', ' ', text or '')
+    return re.sub(r'\s+', ' ', cleaned).strip()
+
+
+def _place_quote(text: str, quote: str) -> str:
+    """Pattern, then the verbatim quote, then the question. The model does not type it."""
+    sentences = [part.strip() for part in re.split(r'(?<=[.!?])\s+', _strip_typed_quotes(text)) if part.strip()]
+    sentences = [re.sub(r'\s+you said$', '', part, flags=re.I).strip() for part in sentences]
+    sentences = [part for part in sentences if part]
+    spoken = f'You said "{quote}"'
+    if not sentences:
+        return spoken
+    if len(sentences) == 1:
+        return f'{sentences[0]} {spoken}'
+    return f'{sentences[0]} {spoken} ' + ' '.join(sentences[1:])
+
+
+def apply_quote_ids(payload: dict, quotes: list[str]) -> dict:
+    """Replace quote ids with the candidate text. Drop anything the model retyped."""
+    data = dict(payload or {})
+    big = _quote_by_id(str(data.get('one_big_thing_quote') or ''), quotes, 0)
+    said_default = 1 if len(quotes) > 1 else 0
+    said = _quote_by_id(str(data.get('said_quote') or ''), quotes, said_default if quotes else -1)
+    data['one_big_thing'] = _place_quote(str(data.get('one_big_thing') or ''), big) if big else _strip_typed_quotes(str(data.get('one_big_thing') or ''))
+    data['said_quote'] = said
+    for key in ('why_it_matters', 'yes_but'):
+        data[key] = _strip_typed_quotes(str(data.get(key) or ''))
+    return data
 
 
 def _outside_quotes(text: str) -> str:
@@ -284,8 +329,14 @@ def section_problems(payload: dict, quotes: list[str], allowed: set[str], moment
         found.setdefault(name, []).append(reason)
 
     headline = str(payload.get('headline') or '').strip()
-    if len(headline.split()) > 6 or reading_grade(headline) > 6 or 'focused dialogue' in headline.lower():
-        add('headline', 'headline must be one plain sentence of 6 words or fewer')
+    if (
+        not headline
+        or len(headline.split()) > 6
+        or reading_grade(headline) > 6
+        or 'focused dialogue' in headline.lower()
+        or 'here is your personal report' in headline.lower()
+    ):
+        add('headline', 'headline must state a finding in 6 words or fewer')
     fields = {
         'one_big_thing': str(payload.get('one_big_thing') or ''),
         'why_it_matters': str(payload.get('why_it_matters') or ''),
@@ -294,6 +345,15 @@ def section_problems(payload: dict, quotes: list[str], allowed: set[str], moment
     }
     if '?' not in _outside_quotes(fields['one_big_thing']):
         add('one_big_thing', 'one_big_thing needs a question')
+    elif not re.search(r'\b(what if|will you|who will|stop|ask|tried|change)\b', fields['one_big_thing'], re.I):
+        add('one_big_thing', 'the question must invite a change in what you do')
+    if re.search(r'repeated the phrase|here is your personal report', fields['one_big_thing'], re.I):
+        add('one_big_thing', 'one_big_thing must describe a behavior, not a label')
+    why = fields['why_it_matters'].lower()
+    if any(phrase in why for phrase in ('your voice brings', 'good ideas', 'brings good ideas', 'to the team')):
+        add('why_it_matters', 'why_it_matters is generic praise')
+    if moment and moment not in why:
+        add('why_it_matters', "why_it_matters does not use this person's moment")
     for name, text in fields.items():
         plain = _outside_quotes(text)
         if reading_grade(text) > 6:
@@ -315,10 +375,12 @@ def section_problems(payload: dict, quotes: list[str], allowed: set[str], moment
             if not _quote_is_verbatim(quoted, quotes):
                 add(name, f'{name} quotes text that is not one verbatim sentence')
     next_rep = fields['next_rep']
-    if next_rep and not _IMPERATIVE.search(next_rep) and 'next time' not in next_rep.lower():
-        add('next_rep', 'next_rep needs a next step')
-    if moment and moment not in next_rep.lower():
-        add('next_rep', 'next_rep does not use this person\'s moment')
+    if next_rep and (
+        re.search(r'\bask about \w+\b', next_rep, re.I)
+        or (not _IMPERATIVE.search(next_rep) and 'next time' not in next_rep.lower())
+        or len(_words(next_rep)) < 8
+    ):
+        add('next_rep', 'next_rep must be a full script line')
     next_numbers = _numbers_outside(next_rep)
     if any(number not in allowed for number in next_numbers):
         add('next_rep', 'next_rep uses a number that was not computed')
@@ -403,9 +465,10 @@ def _fallback_line(section: str, rows, lines, quotes, stats, moment: str) -> str
     if section == 'headline':
         return speech_headline(rows)
     if section == 'why_it_matters':
-        from lib.story_render import personal_why_line
-
-        return personal_why_line(int(stats.get('share') or 0), int(stats.get('speaker_count') or 1))
+        topic = moment or 'that point'
+        if len(rows) <= 2 and word_total(rows) >= 60:
+            return f'A long story about {topic} left no room for a reply. Next time, stop and ask what they tried.'
+        return f'The room heard {topic} and then moved on. Next time, ask one person what they would change.'
     if section == 'yes_but':
         return 'You made the point in one stretch. Next time, leave room for a reply.'
     if section == 'next_rep':
@@ -438,9 +501,23 @@ def _record_attempt(progress_dir, label: str, raw: str, reasons: list[str]) -> N
     os.chmod(path, 0o600)
 
 
+THINKING_BUDGET = 512
+
+
 def personal_model_name() -> str:
-    """Non-lite flash for the personal call. There is no gemini-3.1-flash on this key."""
-    return os.getenv('GEMINI_PERSONAL_MODEL', 'gemini-3.5-flash')
+    """Non-lite flash for the personal call. gemini-3.5-flash is deprecated."""
+    return os.getenv('GEMINI_PERSONAL_MODEL', 'gemini-3.6-flash')
+
+
+def personal_client_settings(llm) -> dict:
+    """A low thinking budget. The 3.5 run spent almost all of its cost on thinking."""
+    return {
+        'model': personal_model_name(),
+        'temperature': 0,
+        'timeout': getattr(llm, 'timeout', 120),
+        'max_retries': 2,
+        'thinking_budget': THINKING_BUDGET,
+    }
 
 
 def _model_not_found(exc: BaseException) -> bool:
@@ -463,9 +540,8 @@ def _model_not_found(exc: BaseException) -> bool:
 def for_personal_narrative(llm):
     """Personal narrative uses non-lite flash. Every other call keeps flash-lite.
 
-    gemini-3.1-flash is not a model on this project's key. The default is
-    gemini-3.5-flash. GEMINI_PERSONAL_MODEL can name a different id.
-    A test double is returned unchanged.
+    The default is gemini-3.6-flash. A 404 still falls back to flash-lite.
+    GEMINI_PERSONAL_MODEL can name a different id. A test double is returned unchanged.
     """
     model = getattr(llm, 'model', None)
     if not isinstance(model, str) or 'lite' not in model:
@@ -479,12 +555,7 @@ def for_personal_narrative(llm):
     target = personal_model_name()
     if target == model:
         return llm
-    kwargs = {
-        'model': target,
-        'temperature': 0,
-        'timeout': getattr(llm, 'timeout', 120),
-        'max_retries': 2,
-    }
+    kwargs = personal_client_settings(llm)
     key = getattr(llm, 'google_api_key', None)
     if key:
         kwargs['google_api_key'] = key
@@ -514,6 +585,8 @@ def build_personal_story(llm, transcript, label: str, info: dict, stats: dict, p
         try:
             raw_text = _raw_text(llm.invoke(_prompt(name, lines, quotes, failures, phrase, step)))
             payload = _parse(raw_text)
+            if payload is not None:
+                payload = apply_quote_ids(payload, quotes)
         except Exception as exc:
             if not used_fallback and _model_not_found(exc):
                 logging.warning(

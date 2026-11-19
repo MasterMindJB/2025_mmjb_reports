@@ -581,7 +581,7 @@ def _habit(kind: str, *, share, speaker_count, questions, question_average, turn
         return sentence, why
     if kind == 'talk_low':
         target = improve_toward(int(share), average, increase=True)
-        sentence = f'Say one more detail before you stop. Target: {target}% of the hour.'
+        sentence = f'Say one more detail before you stop. Target: {target}% of this talk.'
         why = 'Next time, make that handoff one short point.'
         return sentence, why
     if kind == 'turns_short':
@@ -607,7 +607,7 @@ def _habit(kind: str, *, share, speaker_count, questions, question_average, turn
         return sentence, why
     if kind == 'talk_high':
         target = improve_toward(int(share), average, increase=False)
-        sentence = f'Pause after the point and hand the turn on. Target: {target}% of the hour.'
+        sentence = f'Pause after the point and hand the turn on. Target: {target}% of this talk.'
         why = 'Next time, pause after one point so someone else can speak.'
         return sentence, why
     if kind == 'beat':
@@ -799,9 +799,34 @@ def room_median(values) -> int | None:
     return nums[(len(nums) - 1) // 2]
 
 
-def turns_sentence(count: int, median: int | None = None) -> str:
-    """The room median is the comparator. A missing median uses this person's own count."""
+def session_talk_phrase(transcript) -> str:
+    """The real length of the window, as in 'this 8-minute talk'."""
+    rows = [
+        row for row in (transcript or {}).get('utterances') or []
+        if str(row.get('text') or '').strip()
+    ]
+    if not rows:
+        return 'this talk'
+    starts = [float(row.get('start') or 0) for row in rows]
+    ends = [float(row.get('end') or 0) for row in rows]
+    span = max(ends) - min(starts)
+    if span >= 1000:
+        span /= 1000.0
+    if span < 30:
+        return 'this talk'
+    minutes = max(1, int(round(span / 60)))
+    return f'this {minutes}-minute talk'
+
+
+def turns_sentence(count: int, median: int | None = None, words: int | None = None) -> str:
+    """The room median is the comparator. One long turn is described by its words."""
     counted = int(count)
+    if counted == 1:
+        amount = f'about {int(words)} words' if words else 'one stretch'
+        return (
+            f'You spoke in one long turn of {amount}. '
+            'Next time, stop after two sentences and ask who has tried that.'
+        )
     middle = counted if median is None else int(median)
     turn_word = 'turn' if counted == 1 else 'turns'
     median_word = 'turn' if middle == 1 else 'turns'
@@ -820,20 +845,20 @@ def turns_sentence(count: int, median: int | None = None) -> str:
     )
 
 
-def talk_number_line(share: int, speaker_count: int) -> str:
+def talk_number_line(share: int, speaker_count: int, span: str = 'this talk') -> str:
     """Talk share against an even split of the people in the room."""
     even = room_average(speaker_count)
     gap = int(share) - even
     if abs(gap) <= 2:
-        judge = 'That is close to an even split of the hour.'
+        judge = f'That is close to an even split of {span}.'
         take = 'Next time, keep your turn about this long.'
     elif gap > 0:
-        judge = 'That is more than an even split of the hour, so this was a lot of the talking.'
+        judge = f'That is more than an even split of {span}, so this was a lot of the talking.'
         take = 'Next time, stop after one point and let someone else speak.'
     else:
-        judge = 'That is less than an even split of the hour.'
+        judge = f'That is less than an even split of {span}.'
         take = 'Next time, add one short point before you stop.'
-    return f'You spoke for {int(share)}% of the hour. That is your share of the talking. {judge} {take}'
+    return f'You spoke for {int(share)}% of {span}. That is your share of the talking. {judge} {take}'
 
 
 def question_number_line(count: int, average: int) -> str:
@@ -1000,9 +1025,9 @@ def personal_why_line(share: int, speaker_count: int, person: str = '') -> str:
     who = person or 'the next person'
     even = room_average(max(int(speaker_count or 1), 1))
     if int(share) > even + 2:
-        return f'You held more of the hour than an even split. Next time, hand the next point to {who}.'
+        return f'You held more of this talk than an even split. Next time, hand the next point to {who}.'
     if int(share) + 2 < even:
-        return 'You spoke less than an even split of the hour. Next time, add one short point.'
+        return 'You spoke less than an even split of this talk. Next time, add one short point.'
     return f'You made one move the room could hear. Next time, let {who} answer it.'
 
 
@@ -1098,28 +1123,28 @@ def _talk_ends(shares) -> tuple[str, str]:
 
 
 def group_character_copy(facts: dict) -> str:
-    """Talk most and least come from talk share. A pair is back and forth, not talk time."""
+    """One pattern, one moment, one question. Talk most and least come from talk share."""
     portrait = facts.get('_portrait') or {}
     pair = portrait.get('pair') or ()
     most, least_talk = _talk_ends(facts.get('_shares') or [])
-    sentences = []
     if most and least_talk and most != least_talk:
-        sentences.append(f'{most} talked the most. {least_talk} talked the least.')
-    elif most:
-        sentences.append(f'{most} talked the most.')
-    if len(pair) >= 2 and pair[0] and pair[1]:
-        sentences.append(f'The most back and forth ran between {pair[0]} and {pair[1]}.')
-    elif portrait.get('least') and not least_talk:
-        sentences.append(f'{portrait.get("least")} had the least back and forth.')
+        pattern = f'{most} talked the most, and {least_talk} the least.'
+    elif len(pair) >= 2 and pair[0] and pair[1]:
+        pattern = f'The most back and forth ran between {pair[0]} and {pair[1]}.'
+    elif portrait.get('least'):
+        pattern = f'{portrait.get("least")} had the least back and forth.'
+    else:
+        pattern = 'Most people gave one long answer and then went quiet.'
     closing = facts.get('_closing') or {}
     name = str(closing.get('name') or '').strip()
     quote = str(closing.get('text') or '').strip().strip('"')
+    sentences = [pattern]
     if name and quote:
-        sentences.append(f'{name} said the last line: "{quote}"')
+        sentences.append(f'{name} said "{quote}"')
     elif name:
         sentences.append(f'{name} said the last line.')
     ask = least_talk or portrait.get('least') or 'the person who talked the least'
-    sentences.append(f'Next time, who will ask {ask} to speak sooner?')
+    sentences.append(f'Who will ask {ask} to speak sooner?')
     return close_quotes(' '.join(sentences))
 
 

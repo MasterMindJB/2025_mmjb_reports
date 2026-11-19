@@ -141,11 +141,11 @@ def test_question_target_moves_up_and_talk_target_respects_the_norm():
     assert '18%' not in even[0]
     assert '% talk time' not in even[0]
     louder = one_thing_from_gap(share=10, speaker_count=4, questions=3, question_average=1)
-    assert 'Target: 25% of the hour.' in louder[0]
+    assert 'Target: 25% of this talk.' in louder[0]
     assert louder[0].startswith('Say')
     loud = one_thing_from_gap(share=50, speaker_count=4, questions=3, question_average=1)
     assert loud[0].startswith('Pause after the point')
-    assert 'Target: 25% of the hour.' in loud[0]
+    assert 'Target: 25% of this talk.' in loud[0]
     person = {
         'share': 50, 'speaker_count': 7, 'questions': 0, 'question_average': 2,
         'turn_words': 0, 'session_turn_words': 0, 'early': None, 'late': None,
@@ -580,8 +580,8 @@ def test_gift_and_cost_take_a_clause():
     )
     with pytest.raises(OutputParserException):
         _gets_you('you')
-    assert '1 turn' in turns_sentence(1)
-    assert '1 turns' not in turns_sentence(1)
+    assert 'one long turn' in turns_sentence(1, words=90)
+    assert '1 turns' not in turns_sentence(1, words=90)
     for options in list(TRANSITIONS.values()) + list(GROUP_TRANSITIONS.values()):
         for line in options:
             assert line not in {
