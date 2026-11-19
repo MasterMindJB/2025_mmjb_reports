@@ -125,6 +125,43 @@ def test_ribbons_stay_inside_the_circle_even_for_neighbors():
             assert math.hypot(x, y) <= radius + 1e-6
 
 
+def _boxes_overlap(left, right, gap: float = 1.0) -> bool:
+    return (
+        left[0] < right[2] - gap
+        and right[0] < left[2] - gap
+        and left[1] < right[3] - gap
+        and right[1] < left[3] - gap
+    )
+
+
+def test_neighboring_labels_and_the_wordmark_do_not_overlap(tmp_path: Path):
+    names = [f'Speaker {letter}' for letter in 'ABCDEFG']
+    sequence = []
+    for index, name in enumerate(names):
+        sequence += [name, names[(index + 1) % len(names)]]
+    cases = [(sequence, names, None, 7)]
+    ten_sequence, ten_names, ten_roles = ten_person_session()
+    cases.append((ten_sequence, ten_names, ten_roles, 10))
+    for sequence, names, roles, count in cases:
+        boxes: dict = {}
+        save_chord_diagram(
+            sequence,
+            tmp_path / f'{count}.png',
+            names=names,
+            roles=roles,
+            layout_boxes=boxes,
+        )
+        labels = boxes['labels']
+        assert len(labels) == count
+        for index, label in enumerate(labels):
+            for other in labels[index + 1:]:
+                assert not _boxes_overlap(label, other)
+        assert boxes['wordmark']
+        for mark in boxes['wordmark']:
+            for legend in boxes['legend'] + boxes['captions']:
+                assert not _boxes_overlap(mark, legend)
+
+
 def test_caption_when_nobody_follows_a_different_person():
     names, directed = directed_follows(['Ada', 'Ada'], names=['Ada', 'Bea'])
     assert chord_caption(names, directed) == 'No one spoke immediately after anyone else.'

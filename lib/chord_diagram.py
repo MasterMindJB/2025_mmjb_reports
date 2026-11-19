@@ -547,14 +547,25 @@ def _separate_labels(axis, placed: list[dict]) -> None:
             left_b, bottom_b, right_b, top_b = _label_box(later)
             if right_a < left_b - 4 or right_b < left_a - 4:
                 continue
-            overlap = min(top_a, top_b) - max(bottom_a, bottom_b)
-            if overlap <= 2:
+            overlap_y = min(top_a, top_b) - max(bottom_a, bottom_b)
+            overlap_x = min(right_a, right_b) - max(left_a, left_b)
+            if overlap_y <= 2 or overlap_x <= 2:
                 continue
-            shift = overlap / 2 + 3
-            # The lower label of a bottom arc should stay in the gap above the card.
-            if earlier['va'] != 'top':
-                earlier['py'] -= shift
-            later['py'] += shift
+            # Split on the shorter overlap so neighbors move just far enough to clear.
+            if overlap_x < overlap_y:
+                shift = overlap_x / 2 + 4
+                if earlier['px'] <= later['px']:
+                    earlier['px'] -= shift
+                    later['px'] += shift
+                else:
+                    earlier['px'] += shift
+                    later['px'] -= shift
+            else:
+                shift = overlap_y / 2 + 4
+                # A label under the circle hangs toward the legend. Nudge the other one up.
+                if earlier['va'] != 'top':
+                    earlier['py'] -= shift
+                later['py'] += shift
             moved = True
         if not moved:
             break
@@ -599,6 +610,10 @@ def _draw_labels(axis, names, arcs, spans, roles, colors) -> None:
             radius = max(label_radius, 1.28)
         else:
             radius = label_radius
+        # Neighbors on the same ring collide. Step every other label out a little.
+        # Labels under the circle already hang toward the legend, so they stay put.
+        if count >= 6 and position % 2 == 1 and vertical != 'top':
+            radius += 0.10
         anchor = _polar(angle, radius)
         name = names[position]
         role = roles.get(name, 'participant')
@@ -619,7 +634,7 @@ def _draw_labels(axis, names, arcs, spans, roles, colors) -> None:
                 'position': position,
             }
         )
-    if count > 7:
+    if count >= 2:
         _separate_labels(axis, placed)
     for item in placed:
         position = item['position']
@@ -630,7 +645,7 @@ def _draw_labels(axis, names, arcs, spans, roles, colors) -> None:
         has_role = role in {'facilitator', 'actor'}
         anchor = (item['x'], item['y'])
         align, vertical = item['ha'], item['va']
-        axis.text(
+        name_artist = axis.text(
             anchor[0],
             anchor[1],
             name,
@@ -642,6 +657,7 @@ def _draw_labels(axis, names, arcs, spans, roles, colors) -> None:
             clip_on=False,
             zorder=8,
         )
+        name_artist.set_gid(f'chord-label-{position}')
         if vertical == 'bottom':
             first_line = -12
         elif vertical == 'top':
@@ -653,7 +669,7 @@ def _draw_labels(axis, names, arcs, spans, roles, colors) -> None:
         if count > 7 and vertical == 'center' and math.sin(normalized) > 0.2:
             outward_x = 16 if align == 'left' else -16
         if has_role:
-            axis.annotate(
+            role_artist = axis.annotate(
                 'FACILITATOR' if role == 'facilitator' else 'ACTOR',
                 xy=anchor,
                 xytext=(outward_x, first_line),
@@ -668,10 +684,11 @@ def _draw_labels(axis, names, arcs, spans, roles, colors) -> None:
                 zorder=8,
                 annotation_clip=False,
             )
+            role_artist.set_gid(f'chord-label-{position}')
             count_offset = first_line - 16
         else:
             count_offset = first_line
-        axis.annotate(
+        count_artist = axis.annotate(
             f'{exchanges} {exchange_word}',
             xy=anchor,
             xytext=(outward_x, count_offset),
@@ -685,6 +702,7 @@ def _draw_labels(axis, names, arcs, spans, roles, colors) -> None:
             zorder=8,
             annotation_clip=False,
         )
+        count_artist.set_gid(f'chord-label-{position}')
 
 
 def _tracked(figure, x: float, y: float, text: str, prop: FontProperties, size: float, color: str, tracking: float) -> None:
@@ -742,7 +760,7 @@ def _draw_caption(figure, caption: str, x: float, y: float, width: float) -> flo
             if piece == '':
                 continue
             token_width = _text_width(piece, prop, size) / figure_points
-        figure.text(
+        caption_artist = figure.text(
             cursor_x,
             cursor_y,
             piece,
@@ -753,6 +771,7 @@ def _draw_caption(figure, caption: str, x: float, y: float, width: float) -> flo
             va='center',
             zorder=4,
         )
+        caption_artist.set_gid('chord-caption')
         cursor_x += token_width
         # A trailing space is easy to lose between a bold pair and the next word.
         # Keep the comma tight, then advance one explicit space.
@@ -765,7 +784,7 @@ def _draw_guide(figure, caption: str) -> None:
     semibold = load_poppins('semibold')
     regular = load_poppins('regular')
     card_x, card_y, card_w, card_h = 0.075, 0.040, 0.85, 0.148
-    figure.add_artist(
+    legend = figure.add_artist(
         FancyBboxPatch(
             (card_x, card_y),
             card_w,
@@ -780,6 +799,7 @@ def _draw_guide(figure, caption: str) -> None:
             zorder=2,
         )
     )
+    legend.set_gid('chord-legend')
     bar_w = 3.4 / (figure.get_figwidth() * 72)
     figure.add_artist(
         Rectangle(
@@ -822,28 +842,29 @@ def _draw_guide(figure, caption: str) -> None:
 
 
 def _draw_wordmark(figure) -> None:
+    """The mark sits in the header, clear of the legend card at the bottom."""
     prop = load_poppins('extrabold')
     text = 'HARKNESS TRAINING'
     size = 7.6
     width = _text_width(text, prop, size)
     figure_width = figure.get_figwidth() * 72
     x_right = 0.925
-    x_left = x_right - width / figure_width
-    figure.text(
-        x_left,
-        0.022,
+    bar_width = min(width * 0.38, 78) / figure_width
+    mark = figure.text(
+        x_right,
+        0.942,
         text,
         fontproperties=prop,
         fontsize=size,
         color=NAVY,
-        ha='left',
-        va='bottom',
+        ha='right',
+        va='center',
         zorder=4,
     )
-    bar_width = min(width * 0.38, 78) / figure_width
+    mark.set_gid('chord-wordmark')
     figure.add_artist(
         Rectangle(
-            (x_left, 0.014),
+            (x_right - bar_width, 0.928),
             bar_width,
             2.4 / (figure.get_figheight() * 72),
             transform=figure.transFigure,
@@ -893,12 +914,50 @@ def _draw_header(figure, title: str) -> None:
     )
 
 
+def _window_box(artist, renderer) -> tuple[float, float, float, float]:
+    extent = artist.get_window_extent(renderer)
+    return (extent.x0, extent.y0, extent.x1, extent.y1)
+
+
+def _record_layout_boxes(figure, axis, sink: dict) -> None:
+    """Pixel boxes for the overlap check. Ribbons and arcs are not included."""
+    figure.canvas.draw()
+    renderer = figure.canvas.get_renderer()
+    grouped: dict[str, list[tuple[float, float, float, float]]] = {}
+    for text in list(axis.texts):
+        gid = text.get_gid() or ''
+        if gid.startswith('chord-label-'):
+            grouped.setdefault(gid, []).append(_window_box(text, renderer))
+    sink['labels'] = [
+        (
+            min(box[0] for box in boxes),
+            min(box[1] for box in boxes),
+            max(box[2] for box in boxes),
+            max(box[3] for box in boxes),
+        )
+        for boxes in grouped.values()
+    ]
+    sink['wordmark'] = []
+    sink['legend'] = []
+    sink['captions'] = []
+    for text in list(figure.texts):
+        gid = text.get_gid() or ''
+        if gid == 'chord-wordmark':
+            sink['wordmark'].append(_window_box(text, renderer))
+        elif gid == 'chord-caption':
+            sink['captions'].append(_window_box(text, renderer))
+    for artist in list(figure.artists):
+        if artist.get_gid() == 'chord-legend':
+            sink['legend'].append(_window_box(artist, renderer))
+
+
 def save_chord_diagram(
     sequence: list[str],
     path: Path,
     names: list[str] | None = None,
     roles: dict[str, str] | None = None,
     title: str = 'Who talks with whom',
+    layout_boxes: dict | None = None,
 ) -> tuple[list[str], list[list[int]], list[int]]:
     """Draw directed ribbons and return the symmetric totals used for arc size."""
     roles = roles or {}
@@ -990,6 +1049,8 @@ def save_chord_diagram(
     _draw_wordmark(figure)
 
     path.parent.mkdir(parents=True, exist_ok=True)
+    if layout_boxes is not None:
+        _record_layout_boxes(figure, axis, layout_boxes)
     figure.savefig(path, dpi=300, facecolor=LIGHT)
     plt.close(figure)
     return names, ribbon, arcs
