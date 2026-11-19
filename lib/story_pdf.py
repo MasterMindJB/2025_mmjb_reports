@@ -279,12 +279,17 @@ def write_personal_report(pdf, story: dict, chart_dir: Path) -> None:
     _heading(pdf, 'Resolution')
     _body(pdf, story['resolution'])
     _transition(pdf, (story.get('transitions') or {}).get('after_resolution'))
+    appendix = [f'{name}: {line}' for name, line in (story.get('appendix') or {}).items()]
+    usable = pdf.h - pdf.t_margin - pdf.b_margin
+    appendix_h = 12 + 5 * (1 + len(appendix))
+    together = 36 + appendix_h
+    # A short appendix must not land alone on a page under 15% full.
+    if appendix_h / usable < 0.15 and _remaining(pdf) < together:
+        pdf.add_page()
     _heading(pdf, 'One thing')
     _callout(pdf, story['one_thing'], story['why'])
     _flush_heading(pdf)
-    appendix = [f'{name}: {line}' for name, line in (story.get('appendix') or {}).items()]
-    needed = 14 + 6 * (1 + len(appendix))
-    if _remaining(pdf) < needed:
+    if _remaining(pdf) < appendix_h and appendix_h / usable >= 0.15:
         pdf.add_page()
     pdf.ln(2)
     pdf.set_x(pdf.l_margin)

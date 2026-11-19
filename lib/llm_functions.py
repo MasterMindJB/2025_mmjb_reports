@@ -47,8 +47,13 @@ def _signature_fields(analysis: str, speaker_text: str, bigram: str) -> dict[str
     for key in ('what', 'so_what', 'now_what'):
         # Only the bigram is grounded. Length is clipped rather than rejected.
         value = re.sub(r'\s+', ' ', str(data.get(key) or '')).strip()
+        from lib.story_validation import ban_hit
+
         if word_count(value) < 6:
             raise ValueError(f'signature {key} must be at least 6 words, not {word_count(value)}')
+        hit = ban_hit(value)
+        if hit:
+            raise ValueError(f'signature {key} contains {hit!r}')
         words = re.findall(r"\S+", value)
         if len(words) > 25:
             value = ' '.join(words[:25]).rstrip(',;:')
@@ -56,6 +61,16 @@ def _signature_fields(analysis: str, speaker_text: str, bigram: str) -> dict[str
     if bigram and bigram.lower() not in ' '.join(fields.values()).lower():
         raise ValueError(f'signature must discuss the real bigram {bigram!r}')
     return fields
+
+
+def _signatures_present(speaker_analysis: dict) -> bool:
+    """A cached analysis is complete only when every speaker has a signature phrase."""
+    if not isinstance(speaker_analysis, dict) or not speaker_analysis:
+        return False
+    for value in speaker_analysis.values():
+        if not isinstance(value, dict) or not value.get('personal_signature_phrase'):
+            return False
+    return True
 
 
 class ConversationSummarizer:
@@ -731,8 +746,10 @@ class ConversationSummarizer:
                 return_unchanged = False
                 logging.debug('...forcing personal errors and corrections regeneration.')
 
-            if return_unchanged:
+            if return_unchanged and _signatures_present(speaker_analysis):
                 return speaker_analysis
+            if return_unchanged:
+                logging.warning('...cached speaker analysis is missing signature phrases; filling them.')
 
         # Process all speakers
         for speaker in df_speaker_stats.index:
@@ -835,7 +852,7 @@ class ConversationSummarizer:
                     _tmp_speaker['personal_errors_and_corrections'],
                 )
 
-            if generate_all or 'personal_signature_phrase' not in _tmp_speaker:
+            if generate_all or not _tmp_speaker.get('personal_signature_phrase'):
                 self._progress(f'Reading the signature phrase for {speaker}')
                 _tmp_speaker['personal_signature_phrase'] = self.signature_phrase(
                     str(df_speaker_stats.loc[speaker].get('text', ''))

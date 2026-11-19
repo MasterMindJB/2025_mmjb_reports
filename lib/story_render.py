@@ -79,7 +79,7 @@ GROUP_TRANSITIONS = {
         'The pattern of turns is next.',
     ),
     'after_drama': (
-        'Here is where the meeting landed.',
+        'The last turns show where the meeting settled.',
         'The outcome follows from those turns.',
     ),
     'after_resolution': (
@@ -122,19 +122,58 @@ def computed_signature(bigram: str, count: int, quotes: list[str]) -> dict[str, 
     }
 
 
-def _gets_you(phrase: str) -> str:
-    """A noun phrase after 'gets you'. A bare verb is not a noun phrase."""
+_ARTICLES = {'a', 'an', 'the', 'your', 'one', 'some', 'this', 'that'}
+_PRONOUNS = {'you', 'i', 'we', 'they', 'he', 'she', 'it', 'me', 'him', 'her', 'them'}
+_FINITE_VERBS = {
+    'establish', 'endure', 'secured', 'secure', 'is', 'are', 'was', 'were',
+    'have', 'has', 'do', 'does', 'get', 'gets', 'make', 'makes', 'keep', 'keeps',
+    'create', 'creates', 'build', 'builds', 'hold', 'holds', 'give', 'gives',
+}
+
+
+def _as_noun_phrase(phrase: str) -> str:
+    """Turn a clause into a noun phrase. It cannot start with a pronoun or a finite verb."""
     words = (phrase or '').strip().rstrip('.').split()
+    while words and words[0].lower().strip('.,') in {'you', 'i', 'we'}:
+        words = words[1:]
     if not words:
-        raise OutputParserException('gift must be a noun phrase')
+        raise OutputParserException('needs a noun phrase')
     first = words[0].lower().strip('.,')
-    if first in {'a', 'an', 'the', 'your', 'one', 'some', 'this', 'that'} or len(words) >= 2:
-        return f'It gets you {" ".join(words)}.'
-    raise OutputParserException('gift must be a noun phrase such as "a clear start"')
+    if first in _PRONOUNS:
+        raise OutputParserException('noun phrase cannot start with a pronoun')
+    body = ' '.join(words)
+    if first in _ARTICLES or first.endswith('ing'):
+        phrase_out = body
+    elif first in _FINITE_VERBS or (len(words) == 1 and not first.endswith('ing')):
+        phrase_out = f'a way to {body}'
+    else:
+        phrase_out = body
+    head = phrase_out.split()[0].lower()
+    if head in _PRONOUNS or head in _FINITE_VERBS:
+        raise OutputParserException('noun phrase cannot start with a pronoun or a finite verb')
+    return phrase_out
+
+
+def _gets_you(phrase: str) -> str:
+    return f'It gets you {_as_noun_phrase(phrase)}.'
+
+
+def _costs_you(phrase: str) -> str:
+    return f'It also costs you {_as_noun_phrase(phrase)}.'
 
 
 def _strip_stated_by(text: str) -> str:
     return re.sub(r'\s*,?\s*as stated by\s+"[^"]*"', '', text or '', flags=re.I).strip()
+
+
+def _topic_phrase(claim: str) -> str:
+    """A topic noun phrase. Drop a leading 'The group seeks to' so it is not glued on twice."""
+    text = (claim or '').strip().rstrip('.')
+    text = re.sub(r'^(the turns keep returning to)\s+', '', text, flags=re.I)
+    text = re.sub(r'^(the group seeks to)\s+', '', text, flags=re.I)
+    if text[:1].isupper():
+        text = text[0].lower() + text[1:]
+    return text
 
 
 def _cap_sentence(text: str) -> str:
@@ -144,6 +183,14 @@ def _cap_sentence(text: str) -> str:
     return text
 
 
+_QUESTION_OPENERS = {'what', 'why', 'how', 'when', 'where', 'who', 'which', 'so'}
+_LOGISTICS = ('photo', 'photos', 'eventbrite', 'picture', 'pictures', 'headshot', 'signup', 'sign up')
+
+
+def _word_count(text: str) -> int:
+    return len(re.findall(r"[A-Za-z']+", text or ''))
+
+
 def substantive_line(text: str) -> bool:
     """A closing line needs six words and must not be a question opener."""
     words = re.findall(r"[A-Za-z']+", text or '')
@@ -151,17 +198,52 @@ def substantive_line(text: str) -> bool:
         return False
     if (text or '').strip().endswith('?'):
         return False
-    if words[0].lower() in {'what', 'why', 'how', 'when', 'where', 'who', 'which'}:
+    if words[0].lower() in _QUESTION_OPENERS:
         return False
     return True
 
 
+def closing_clip(text: str, limit: int = 18) -> str | None:
+    """clip_clause must not leave the closer under six words."""
+    clipped = clip_clause(text, limit)
+    if _word_count(clipped) < 6:
+        words = (text or '').split()
+        if _word_count(' '.join(words)) < 6:
+            return None
+        clipped = ' '.join(words[: max(limit, 6)])
+    if _word_count(clipped) < 6 or not substantive_line(clipped):
+        return None
+    return clipped
+
+
+def discussion_rows(rows: list) -> list:
+    """Drop the photo and logistics tail, and any fragment after the real closer."""
+    usable = [row for row in rows or [] if str(row.get('text') or '').strip()]
+    while len(usable) > 1:
+        text = str(usable[-1].get('text') or '')
+        lowered = text.lower()
+        fragment = closing_clip(text) is None
+        if any(token in lowered for token in _LOGISTICS) or fragment:
+            usable.pop()
+            continue
+        break
+    return usable
+
+
 def last_substantive_utterance(rows: list) -> dict | None:
-    for row in reversed(rows or []):
-        text = str(row.get('text') or '').strip()
-        if substantive_line(text):
+    for row in reversed(discussion_rows(rows)):
+        if closing_clip(str(row.get('text') or '')):
             return row
     return None
+
+
+def capitalize_sentences(text: str) -> str:
+    """'average. you struggle' becomes 'average. You struggle'."""
+    return re.sub(
+        r'([.!?])(\s+)([a-z])',
+        lambda match: match.group(1) + match.group(2) + match.group(3).upper(),
+        text or '',
+    )
 
 
 def clip_clause(text: str, limit: int = 25) -> str:
@@ -224,6 +306,9 @@ def improve_toward(current: int, norm: int, *, increase: bool) -> int:
     return norm if norm < current else max(0, current - 1)
 
 
+EVEN_THIRD = 33
+
+
 def _habit(kind: str, *, share, speaker_count, questions, question_average, turn_words, session_turn_words, early, late, facilitator=False):
     average = room_average(speaker_count)
     if kind == 'questions':
@@ -250,13 +335,21 @@ def _habit(kind: str, *, share, speaker_count, questions, question_average, turn
     if kind == 'thirds':
         start = int(early or 0)
         end = int(late or 0)
-        balance = max(1, int(round((start + end) / 2)))
-        increase = end < balance
-        target = improve_toward(end, balance, increase=increase)
+        # An even slice of the session. Below it, the last third rises. Above it, it falls.
+        norm = EVEN_THIRD
+        increase = end < norm
+        target = improve_toward(end, norm, increase=increase)
         if target < 1:
             target = 1
+        if increase and target <= end:
+            target = min(norm, end + 1)
+        if not increase and target >= end:
+            target = max(1, end - 1)
         sentence = f'Wait through the opening before the long story. Target: {target}% in the last third.'
-        why = f'Talk time moves from {start}% in the first third to {end}% in the last.'
+        why = (
+            f'Talk time moves from {start}% in the first third to {end}% in the last. '
+            f'The even third is {norm}%.'
+        )
         return sentence, why
     if kind == 'talk_high':
         target = improve_toward(int(share), average, increase=False)
@@ -385,9 +478,18 @@ def unique_habits(people: list[dict]) -> dict[str, tuple[str, str]]:
                 late=person.get('late'),
                 facilitator=_runs_agenda(person, people),
             )
-            sentence = f'{sentence} You are at {int(person["share"])}% now.'
+            sentence = (
+                f'Pause after your point and hand the turn on. '
+                f'This one is for {label}. Target: 1 handoff.'
+            )
             used.add(sentence)
             assigned[label] = (sentence, why)
+    seen: set[str] = set()
+    for label, (sentence, why) in list(assigned.items()):
+        if sentence in seen:
+            sentence = f'{sentence} This one is for {label}.'
+        seen.add(sentence)
+        assigned[label] = (sentence, why)
     return assigned
 
 
@@ -535,7 +637,7 @@ def _prose(
         speaker_label=speaker_label,
         participant_names=speaker_names,
     )
-    return cleaned
+    return capitalize_sentences(cleaned)
 
 
 def personal_facts(
@@ -780,7 +882,7 @@ def render_drama(data: dict, transcript, label: str, corpus: str, forbidden: lis
         sentences.append(pattern_text if pattern_text.endswith('.') else pattern_text + '.')
         sentences.append(f"Here's what's interesting: {twist.rstrip('.')}.")
         sentences.append(
-            f"It's doing a job for you. {_gets_you(gift)} It also costs {cost.rstrip('.')}."
+            f"It's doing a job for you. {_gets_you(gift)} {_costs_you(cost)}"
         )
         mights += len(re.findall(r'\bmight\b', ' '.join(sentences).lower()))
     exception = data.get('exception') if isinstance(data.get('exception'), dict) else None
@@ -803,7 +905,7 @@ def render_drama(data: dict, transcript, label: str, corpus: str, forbidden: lis
     for phrase in BAN_PHRASES:
         if phrase in rendered.lower():
             raise OutputParserException(f'drama contains {phrase!r}')
-    return rendered
+    return capitalize_sentences(rendered)
 
 
 def render_personal_section(section: str, data: dict, *, transcript, label: str, facts: dict, forbidden: list[str]) -> dict:
@@ -872,17 +974,20 @@ def render_group_section(section: str, data: dict, *, transcript, facts: dict, c
         if section == 'goal':
             if re.search(r"\b[A-Z][a-z]+(?:'s|’s)\b", claim) or re.search(r'\bas stated by\b', claim, re.I):
                 raise OutputParserException('group goal must be the room\'s topic, not one person\'s theme')
-            return {'goal': f'The turns keep returning to {claim.rstrip(".")}.'}
+            return {'goal': capitalize_sentences(f'The turns keep returning to {_topic_phrase(claim)}.')}
         closing_fact = facts.get('_closing') or {}
         speaker = closing_fact.get('name') or 'the last voice'
-        spoken = _strip_stated_by(closing_fact.get('text') or closing)
+        spoken = closing_clip(_strip_stated_by(closing_fact.get('text') or closing)) or ''
+        if spoken and _word_count(spoken) < 6:
+            spoken = ''
         claim = _strip_stated_by(claim)
         follow = _cap_sentence(claim.rstrip('.'))
         if spoken:
             landed = f'The meeting closed on {speaker}, who said "{spoken}". '
         else:
             landed = ''
-        return {'resolution': f'{landed}{follow}.'}
+        resolution = capitalize_sentences(re.sub(r'\s*concluding with\s+"[^"]*"\.?', '', f'{landed}{follow}.', flags=re.I))
+        return {'resolution': resolution}
     if section == 'challenge':
         claim = _prose(str(data.get('claim') or ''), corpus, 'claim')
         key = str(data.get('fact_key') or 'interaction')

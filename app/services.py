@@ -153,6 +153,7 @@ def generate_session(
             participant_labels=participant_labels,
             work_dir=work_dir,
             on_progress=note,
+            roles_by_label={speaker['label']: speaker['role'] for speaker in speakers},
         )
         note('Rendering the PDFs')
         staging = session_root(settings, session_id) / 'reports_staging'

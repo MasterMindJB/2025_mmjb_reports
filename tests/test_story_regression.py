@@ -85,7 +85,7 @@ def test_signature_examples_may_be_invented_and_must_be_long_enough():
     bigram = 'we should'
     good = {
         'what': 'You reach for "we should" when you want the room to move with you.',
-        'so_what': 'A coaching note is that the phrase buys you a moment to think.',
+        'so_what': 'It gives you a moment to decide what you want to say next.',
         'now_what': 'You can pause once before you lean on that phrase again today.',
     }
     import json
@@ -457,11 +457,16 @@ def test_facilitator_is_not_cut_to_an_even_share_and_later_talk_is_not_zero():
         },
     ])
     assert '7%' not in habits['A'][0]
-    later = one_thing_from_gap(
-        share=20, speaker_count=7, questions=2, question_average=1, early=0, late=40,
+    below = one_thing_from_gap(
+        share=20, speaker_count=7, questions=2, question_average=1, early=0, late=17,
     )
-    assert 'Target: 0%' not in later[0]
-    assert 'Target: 20%' in later[0]
+    above = one_thing_from_gap(
+        share=20, speaker_count=7, questions=2, question_average=1, early=10, late=50,
+    )
+    assert 'Target: 33%' in below[0]
+    assert 'Target: 33%' in above[0]
+    assert 'Target: 8%' not in below[0]
+    assert 'even third is 33%' in below[1]
 
 
 def test_signature_keeps_a_reading_that_only_has_to_name_the_bigram():
@@ -526,8 +531,16 @@ def test_gift_is_a_noun_phrase_and_one_turn_stays_singular():
     from lib.story_render import _gets_you, turns_sentence
 
     assert _gets_you('a clear start') == 'It gets you a clear start.'
+    assert _gets_you('you establish your core identity') == (
+        'It gets you a way to establish your core identity.'
+    )
+    from lib.story_render import _costs_you
+
+    assert _costs_you('endure constant pressure') == (
+        'It also costs you a way to endure constant pressure.'
+    )
     with pytest.raises(OutputParserException):
-        _gets_you('establish')
+        _gets_you('you')
     assert '1 turn' in turns_sentence(1)
     assert '1 turns' not in turns_sentence(1)
     for options in list(TRANSITIONS.values()) + list(GROUP_TRANSITIONS.values()):
@@ -536,6 +549,7 @@ def test_gift_is_a_noun_phrase_and_one_turn_stays_singular():
                 'Here is where the session landed.',
                 'One change follows from the largest gap.',
                 'That is the shape of the session.',
+                'Here is where the meeting landed.',
             }
 
 
@@ -552,3 +566,99 @@ def test_fill_metric_ignores_the_footer(tmp_path):
     assert ratios
     assert ratios[-1] < 0.5
     assert all(ratio <= 1 for ratio in ratios)
+
+
+def test_goal_wrapper_does_not_glue_a_second_sentence():
+    from lib.story_render import _topic_phrase, capitalize_sentences, render_group_section
+
+    assert _topic_phrase('The group seeks to identify the core need') == 'identify the core need'
+    rendered = render_group_section(
+        'goal',
+        {'claim': 'The group seeks to identify the core need'},
+        transcript=synthetic_transcript(),
+        facts={'interaction': {'value': 20, 'line': '20% interaction', 'unit': 'percent'}},
+        cast='',
+    )
+    assert 'to The group' not in rendered['goal']
+    assert rendered['goal'].startswith('The turns keep returning to identify')
+    assert capitalize_sentences('average. you struggle') == 'average. You struggle'
+
+
+def test_closer_ignores_the_logistics_tail_and_short_clips():
+    from lib.story_render import closing_clip, last_substantive_utterance
+
+    assert closing_clip('good sign.') is None
+    assert closing_clip("So you're") is None
+    rows = [
+        {'speaker': 'A', 'text': 'We should settle the budget and the timeline before we leave.'},
+        {'speaker': 'B', 'text': 'The budget and the timeline are the two open items.'},
+        {'speaker': 'A', 'text': 'good sign.'},
+        {'speaker': 'B', 'text': "So you're"},
+        {'speaker': 'A', 'text': 'Take a photo and I will send the Eventbrite link after.'},
+    ]
+    chosen = last_substantive_utterance(rows)
+    assert 'budget' in chosen['text']
+    assert closing_clip(chosen['text'])
+    assert len(closing_clip(chosen['text']).split()) >= 6
+
+
+def test_identical_question_habits_are_not_shared():
+    from lib.story_render import unique_habits
+
+    person = {
+        'share': 12, 'speaker_count': 14, 'questions': 0, 'question_average': 14,
+        'turn_words': 0, 'session_turn_words': 0, 'early': None, 'late': None, 'role': 'participant',
+    }
+    habits = unique_habits([
+        {'label': 'Lynae', **person},
+        {'label': 'Eden', **person},
+    ])
+    assert habits['Lynae'][0] != habits['Eden'][0]
+    assert sum('14 question' in sentence for sentence, _why in habits.values()) == 1
+
+
+def test_a_string_section_is_rejected_instead_of_crashing():
+    from lib.story_generation import _fill_sections
+
+    class OneString:
+        def invoke(self, prompt):
+            return type('Reply', (), {'content': '{"goal": "just a string"}'})()
+
+    draft = {'accepted': []}
+    _fill_sections(
+        OneString(),
+        audience='personal',
+        sections=('goal',),
+        evidence='FACTS',
+        render=lambda section, data: data['claim'],
+        progress_path=None,
+        draft=draft,
+    )
+    assert 'goal' in draft['fallback_sections']
+
+
+def test_signature_ban_list_rejects_leverage_and_cache_notices_a_gap():
+    from lib.llm_functions import _signature_fields, _signatures_present
+    import json
+
+    with pytest.raises(ValueError):
+        _signature_fields(
+            json.dumps({
+                'what': 'You reach for "we should" when you want the room to move with you.',
+                'so_what': 'It gives you a moment to decide what you want to say next.',
+                'now_what': 'You can leverage that phrase before you speak again today.',
+            }),
+            '',
+            'we should',
+        )
+    assert not _signatures_present({'A': {'personal_signature_phrase': None}, 'B': {'personal_signature_phrase': {'bigram': 'we should'}}})
+    assert _signatures_present({'A': {'personal_signature_phrase': {'bigram': 'we should'}}})
+
+
+def test_stock_pipeline_puts_the_facilitator_role_on_the_speaker_map():
+    from app.analysis import apply_speaker_roles
+
+    speaker_map = {'A': {'name': 'Annie'}, 'B': {'name': 'Corey'}}
+    apply_speaker_roles(speaker_map, {'A': 'facilitator', 'B': 'participant'}, {'B'})
+    assert speaker_map['A']['role'] == 'facilitator'
+    assert speaker_map['B']['role'] == 'participant'

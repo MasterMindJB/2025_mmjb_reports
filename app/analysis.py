@@ -49,6 +49,17 @@ def build_gemini_llm(settings=None):
     )
 
 
+def apply_speaker_roles(speaker_map: dict, roles_by_label: dict[str, str] | None, participant_labels: set[str]) -> dict:
+    """The stock pipeline has to see facilitator and host before One Thing is chosen."""
+    for label, info in speaker_map.items():
+        role = (roles_by_label or {}).get(label)
+        if not role and label not in participant_labels:
+            role = 'facilitator'
+        if role:
+            info['role'] = role
+    return speaker_map
+
+
 class GeminiAnalysis:
     def __init__(self, llm=None, prompt_dir: Path = PROMPT_DIR, settings=None):
         self.llm = llm
@@ -63,6 +74,7 @@ class GeminiAnalysis:
         participant_labels: set[str],
         work_dir: Path,
         on_progress=None,
+        roles_by_label: dict[str, str] | None = None,
     ) -> AnalysisBundle:
         if work_dir.exists():
             shutil.rmtree(work_dir)
@@ -90,6 +102,7 @@ class GeminiAnalysis:
             if label not in speaker_map:
                 raise RuntimeError(f'The analysis did not return speaker {label}.')
             speaker_map[label]['name'] = speaker_names[label]
+        apply_speaker_roles(speaker_map, roles_by_label, participant_labels)
         (work_dir / 'speaker_map.json').write_text(json.dumps(speaker_map, indent=4), encoding='utf-8')
 
         tables = compute_session_tables(transcript, speaker_map)

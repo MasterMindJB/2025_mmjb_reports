@@ -231,9 +231,15 @@ def _fill_sections(llm, *, audience, sections, evidence, render, progress_path, 
                 reasons[section] = 'missing from the batch'
                 still.append(section)
                 continue
+            payload = raw[section]
+            if not isinstance(payload, dict):
+                logging.warning('story reject [%s]: section payload was not an object', section)
+                reasons[section] = 'section payload must be an object'
+                still.append(section)
+                continue
             try:
-                rendered = render(section, raw[section])
-            except (OutputParserException, TypeError, ValueError, KeyError) as exc:
+                rendered = render(section, payload)
+            except (OutputParserException, TypeError, ValueError, KeyError, AttributeError) as exc:
                 logging.warning('story reject [%s]: %s', section, exc)
                 reasons[section] = str(exc)
                 still.append(section)
@@ -366,14 +372,16 @@ def generate_group_draft(
         portrait['low_share'] = min(item[1] for item in shares)
         portrait['high_share'] = max(item[1] for item in shares)
     facts['_portrait'] = portrait
-    from lib.story_render import last_substantive_utterance
+    from lib.story_render import closing_clip, last_substantive_utterance
 
     closing_row = last_substantive_utterance(transcript.get('utterances') or [])
     if closing_row:
-        facts['_closing'] = {
-            'name': name_by_label.get(closing_row.get('speaker')) or 'the last voice',
-            'text': clip_clause(str(closing_row.get('text') or ''), 18),
-        }
+        spoken = closing_clip(str(closing_row.get('text') or ''))
+        if spoken:
+            facts['_closing'] = {
+                'name': name_by_label.get(closing_row.get('speaker')) or 'the last voice',
+                'text': spoken,
+            }
     evidence = facts_prompt(
         facts,
         [],
