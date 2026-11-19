@@ -123,43 +123,26 @@ def computed_signature(bigram: str, count: int, quotes: list[str]) -> dict[str, 
 
 
 _ARTICLES = {'a', 'an', 'the', 'your', 'one', 'some', 'this', 'that'}
-_PRONOUNS = {'you', 'i', 'we', 'they', 'he', 'she', 'it', 'me', 'him', 'her', 'them'}
-_FINITE_VERBS = {
-    'establish', 'endure', 'secured', 'secure', 'is', 'are', 'was', 'were',
-    'have', 'has', 'do', 'does', 'get', 'gets', 'make', 'makes', 'keep', 'keeps',
-    'create', 'creates', 'build', 'builds', 'hold', 'holds', 'give', 'gives',
-}
 
 
-def _as_noun_phrase(phrase: str) -> str:
-    """Turn a clause into a noun phrase. It cannot start with a pronoun or a finite verb."""
+def _benefit_clause(phrase: str) -> str:
+    """A clause, not a noun phrase. 'you' plus a verb is valid. 'you you' collapses to one 'you'."""
     words = (phrase or '').strip().rstrip('.').split()
-    while words and words[0].lower().strip('.,') in {'you', 'i', 'we'}:
+    while len(words) >= 2 and words[0].lower() == 'you' and words[1].lower() == 'you':
         words = words[1:]
-    if not words:
-        raise OutputParserException('needs a noun phrase')
-    first = words[0].lower().strip('.,')
-    if first in _PRONOUNS:
-        raise OutputParserException('noun phrase cannot start with a pronoun')
-    body = ' '.join(words)
-    if first in _ARTICLES or first.endswith('ing'):
-        phrase_out = body
-    elif first in _FINITE_VERBS or (len(words) == 1 and not first.endswith('ing')):
-        phrase_out = f'a way to {body}'
-    else:
-        phrase_out = body
-    head = phrase_out.split()[0].lower()
-    if head in _PRONOUNS or head in _FINITE_VERBS:
-        raise OutputParserException('noun phrase cannot start with a pronoun or a finite verb')
-    return phrase_out
+    if not words or words == ['you']:
+        raise OutputParserException('needs a clause')
+    if words[0].lower() != 'you' and words[0].lower().strip('.,') not in _ARTICLES:
+        words = ['you', *words]
+    return ' '.join(words)
 
 
 def _gets_you(phrase: str) -> str:
-    return f'It gets you {_as_noun_phrase(phrase)}.'
+    return f'What it gets you: {_benefit_clause(phrase)}.'
 
 
 def _costs_you(phrase: str) -> str:
-    return f'It also costs you {_as_noun_phrase(phrase)}.'
+    return f'What it costs you: {_benefit_clause(phrase)}.'
 
 
 def _strip_stated_by(text: str) -> str:

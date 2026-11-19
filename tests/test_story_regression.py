@@ -527,17 +527,20 @@ def test_closing_line_skips_fragments_and_the_next_sentence_is_capitalized():
         )
 
 
-def test_gift_is_a_noun_phrase_and_one_turn_stays_singular():
-    from lib.story_render import _gets_you, turns_sentence
+def test_gift_and_cost_take_a_clause():
+    from lib.story_render import _costs_you, _gets_you, turns_sentence
 
-    assert _gets_you('a clear start') == 'It gets you a clear start.'
     assert _gets_you('you establish your core identity') == (
-        'It gets you a way to establish your core identity.'
+        'What it gets you: you establish your core identity.'
     )
-    from lib.story_render import _costs_you
-
+    assert _gets_you('you you establish your core identity') == (
+        'What it gets you: you establish your core identity.'
+    )
     assert _costs_you('endure constant pressure') == (
-        'It also costs you a way to endure constant pressure.'
+        'What it costs you: you endure constant pressure.'
+    )
+    assert _costs_you('you endure constant pressure') == (
+        'What it costs you: you endure constant pressure.'
     )
     with pytest.raises(OutputParserException):
         _gets_you('you')
