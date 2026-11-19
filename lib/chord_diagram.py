@@ -481,41 +481,139 @@ def _add_arc(axis, low: float, high: float, outer: float, thickness: float, colo
     )
 
 
-def _horizontal_alignment(angle: float) -> tuple[str, str, float]:
-    """Horizontal label alignment and how far outside the arc the block starts."""
+def _horizontal_alignment(angle: float) -> tuple[str, str]:
+    """Horizontal label alignment. The anchor sits outside the arc at one radius."""
     normalized = math.atan2(math.sin(angle), math.cos(angle))
-    if math.sin(normalized) > 0.93:
-        return 'center', 'bottom', 1.11
-    if math.sin(normalized) < -0.93:
-        return 'center', 'top', 1.11
+    if math.sin(normalized) > 0.78:
+        return 'center', 'bottom'
+    if math.sin(normalized) < -0.78:
+        return 'center', 'top'
     if math.cos(normalized) >= 0:
-        return 'left', 'center', 1.07
-    return 'right', 'center', 1.07
+        return 'left', 'center'
+    return 'right', 'center'
+
+
+def _label_box(item: dict) -> tuple[float, float, float, float]:
+    """Display-space box: left, bottom, right, top."""
+    width = item['width']
+    height = item['height']
+    px, py = item['px'], item['py']
+    if item['ha'] == 'left':
+        left, right = px, px + width
+    elif item['ha'] == 'right':
+        left, right = px - width, px
+    else:
+        left, right = px - width / 2, px + width / 2
+    if item['va'] == 'bottom':
+        bottom, top = py, py + height
+    elif item['va'] == 'top':
+        bottom, top = py - height, py
+    else:
+        bottom, top = py - height / 2, py + height / 2
+    return left, bottom, right, top
+
+
+def _separate_labels(axis, placed: list[dict]) -> None:
+    """Nudge overlapping labels apart vertically, then keep them outside the circle."""
+    if len(placed) < 2:
+        return
+    axis.figure.canvas.draw()
+    transform = axis.transData
+    inverse = transform.inverted()
+    for item in placed:
+        item['px'], item['py'] = transform.transform((item['x'], item['y']))
+        item['home_y'] = item['py']
+    for _ in range(16):
+        placed.sort(key=lambda item: item['py'])
+        moved = False
+        for earlier, later in zip(placed, placed[1:]):
+            left_a, bottom_a, right_a, top_a = _label_box(earlier)
+            left_b, bottom_b, right_b, top_b = _label_box(later)
+            if right_a < left_b - 4 or right_b < left_a - 4:
+                continue
+            overlap = min(top_a, top_b) - max(bottom_a, bottom_b)
+            if overlap <= 2:
+                continue
+            shift = overlap / 2 + 3
+            # The lower label of a bottom arc should stay in the gap above the card.
+            if earlier['va'] != 'top':
+                earlier['py'] -= shift
+            later['py'] += shift
+            moved = True
+        if not moved:
+            break
+    for item in placed:
+        data_x, data_y = inverse.transform((item['px'], item['py']))
+        # A vertical nudge must not drop the label back onto the ring.
+        radius = math.hypot(data_x, data_y)
+        if radius < 1.14:
+            scale = 1.14 / max(radius, 1e-6)
+            data_x *= scale
+            data_y *= scale
+        item['x'], item['y'] = float(data_x), float(data_y)
 
 
 def _draw_labels(axis, names, arcs, spans, roles, colors) -> None:
     count = len(names)
-    name_size = 10.0 if count <= 8 else 8.2
-    count_size = 7.4 if count <= 8 else 6.4
-    role_size = 6.1 if count <= 8 else 5.4
+    name_size = 10.0 if count <= 8 else 8.4
+    count_size = 7.4 if count <= 8 else 6.6
+    role_size = 6.1 if count <= 8 else 5.5
     name_font = load_poppins('medium')
     count_font = load_poppins('regular')
     role_font = load_poppins('semibold')
+    label_radius = 1.12 if count <= 8 else 1.22
     pill = {
         'boxstyle': 'round,pad=0.22',
         'facecolor': SKY,
         'edgecolor': SKY,
         'linewidth': 0.4,
     }
+    placed = []
     for position, (low, high) in enumerate(spans):
         angle = (low + high) / 2
-        align, vertical, radius = _horizontal_alignment(angle)
+        align, vertical = _horizontal_alignment(angle)
+        # Bottom labels hang into the gap under the circle. The others sit further
+        # out so a second line cannot fall back onto the ring.
+        normalized = math.atan2(math.sin(angle), math.cos(angle))
+        if vertical == 'top':
+            radius = 1.06
+        elif vertical == 'bottom':
+            radius = 1.10 if count <= 8 else 1.05
+        elif count > 7 and math.sin(normalized) > 0.2:
+            radius = max(label_radius, 1.28)
+        else:
+            radius = label_radius
         anchor = _polar(angle, radius)
+        name = names[position]
+        role = roles.get(name, 'participant')
+        has_role = role in {'facilitator', 'actor'}
+        width = max(
+            _text_width(name, name_font, name_size),
+            _text_width(f'{arcs[position]} exchanges', count_font, count_size),
+        )
+        height = name_size + count_size + (role_size + 10 if has_role else 0) + 16
+        placed.append(
+            {
+                'x': anchor[0],
+                'y': anchor[1],
+                'ha': align,
+                'va': vertical,
+                'width': width * axis.figure.dpi / 72.0,
+                'height': height * axis.figure.dpi / 72.0,
+                'position': position,
+            }
+        )
+    if count > 7:
+        _separate_labels(axis, placed)
+    for item in placed:
+        position = item['position']
         name = names[position]
         exchanges = arcs[position]
         exchange_word = 'exchange' if exchanges == 1 else 'exchanges'
         role = roles.get(name, 'participant')
         has_role = role in {'facilitator', 'actor'}
+        anchor = (item['x'], item['y'])
+        align, vertical = item['ha'], item['va']
         axis.text(
             anchor[0],
             anchor[1],
@@ -529,17 +627,20 @@ def _draw_labels(axis, names, arcs, spans, roles, colors) -> None:
             zorder=8,
         )
         if vertical == 'bottom':
-            first_line = -14
+            first_line = -12
         elif vertical == 'top':
-            first_line = -(name_size + 8)
+            first_line = -(name_size + 4)
         else:
-            first_line = -(name_size * 0.62 + 9)
-        second_line = first_line - 17
+            first_line = -(name_size * 0.55 + 8)
+        # Near the top, a line placed straight under the name falls onto the ring.
+        outward_x = 0
+        if count > 7 and vertical == 'center' and math.sin(normalized) > 0.2:
+            outward_x = 16 if align == 'left' else -16
         if has_role:
             axis.annotate(
                 'FACILITATOR' if role == 'facilitator' else 'ACTOR',
                 xy=anchor,
-                xytext=(0, first_line),
+                xytext=(outward_x, first_line),
                 textcoords='offset points',
                 ha=align,
                 va='center',
@@ -551,10 +652,13 @@ def _draw_labels(axis, names, arcs, spans, roles, colors) -> None:
                 zorder=8,
                 annotation_clip=False,
             )
+            count_offset = first_line - 16
+        else:
+            count_offset = first_line
         axis.annotate(
             f'{exchanges} {exchange_word}',
             xy=anchor,
-            xytext=(0, second_line if has_role else first_line),
+            xytext=(outward_x, count_offset),
             textcoords='offset points',
             ha=align,
             va='center',
@@ -644,7 +748,7 @@ def _draw_caption(figure, caption: str, x: float, y: float, width: float) -> flo
 def _draw_guide(figure, caption: str) -> None:
     semibold = load_poppins('semibold')
     regular = load_poppins('regular')
-    card_x, card_y, card_w, card_h = 0.075, 0.055, 0.85, 0.152
+    card_x, card_y, card_w, card_h = 0.075, 0.040, 0.85, 0.148
     figure.add_artist(
         FancyBboxPatch(
             (card_x, card_y),
@@ -760,7 +864,7 @@ def _draw_header(figure, title: str) -> None:
     )
     figure.add_artist(
         Rectangle(
-            (0.075, 0.892),
+            (0.075, 0.905),
             0.85,
             1.15 / (figure.get_figheight() * 72),
             transform=figure.transFigure,
@@ -797,7 +901,7 @@ def save_chord_diagram(
     axis = figure.add_axes(
         [
             (figure_width - axes_inches) / 2 / figure_width,
-            2.45 / figure_height,
+            2.68 / figure_height,
             axes_inches / figure_width,
             axes_inches / figure_height,
         ]
@@ -807,11 +911,16 @@ def save_chord_diagram(
     axis.set_xlim(-1.06, 1.06)
     axis.set_ylim(-1.06, 1.06)
     axis.set_facecolor('none')
+    axis.set_clip_on(False)
+    axis.set_zorder(4)
     outer = 1.0
     thickness = 0.082
     inner = outer - thickness
 
+    total_turns = sum(sum(row) for row in directed) or 1
+    fade_below = 0.03 * total_turns if count > 7 else 0
     drawings = []
+    weak_by_source: dict[int, list[int]] = {source: [] for source in range(count)}
     for source in range(count):
         for target in range(count):
             weight = directed[source][target]
@@ -821,11 +930,29 @@ def save_chord_diagram(
                 continue
             pair = tuple(sorted((source, target)))
             emphasized = pair in strong
-            drawings.append((2 if emphasized else 1, source, target, source_span, incoming_span, emphasized))
+            if fade_below and weight < fade_below and not emphasized:
+                weak_by_source[source].append(target)
+                continue
+            alpha = 0.80 if emphasized else 0.45
+            drawings.append((2 if emphasized else 1, source, source_span, incoming_span, alpha))
+    for source, targets in weak_by_source.items():
+        targets.sort(key=lambda target: sum(spans[target]) / 2)
+        clusters: list[list[int]] = []
+        for target in targets:
+            midpoint = sum(spans[target]) / 2
+            if clusters and _angular_separation(sum(spans[clusters[-1][-1]]) / 2, midpoint) < 0.8:
+                clusters[-1].append(target)
+            else:
+                clusters.append([target])
+        for cluster in clusters:
+            source_parts = [ends[source][('out', target)] for target in cluster]
+            incoming_parts = [ends[target][('in', source)] for target in cluster]
+            source_span = (min(part[0] for part in source_parts), max(part[1] for part in source_parts))
+            incoming_span = (min(part[0] for part in incoming_parts), max(part[1] for part in incoming_parts))
+            drawings.append((0, source, source_span, incoming_span, 0.20))
     drawings.sort(key=lambda item: item[0])
 
-    for rank, source, target, source_span, incoming_span, emphasized in drawings:
-        alpha = 0.80 if emphasized else 0.45
+    for rank, source, source_span, incoming_span, alpha in drawings:
         axis.add_patch(
             PathPatch(
                 _directed_ribbon(source_span, _target_span(source_span, incoming_span), inner),

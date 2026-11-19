@@ -150,8 +150,19 @@ def six_person_session() -> tuple[list[str], list[str], dict[str, str]]:
 
 
 def ten_person_session() -> tuple[list[str], list[str], dict[str, str]]:
-    """About 200 turns. Person 0 is central, Person 1 and 2 are the strong pair, Person 9 is quiet."""
-    names = [f'Person {index}' for index in range(10)]
+    """About 200 turns. Maya holds the middle, Liam and Nora lock in, Uma is quiet."""
+    names = [
+        'Maya Ellis',
+        'Liam Ortiz',
+        'Nora Patel',
+        'Owen Brooks',
+        'Priya Shah',
+        'Quinn Adler',
+        'Rosa Nguyen',
+        'Samir Cole',
+        'Tess Marino',
+        'Uma Walsh',
+    ]
     facilitator, left, right, quiet = names[0], names[1], names[2], names[9]
     sequence: list[str] = []
     for other in [name for name in names if name != facilitator] * 2:
