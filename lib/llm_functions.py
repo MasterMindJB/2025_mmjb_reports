@@ -6,16 +6,19 @@ from typing import TypeAlias
 import pandas as pd
 from langchain_core.language_models.chat_models import BaseChatModel
 
-from langchain.globals import set_debug, set_llm_cache
+from langchain_core.globals import set_debug
 from langchain_core.output_parsers import JsonOutputParser, StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.runnables import RunnableLambda
 from langchain_google_genai import ChatGoogleGenerativeAI
 from google.api_core.exceptions import ResourceExhausted
 from langchain_core.exceptions import OutputParserException
-from langchain_core.caches import InMemoryCache
+
+from lib.llm_validation import validate_llm_output
 
 set_debug(False)  # Set to True to see communication information
-set_llm_cache(InMemoryCache())
+# LLM responses are not cached. A cache would replay an invalid completion and
+# the parser retry would never see a new answer.
 
 JSON: TypeAlias = dict[str, "JSON"] | list["JSON"] | str | int | float | bool | None
 
@@ -61,17 +64,25 @@ class ConversationSummarizer:
         with open(path_file, 'r', encoding='UTF-8') as file:
             return file.read()
 
-    def __init__(self, path_save_dir: Path, path_prompt_templates: Path):
+    def __init__(
+        self,
+        path_save_dir: Path,
+        path_prompt_templates: Path,
+        llm: BaseChatModel | None = None,
+    ):
         self.path_save_dir = path_save_dir
         self.path_prompt_templates = path_prompt_templates
 
         # self.llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro") # Free quota/day = 50
-        self.llm = ChatGoogleGenerativeAI(  # Free quota/day = 1500
-            # model="gemini-1.5-flash",
-            model="gemini-2.5-flash",
-            # model="gemini-2.0-flash-lite",
-            temperature=0,
-        )
+        if llm is None:
+            self.llm = ChatGoogleGenerativeAI(  # Free quota/day = 1500
+                # model="gemini-1.5-flash",
+                model="gemini-2.5-flash",
+                # model="gemini-2.0-flash-lite",
+                temperature=0,
+            )
+        else:
+            self.llm = llm
 
         # Create dictionary to store prompt templates for each type of conversation information generation
         self.prompt_templates = {}
@@ -89,7 +100,14 @@ class ConversationSummarizer:
             # 2. The language model (LLM)
             # 3. The appropriate parser (JSON or String)
             self.chains[partial_file_name] = (
-                self.prompt_templates[partial_file_name] | self.llm | parser
+                self.prompt_templates[partial_file_name]
+                | self.llm
+                | parser
+                | RunnableLambda(
+                    lambda value, output_name=partial_file_name: validate_llm_output(
+                        output_name, value
+                    )
+                )
             )
 
         # Create dictionary to store retry-enabled chains for each type of conversation information generation
@@ -293,14 +311,14 @@ class ConversationSummarizer:
                 _tmp_speaker['personal_summary'] = self.chains_with_retry[
                     'personal_summary'
                 ].invoke({'participation': _df_utter_reduced.iloc[i]['text']})
-                logging.info('personal_summary: %s', _tmp_speaker['personal_summary'])
+                logging.debug('personal_summary: %s', _tmp_speaker['personal_summary'])
 
             if generate_all or force_regen_personal_key_contributions:
                 logging.debug('......creating speaker contributions.')
                 _tmp_speaker['personal_key_contributions'] = self.chains_with_retry[
                     'personal_key_contributions'
                 ].invoke({'participation': _df_utter_reduced.iloc[i]['text']})
-                logging.info(
+                logging.debug(
                     'personal_key_contributions: %s', _tmp_speaker['personal_key_contributions']
                 )
 
@@ -309,7 +327,7 @@ class ConversationSummarizer:
                 _tmp_speaker['personal_action_items'] = self.chains_with_retry[
                     'personal_action_items'
                 ].invoke({'participation': _df_utter_reduced.iloc[i]['text']})
-                logging.info('personal_action_items: %s', _tmp_speaker['personal_action_items'])
+                logging.debug('personal_action_items: %s', _tmp_speaker['personal_action_items'])
 
             _speaker_sorted = {}
             _speaker_sorted['name'] = name
@@ -638,7 +656,7 @@ class ConversationSummarizer:
                         'conversation_script': conversation_script,
                     }
                 )
-                logging.info(
+                logging.debug(
                     'personal_super_power: %s',
                     _tmp_speaker['personal_super_power'],
                 )
@@ -654,7 +672,7 @@ class ConversationSummarizer:
                         'conversation_script': conversation_script,
                     }
                 )
-                logging.info(
+                logging.debug(
                     'personal_framework_amase: %s', _tmp_speaker['personal_framework_amase']
                 )
 
@@ -669,7 +687,7 @@ class ConversationSummarizer:
                         'conversation_script': conversation_script,
                     }
                 )
-                logging.info(
+                logging.debug(
                     'personal_framework_enneagram: %s',
                     _tmp_speaker['personal_framework_enneagram'],
                 )
@@ -685,7 +703,7 @@ class ConversationSummarizer:
                         'conversation_script': conversation_script,
                     }
                 )
-                logging.info(
+                logging.debug(
                     'personal_framework_doshas: %s', _tmp_speaker['personal_framework_doshas']
                 )
 
@@ -699,7 +717,7 @@ class ConversationSummarizer:
                         'conversation_script': conversation_script,
                     }
                 )
-                logging.info(
+                logging.debug(
                     'personal_errors_and_corrections: %s',
                     _tmp_speaker['personal_errors_and_corrections'],
                 )

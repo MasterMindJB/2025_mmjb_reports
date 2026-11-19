@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Sessions · Harkness Training Solutions{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <p class="eyebrow">Sessions</p>
+    <h1>Recordings and reports</h1>
+  </div>
+  <a class="button" href="/upload">Upload a recording</a>
+</div>
+{% if not sessions %}
+<section class="panel">
+  <p>No sessions yet. Upload a recording, name the speakers, review the PDFs, then send each person only their own report.</p>
+</section>
+{% else %}
+<table class="sessions">
+  <thead>
+    <tr>
+      <th>Session</th>
+      <th>Client</th>
+      <th>Date</th>
+      <th>Status</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for session in sessions %}
+    <tr>
+      <td><a href="/sessions/{{ session.id }}">{{ session.session_name }}</a><span class="muted">{{ session.group_name }}</span></td>
+      <td>{{ session.client }}</td>
+      <td>{{ session.session_date }}</td>
+      <td><span class="status status-{{ session.status }}">{{ session.status }}</span></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

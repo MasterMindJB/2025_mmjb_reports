@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Harkness Training Solutions{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+  {% block head %}{% endblock %}
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="/">Harkness Training Solutions</a>
+    {% if request.session.get('admin') %}
+    <nav>
+      <a href="/">Sessions</a>
+      <a href="/upload">Upload</a>
+      <form method="post" action="/logout">
+        <button type="submit" class="linkish">Sign out</button>
+      </form>
+    </nav>
+    {% endif %}
+  </header>
+  <main>
+    {% if flash %}
+    <p class="flash" role="status">{{ flash }}</p>
+    {% endif %}
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

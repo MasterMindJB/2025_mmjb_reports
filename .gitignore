@@ -1,6 +1,9 @@
 # Files not to commit
 do_not_commit/
 
+# App data: recordings, transcripts, reports, the database, and dry-run emails
+data/
+
 # Don't keep track of multiple runs log
 multiple_runs_log.txt
 

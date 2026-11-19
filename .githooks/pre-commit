@@ -29,7 +29,7 @@ done
 # 3. Recordings, transcripts and reports never belong in git
 for f in $staged; do
   case "$f" in
-    media/*|output/*|*.mp3|*.mp4|*.m4a|*.wav)
+    media/*|output/*|data/*|outbox/*|*.mp3|*.mp4|*.m4a|*.wav)
       [ "$f" = "media/.gitignore" ] || [ "$f" = "output/.gitignore" ] && continue
       echo "BLOCKED: $f is a recording or generated output."
       status=1 ;;

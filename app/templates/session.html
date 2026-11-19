@@ -1,0 +1,164 @@
+{% extends "base.html" %}
+{% block title %}{{ session.session_name }} · Harkness Training Solutions{% endblock %}
+{% block head %}
+{% if session.status in ['transcribing', 'generating'] %}
+<meta http-equiv="refresh" content="3">
+{% endif %}
+{% endblock %}
+{% block content %}
+<p class="eyebrow">{{ session.client }} · {{ session.group_name }} · {{ session.session_date }}</p>
+<h1>{{ session.session_name }}</h1>
+<p class="status status-{{ session.status }}">{{ session.status }}</p>
+
+{% if session.status == 'transcribing' %}
+<section class="panel">
+  <h2>Transcribing</h2>
+  <p>The recording is with the transcription service. This page refreshes on its own. Speaker letters will appear here with a few sample lines and timestamps.</p>
+  <form method="post" action="/sessions/{{ session.id }}/retry">
+    <button type="submit" class="secondary">Run transcription again</button>
+  </form>
+</section>
+{% elif session.status == 'generating' %}
+<section class="panel">
+  <h2>Generating reports</h2>
+  <p>Individual PDFs and the group PDF are being written. This page refreshes on its own. Nothing is emailed until you press Send on the review screen.</p>
+  <form method="post" action="/sessions/{{ session.id }}/retry">
+    <button type="submit" class="secondary">Run report generation again</button>
+  </form>
+</section>
+{% elif session.status == 'error' %}
+<section class="panel">
+  <h2>Something needs attention</h2>
+  <p class="error" role="alert">{{ session.error_message }}</p>
+  <form method="post" action="/sessions/{{ session.id }}/retry">
+    <button type="submit">Try again</button>
+  </form>
+</section>
+{% elif session.status == 'naming' %}
+<section class="panel">
+  <p class="eyebrow">Step 2 of 4</p>
+  <h2>Name the speakers</h2>
+  <p class="lede">Match each detected voice to a person. Participants receive a report. Facilitators and actors are part of the recording and do not receive one.</p>
+  <form method="post" action="/sessions/{{ session.id }}/speakers">
+    {% for speaker in speakers %}
+    <article class="speaker">
+      <header>
+        <h3>Speaker {{ speaker.label }}</h3>
+      </header>
+      <input type="hidden" name="label" value="{{ speaker.label }}">
+      <ul class="samples">
+        {% for sample in speaker.samples %}
+        <li><time>{{ sample.start|mmss }}–{{ sample.end|mmss }}</time> {{ sample.text }}</li>
+        {% else %}
+        <li>No sample lines were stored for this speaker.</li>
+        {% endfor %}
+      </ul>
+      <div class="grid">
+        <div>
+          <label for="name-{{ speaker.label }}">Name</label>
+          <input id="name-{{ speaker.label }}" name="name" value="{{ speaker.name or '' }}" required>
+        </div>
+        <div>
+          <label for="email-{{ speaker.label }}">Email</label>
+          <input id="email-{{ speaker.label }}" name="email" type="email" value="{{ speaker.email or '' }}" placeholder="Required for participants">
+        </div>
+        <div>
+          <label for="role-{{ speaker.label }}">Role</label>
+          <select id="role-{{ speaker.label }}" name="role">
+            {% for option in ['participant', 'facilitator', 'actor'] %}
+            <option value="{{ option }}" {% if speaker.role == option %}selected{% endif %}>{{ option }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+    </article>
+    {% endfor %}
+    <div class="actions">
+      <button type="submit" name="action" value="save">Save names</button>
+      <button type="submit" name="action" value="generate">Generate reports</button>
+    </div>
+  </form>
+</section>
+{% if speakers|length > 1 %}
+<section class="panel">
+  <h2>Merge speakers</h2>
+  <p>If one person was split into two voices, merge the extra letter into the one you want to keep. The kept speaker keeps the name already entered.</p>
+  {% for speaker in speakers %}
+  <form method="post" action="/sessions/{{ session.id }}/merge" class="merge">
+    <input type="hidden" name="source" value="{{ speaker.label }}">
+    <label for="merge-{{ speaker.label }}">Merge {{ speaker.label }} into</label>
+    <select id="merge-{{ speaker.label }}" name="target">
+      {% for other in speakers if other.label != speaker.label %}
+      <option value="{{ other.label }}">{{ other.label }}{% if other.name %} · {{ other.name }}{% endif %}</option>
+      {% endfor %}
+    </select>
+    <button type="submit">Merge</button>
+  </form>
+  {% endfor %}
+</section>
+{% endif %}
+{% elif session.status in ['review', 'sent'] %}
+<section class="panel">
+  <p class="eyebrow">Step 3 of 4 · Review</p>
+  <h2>Preview every report</h2>
+  <p class="lede">Read the PDFs before anything leaves this application. The group report is the session summary. It does not contain another person's individual sections.</p>
+  {% if reports %}
+  <ul class="report-links">
+    {% for report in reports %}
+    <li><a href="/sessions/{{ session.id }}/reports/{{ report.id }}" target="preview">{{ report.filename }}</a></li>
+    {% endfor %}
+  </ul>
+  <iframe name="preview" title="Report preview" src="/sessions/{{ session.id }}/reports/{{ reports[0].id }}"></iframe>
+  {% else %}
+  <p>No report files are available.</p>
+  {% endif %}
+</section>
+<section class="panel">
+  <p class="eyebrow">Step 4 of 4 · Send</p>
+  <h2>Who receives what</h2>
+  <ul class="recipients">
+    {% for speaker in speakers %}
+      {% if speaker.role == 'participant' %}
+      <li><strong>{{ speaker.name }}</strong> ({{ speaker.email }}) receives {{ speaker.name }}.pdf and group.pdf.</li>
+      {% else %}
+      <li><strong>{{ speaker.name }}</strong> is marked {{ speaker.role }} and does not receive a report.</li>
+      {% endif %}
+    {% endfor %}
+  </ul>
+  {% if session.status == 'review' %}
+    {% if email_mode == 'dry-run' %}
+    <p class="note">Dry-run is on. Send saves each email locally and does not contact a mail server. Set EMAIL_PROVIDER to smtp or api when real credentials are ready.</p>
+    {% else %}
+    <p class="note">Send uses the {{ email_mode }} email provider. Each participant gets only the two files listed for them.</p>
+    {% endif %}
+    <form method="post" action="/sessions/{{ session.id }}/send">
+      <button type="submit">Send reports</button>
+    </form>
+    <form method="post" action="/sessions/{{ session.id }}/reopen" class="inline">
+      <button type="submit" class="secondary">Edit names and regenerate</button>
+    </form>
+  {% else %}
+    <p>The send action is complete.</p>
+    {% if emails %}
+    <ul class="recipients">
+      {% for email in emails %}
+      <li>{{ email.recipient_name }} · {{ email.recipient_email }} · {{ email.status }} · {{ email.attachment_names|join(', ') }}</li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  {% endif %}
+  <p class="note">
+    {% if session.recording_deleted_at %}
+    The recording and local transcript were deleted {{ session.recording_deleted_at }}.
+    {% elif session.purge_due_at %}
+    The recording and transcript are scheduled for deletion at {{ session.purge_due_at }}. Reports are kept.
+    {% endif %}
+    {% if session.assemblyai_deleted_at %}
+    The AssemblyAI transcript was deleted {{ session.assemblyai_deleted_at }}.
+    {% elif session.assemblyai_delete_error %}
+    AssemblyAI deletion still needs a retry: {{ session.assemblyai_delete_error }}
+    {% endif %}
+  </p>
+</section>
+{% endif %}
+{% endblock %}

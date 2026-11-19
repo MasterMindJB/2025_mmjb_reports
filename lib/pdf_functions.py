@@ -89,26 +89,27 @@ class MM_PDF(FPDF):
         self.set_font_to_recall()
 
     def header(self):
-        self.set_font('KulimPark', '', 13)
+        self.set_font('KulimPark', '', 11)
         line_height = self.font_size * 2
-        self.cell(w=0, text='MasterMind', align='L', h=line_height, markdown=True)
-        self.set_font('KulimPark', '', 8)
-        self.cell(w=0, text='jason@jasonrodneybrooks.com', align='R', h=line_height)
-        self.ln(16)  # Line break
+        self.cell(w=self.epw * 0.72, text='Harkness Training Solutions', align='L', h=line_height)
+        self.set_font('KulimPark', '', 9)
+        self.cell(w=self.epw * 0.28, text='Confidential', align='R', h=line_height)
+        self.ln(12)
 
     # Page footer
     def footer(self):
         self.set_y(-15)  # Set position of the footer
-        self.set_font('DejaVuSans', '', 13)
-        self.cell(6, 10, '😊', align='L')
-        self.set_font('KulimPark-light', 'U', 11)
-        self.cell(
-            0,
-            10,
-            text="Leave a Comment!",
-            align='L',
-            link=self.link_feedback,
-        )
+        if self.link_feedback:
+            self.set_font('DejaVuSans', '', 13)
+            self.cell(6, 10, '😊', align='L')
+            self.set_font('KulimPark-light', 'U', 11)
+            self.cell(
+                0,
+                10,
+                text="Leave a Comment!",
+                align='L',
+                link=self.link_feedback,
+            )
         self.set_font('KulimPark-light', '', 11)
         self.cell(0, 10, f'{self.page_no()}/{{nb}}', align='R')  # Page number
 
@@ -211,6 +212,106 @@ class MM_PDF(FPDF):
         self.set_font_recall()
 
 
+def _sorted_speakers(speaker_map: dict):
+    return sorted(
+        [(speaker, speaker_map[speaker]['name']) for speaker in speaker_map], key=lambda item: item[1]
+    )
+
+
+def _add_own_quotes(pdf: MM_PDF, quotes):
+    pdf.set_font_to_recall()
+    if not quotes:
+        pdf.set_font('KulimPark-light', '', 12)
+        pdf.multi_cell(w=0, text='None noted.', ln=True)
+        pdf.set_font_recall()
+        return
+    for quote in quotes:
+        pdf.set_font('KulimPark', '', 12)
+        pdf.set_x(pdf.l_margin + pdf.epw * 0.05)
+        pdf.multi_cell(
+            w=0,
+            h=1.5 * pdf.font_size,
+            ln=True,
+            markdown=True,
+            text=f'**{quote["tagline"]}**',
+        )
+        pdf.set_font('KulimPark-light', 'i', 12)
+        pdf.set_x(pdf.l_margin + pdf.epw * 0.05)
+        pdf.multi_cell(
+            w=0,
+            align='J',
+            ln=True,
+            markdown=True,
+            text=f'"{quote["quote"]}"',
+        )
+        pdf.ln(5)
+    pdf.set_font_recall()
+
+
+def _add_own_actions(pdf: MM_PDF, actions):
+    if not actions:
+        pdf.set_font('KulimPark-light', '', 12)
+        pdf.multi_cell(w=0, text='None noted.', ln=True)
+        pdf.set_font_recall()
+        return
+    for action in actions:
+        pdf.set_x(pdf.l_margin + pdf.epw * 0.05)
+        pdf.multi_cell(
+            w=0,
+            h=1.5 * pdf.font_size,
+            ln=True,
+            markdown=True,
+            text=f'**{action["title"]}**',
+        )
+        pdf.set_font_to_recall()
+        pdf.set_font('KulimPark-light', '', 12)
+        pdf.set_x(pdf.l_margin + pdf.epw * 0.05)
+        pdf.multi_cell(
+            w=pdf.epw * 0.8,
+            align='J',
+            ln=True,
+            markdown=True,
+            text=f'{action["action"]}',
+        )
+        pdf.set_font_recall()
+        pdf.ln(5)
+
+
+def _add_group_individual_sections(
+    pdf: MM_PDF,
+    speaker_map: dict,
+    image_action_items: PIL.Image,
+    link_key_contribs: int,
+    link_action_items: int,
+    link_participant_summ: int,
+):
+    pdf.add_page()
+    pdf.add_title_1(text='Key Contributions', link_dest=link_key_contribs)
+    for speaker, _name in _sorted_speakers(speaker_map):
+        pdf.add_title_2(text=speaker_map[speaker]['name'])
+        _add_own_quotes(pdf, speaker_map[speaker]['personal_key_contributions'])
+
+    pdf.add_page()
+    pdf.add_title_1(text='Action Items', link_dest=link_action_items)
+    pdf.image(image_action_items, x='C', w=pdf.epw * 1 / 3)
+    for speaker, _name in _sorted_speakers(speaker_map):
+        pdf.add_title_2(text=speaker_map[speaker]['name'])
+        _add_own_actions(pdf, speaker_map[speaker]['personal_action_items'])
+
+    pdf.add_page()
+    pdf.add_title_1(text='Participant Summary', link_dest=link_participant_summ)
+    for speaker, _name in _sorted_speakers(speaker_map):
+        pdf.add_title_2(text=speaker_map[speaker]['name'])
+        pdf.multi_cell(
+            w=0,
+            text=f'{speaker_map[speaker]["personal_summary"]}',
+            align='J',
+            ln=True,
+            markdown=True,
+        )
+        pdf.ln(5)
+
+
 def create_report_group(
     images_barplot: [PIL.Image],
     image_convo_sentiment_evo: PIL.Image,
@@ -228,6 +329,7 @@ def create_report_group(
     df_nice_stats_data: pd.DataFrame,
     speaker_map: dict,
     link_feedback: str,
+    include_individual_sections: bool = False,
 ):
     logging.info('Creating PDF report.')
 
@@ -247,6 +349,16 @@ def create_report_group(
         title='Conversation Health Report',
         subtitle='Feedback & actionable recommendations to enhance your communication.',
     )
+    pdf.set_font('KulimPark-light', '', 10)
+    pdf.multi_cell(
+        w=0,
+        text=(
+            'Confidential group report. This document summarizes the session. '
+            'It does not include any participant\'s individual report.'
+        ),
+        align='C',
+    )
+    pdf.set_font('KulimPark', '', 12)
 
     # Introduction, conversation short summary
     pdf.set_font_to_recall()
@@ -301,15 +413,16 @@ def create_report_group(
         row = table.row()
         row.cell('Conversation Summary', style=style_link, link=link_convo_summ)
         row.cell('A brief recount of what happened during the MasterMind.', style=style_desc)
-        row = table.row()
-        row.cell('Key Contributions', style=style_link, link=link_key_contribs)
-        row.cell('Three important ideas brought by each participant.', style=style_desc)
-        row = table.row()
-        row.cell('Action Items', style=style_link, link=link_action_items)
-        row.cell('Actionable ideas discussed during the MasterMind.', style=style_desc)
-        row = table.row()
-        row.cell('Participant Summary', style=style_link, link=link_participant_summ)
-        row.cell('A summary of each participant\'s contribution.', style=style_desc)
+        if include_individual_sections:
+            row = table.row()
+            row.cell('Key Contributions', style=style_link, link=link_key_contribs)
+            row.cell('Three important ideas brought by each participant.', style=style_desc)
+            row = table.row()
+            row.cell('Action Items', style=style_link, link=link_action_items)
+            row.cell('Actionable ideas discussed during the MasterMind.', style=style_desc)
+            row = table.row()
+            row.cell('Participant Summary', style=style_link, link=link_participant_summ)
+            row.cell('A summary of each participant\'s contribution.', style=style_desc)
         row = table.row()
         row.cell('Sentiment Evolution', style=style_link, link=link_convo_evo)
         row.cell(
@@ -389,87 +502,17 @@ def create_report_group(
     pdf.multi_cell(w=0, text=summaries['conversation_summary_long'], align='J', ln=True)
     pdf.set_font_recall()
 
-    # Key Contributions for each speaker
-    pdf.add_page()
-    pdf.add_title_1(text='Key Contributions', link_dest=link_key_contribs)
-    for speaker, name in sorted(
-        [(speaker, speaker_map[speaker]['name']) for speaker in speaker_map], key=lambda x: x[1]
-    ):
-        pdf.add_title_2(text=speaker_map[speaker]['name'])
-        pdf.set_font_to_recall()
-        for quote in speaker_map[speaker]['personal_key_contributions']:
-            pdf.set_font('KulimPark', '', 12)
-            pdf.set_x(pdf.l_margin + pdf.epw * 0.05)
-            pdf.multi_cell(
-                # padding=(0, 7),
-                w=0,
-                h=1.5 * pdf.font_size,
-                ln=True,
-                markdown=True,
-                text=f'**{quote["tagline"]}**',
-            )
-            pdf.set_font_to_recall()
-            pdf.set_font('KulimPark-light', 'i', 12)
-            pdf.set_x(pdf.l_margin + pdf.epw * 0.05)
-            pdf.multi_cell(
-                w=0,
-                align='J',
-                ln=True,
-                markdown=True,
-                text=f'"{quote["quote"]}"',
-            )
-            pdf.set_font_recall()
-            pdf.ln(5)
-        pdf.set_font_recall()
-
-    # Action Items for each speaker
-    pdf.add_page()
-    pdf.add_title_1(text='Action Items', link_dest=link_action_items)
-    pdf.image(image_action_items, x='C', w=pdf.epw * 1 / 3)
-    for speaker, name in sorted(
-        [(speaker, speaker_map[speaker]['name']) for speaker in speaker_map], key=lambda x: x[1]
-    ):
-        pdf.add_title_2(text=speaker_map[speaker]['name'])
-        for action in speaker_map[speaker]['personal_action_items']:
-            pdf.set_x(pdf.l_margin + pdf.epw * 0.05)
-            pdf.multi_cell(
-                # padding=(0, 7),
-                w=0,
-                h=1.5 * pdf.font_size,
-                ln=True,
-                markdown=True,
-                text=f'**{action["title"]}**',
-            )
-            pdf.set_font_to_recall()
-            pdf.set_font('KulimPark-light', '', 12)
-            pdf.set_x(pdf.l_margin + pdf.epw * 0.05)
-            pdf.multi_cell(
-                w=pdf.epw * 0.8,
-                align='J',
-                ln=True,
-                markdown=True,
-                text=f'{action["action"]}',
-            )
-            pdf.set_font_recall()
-            pdf.ln(5)
-
-    # Participant Summary for each speaker
-    pdf.add_page()
-    pdf.add_title_1(text='Participant Summary', link_dest=link_participant_summ)
-    for speaker, name in sorted(
-        [(speaker, speaker_map[speaker]['name']) for speaker in speaker_map], key=lambda x: x[1]
-    ):
-        pdf.add_title_2(text=speaker_map[speaker]['name'])
-        pdf.multi_cell(
-            w=0,
-            # padding=(0, 10),
-            # padding=(0, 0),
-            text=f'{speaker_map[speaker]["personal_summary"]}',
-            align='J',
-            ln=True,
-            markdown=True,
+    # Per-person quotes, action items, and summaries are individual sections.
+    # They stay out of the group report unless a caller explicitly opts in.
+    if include_individual_sections:
+        _add_group_individual_sections(
+            pdf,
+            speaker_map,
+            image_action_items,
+            link_key_contribs,
+            link_action_items,
+            link_participant_summ,
         )
-        pdf.ln(5)
 
     # Sentiment Evolution
     pdf.add_page()
@@ -541,6 +584,16 @@ def create_report_personal(
             title=f'{speaker_name}\'s Personal Report',
             subtitle='Feedback & actionable recommendations to enhance your communication.',
         )
+        pdf.set_font('KulimPark-light', '', 10)
+        pdf.multi_cell(
+            w=0,
+            text=(
+                f'Confidential. This individual report was prepared for {speaker_name} '
+                'and is not for redistribution.'
+            ),
+            align='C',
+        )
+        pdf.set_font('KulimPark', '', 12)
 
         # Introduction, conversation short summary
         pdf.set_font_to_recall()
@@ -561,6 +614,8 @@ def create_report_personal(
 
         # Table of Contents
         link_personal_summary = pdf.add_link()
+        link_key_contribs = pdf.add_link()
+        link_action_items = pdf.add_link()
         link_statistics = pdf.add_link()
         link_amase_framework = pdf.add_link()
         link_enneagram_framework = pdf.add_link()
@@ -585,6 +640,12 @@ def create_report_personal(
             row = table.row()
             row.cell('Personal Summary', style=style_link, link=link_personal_summary)
             row.cell('A comprehensive overview of your communication style.', style=style_desc)
+            row = table.row()
+            row.cell('Your Key Contributions', style=style_link, link=link_key_contribs)
+            row.cell('Ideas from your part of the conversation.', style=style_desc)
+            row = table.row()
+            row.cell('Your Action Items', style=style_link, link=link_action_items)
+            row.cell('Commitments drawn from your part of the conversation.', style=style_desc)
             row = table.row()
             row.cell('Your Statistics', style=style_link, link=link_statistics)
             row.cell('Key metrics and data about your speaking patterns.', style=style_desc)
@@ -625,6 +686,12 @@ def create_report_personal(
             markdown=True,
         )
         pdf.set_font_recall()
+
+        pdf.add_title_1(text='Your Key Contributions', link_dest=link_key_contribs)
+        _add_own_quotes(pdf, speaker_info.get('personal_key_contributions') or [])
+
+        pdf.add_title_1(text='Your Action Items', link_dest=link_action_items)
+        _add_own_actions(pdf, speaker_info.get('personal_action_items') or [])
 
         # 2. Speaker Statistics (only for this speaker)
         # pdf.add_page() # TODO: Remove comment
