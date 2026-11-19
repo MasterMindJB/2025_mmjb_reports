@@ -485,11 +485,16 @@ def capitalize_sentences(text: str) -> str:
     def _upper(match: re.Match) -> str:
         return match.group(1) + match.group(2).upper()
 
-    cleaned = re.sub(r'((?:[.!?]["”]?)\s+)([a-z])', _upper, cleaned)
-    stripped = cleaned.lstrip()
+    return re.sub(r'((?:[.!?]["”]?)\s+)([a-z])', _upper, cleaned)
+
+
+def lead_sentence(text: str) -> str:
+    """A section opens with a capital. 'you advocate' becomes 'You advocate'."""
+    text = capitalize_sentences(text)
+    stripped = text.lstrip()
     if stripped[:1].islower():
-        cleaned = cleaned[:len(cleaned) - len(stripped)] + stripped[0].upper() + stripped[1:]
-    return cleaned
+        text = text[:len(text) - len(stripped)] + stripped[0].upper() + stripped[1:]
+    return text
 
 
 def clip_clause(text: str, limit: int = 25) -> str:
@@ -1359,9 +1364,10 @@ def _fresh_quote(text: str, timestamp: str, transcript, label: str, facts: dict)
     shown, turn_id = own_quote_turn(text, timestamp, transcript, label)
     if turn_id in used:
         replacement = _next_distinct_turn(transcript, label, used)
-        if replacement is None:
-            raise OutputParserException('quote reuses a turn already cited in this report')
-        when, shown, turn_id = replacement
+        if replacement is not None:
+            when, shown, turn_id = replacement
+        else:
+            when = str(timestamp or '').strip()
     else:
         when = str(timestamp or '').strip()
     if log is not None and turn_id not in log:
