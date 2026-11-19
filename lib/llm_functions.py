@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 from pathlib import Path
 from typing import TypeAlias
 
@@ -38,6 +39,7 @@ class ConversationSummarizer:
         #
         'personal_super_power': parser_str,
         'personal_errors_and_corrections': parser_json,
+        'personal_signature_phrase': parser_str,
         'personal_framework_amase': parser_json,
         'personal_framework_enneagram': parser_json,
         'personal_framework_doshas': parser_json,
@@ -69,36 +71,33 @@ class ConversationSummarizer:
         path_save_dir: Path,
         path_prompt_templates: Path,
         llm: BaseChatModel | None = None,
+        on_progress=None,
     ):
         self.path_save_dir = path_save_dir
         self.path_prompt_templates = path_prompt_templates
+        self.on_progress = on_progress
 
         # self.llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro") # Free quota/day = 50
         if llm is None:
-            self.llm = ChatGoogleGenerativeAI(  # Free quota/day = 1500
-                # model="gemini-1.5-flash",
-                model="gemini-2.5-flash",
-                # model="gemini-2.0-flash-lite",
+            from app.config import parse_gemini_model, parse_gemini_timeout
+
+            self.llm = ChatGoogleGenerativeAI(
+                model=parse_gemini_model(os.getenv('GEMINI_MODEL')),
                 temperature=0,
+                timeout=parse_gemini_timeout(os.getenv('GEMINI_TIMEOUT_SECONDS')),
+                max_retries=2,
             )
         else:
             self.llm = llm
 
-        # Create dictionary to store prompt templates for each type of conversation information generation
         self.prompt_templates = {}
         for partial_file_name, parser in self.file_parser_map.items():
-            # Create a ChatPromptTemplate for each type of conversation information generation using the corresponding template file
             self.prompt_templates[partial_file_name] = ChatPromptTemplate.from_template(
                 self.get_prompt_template(Path(partial_file_name).with_suffix('.txt'))
             )
 
-        # Create dictionary to store processing chains for each type of conversation information generation
         self.chains: dict[str, BaseChatModel] = {}
         for partial_file_name, parser in self.file_parser_map.items():
-            # Create a processing chain that combines:
-            # 1. The prompt template
-            # 2. The language model (LLM)
-            # 3. The appropriate parser (JSON or String)
             self.chains[partial_file_name] = (
                 self.prompt_templates[partial_file_name]
                 | self.llm
@@ -110,11 +109,8 @@ class ConversationSummarizer:
                 )
             )
 
-        # Create dictionary to store retry-enabled chains for each type of conversation information generation
         self.chains_with_retry = {}
         for partial_file_name, parser in self.file_parser_map.items():
-            # Add retry capability to each chain to handle potential API rate limits
-            # Will retry up to stop_after_attempt times if ResourceExhausted error occurs
             self.chains_with_retry[partial_file_name] = self.chains[partial_file_name].with_retry(
                 retry_if_exception_type=[
                     ResourceExhausted,  # Google only
@@ -122,6 +118,27 @@ class ConversationSummarizer:
                 ],
                 stop_after_attempt=self.stop_after_attempt,
             )
+
+    def _progress(self, message: str) -> None:
+        if self.on_progress is not None:
+            self.on_progress(message)
+        else:
+            logging.info(message)
+
+    def signature_phrase(self, speaker_text: str) -> dict | None:
+        """Most frequent bigram for one speaker, plus the sociolinguist's reading of it.
+
+        Uses prompt_templates/personal_signature_phrase.txt verbatim. Returns None when
+        the speaker said fewer than two words.
+        """
+        from lib.report_stats import top_bigram
+
+        found = top_bigram(speaker_text)
+        if found is None:
+            return None
+        bigram, count = found
+        analysis = self.chains_with_retry['personal_signature_phrase'].invoke({'bigram': bigram})
+        return {'bigram': bigram, 'count': int(count), 'analysis': analysis}
 
     def speaker_map_rename(self) -> JSON:
         """Shows some information from the speaker maps and asks for the names of the speakers so that the speaker map has real names.
@@ -298,6 +315,7 @@ class ConversationSummarizer:
         # Process all speakers
         for i in range(_df_utter_reduced.shape[0]):
             speaker = _df_utter_reduced.index[i]
+            self._progress(f'Summarizing speaker {speaker}')
             logging.debug('...processing speaker [%s].', speaker)
 
             _tmp_speaker = speaker_map.get(speaker, {})
@@ -449,6 +467,7 @@ class ConversationSummarizer:
             if return_unchanged:
                 return summaries
 
+        self._progress('Writing the group summary')
         summaries['speaker_count'] = speakers_expected
 
         # Initialize missing fields to avoid KeyError when individual force flags are True
@@ -625,6 +644,7 @@ class ConversationSummarizer:
         # Process all speakers
         for speaker in df_speaker_stats.index:
             speaker_id = df_speaker_stats.loc[speaker]['speaker']
+            self._progress(f'Analyzing {speaker}')
 
             logging.debug('...processing speaker [%s].', speaker_id)
 
@@ -722,6 +742,12 @@ class ConversationSummarizer:
                     _tmp_speaker['personal_errors_and_corrections'],
                 )
 
+            if generate_all or 'personal_signature_phrase' not in _tmp_speaker:
+                self._progress(f'Reading the signature phrase for {speaker}')
+                _tmp_speaker['personal_signature_phrase'] = self.signature_phrase(
+                    str(df_speaker_stats.loc[speaker].get('text', ''))
+                )
+
             # Created to keep the sorting order
             _speaker_sorted = {}
             _speaker_sorted['name'] = speaker
@@ -734,6 +760,9 @@ class ConversationSummarizer:
             _speaker_sorted['personal_errors_and_corrections'] = _tmp_speaker[
                 'personal_errors_and_corrections'
             ]
+            _speaker_sorted['personal_signature_phrase'] = _tmp_speaker.get(
+                'personal_signature_phrase'
+            )
 
             # Fusion _tmp_speaker with speaker_analysis[speaker]
             speaker_analysis[speaker_id] = _speaker_sorted

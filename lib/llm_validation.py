@@ -41,6 +41,7 @@ ERROR_KEYS = (
 )
 TEXT_OUTPUTS = (
     'personal_summary',
+    'personal_signature_phrase',
     'personal_super_power',
     'conversation_summary_long',
     'conversation_summary_short',

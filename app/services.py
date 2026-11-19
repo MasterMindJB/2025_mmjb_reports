@@ -28,6 +28,13 @@ def session_root(settings: Settings, session_id: int) -> Path:
     return settings.data_dir / 'sessions' / str(session_id)
 
 
+def clip_text(text: str, limit: int = 200) -> str:
+    flattened = ' '.join(str(text or '').split())
+    if len(flattened) <= limit:
+        return flattened
+    return flattened[: limit - 1].rstrip() + '…'
+
+
 def speaker_previews(transcript: dict, limit: int = 3) -> list[dict]:
     grouped: dict[str, list] = {}
     for utterance in transcript.get('utterances') or []:
@@ -38,7 +45,7 @@ def speaker_previews(transcript: dict, limit: int = 3) -> list[dict]:
         if len(grouped[label]) < limit:
             grouped[label].append(
                 {
-                    'text': utterance.get('text') or '',
+                    'text': clip_text(utterance.get('text') or ''),
                     'start': utterance.get('start'),
                     'end': utterance.get('end'),
                 }
@@ -73,8 +80,8 @@ def transcribe_session(db: Database, provider, settings: Settings, session_id: i
             assemblyai_transcript_id=payload.get('id'),
         )
     except Exception as exc:
-        logging.error('Transcription failed for session %s (%s)', session_id, type(exc).__name__)
-        db.update_session(session_id, status='error', error_message=short_error(exc))
+        logging.exception('Transcription failed for session %s', session_id)
+        db.update_session(session_id, status='error', error_message=short_error(exc), progress=None)
 
 
 def _load_transcript(session: dict) -> dict:
@@ -123,12 +130,20 @@ def generate_session(
         participant_labels = {speaker['label'] for speaker in participants}
         transcript = _load_transcript(session)
         work_dir = session_root(settings, session_id) / 'work'
+
+        def note(message: str) -> None:
+            logging.info('Session %s: %s', session_id, message)
+            db.update_session(session_id, progress=message[:240])
+
+        note('Starting report generation')
         bundle = analysis.analyze(
             transcript=transcript,
             speaker_names=speaker_names,
             participant_labels=participant_labels,
             work_dir=work_dir,
+            on_progress=note,
         )
+        note('Rendering the PDFs')
         staging = session_root(settings, session_id) / 'reports_staging'
         reports_dir = session_root(settings, session_id) / 'reports'
         if staging.exists():
@@ -139,6 +154,7 @@ def generate_session(
             reports_dir=staging,
             participant_labels=participant_labels,
             feedback_url=settings.feedback_url,
+            roles_by_label={speaker['label']: speaker['role'] for speaker in speakers},
         )
         if reports_dir.exists():
             shutil.rmtree(reports_dir)
@@ -163,11 +179,12 @@ def generate_session(
             error_message=None,
             reports_generated_at=iso(generated),
             purge_due_at=iso(due),
+            progress=None,
         )
         if settings.retention_days == 0:
             purge_session(db, transcription, settings, db.get_session(session_id))
     except Exception as exc:
-        logging.error('Report generation failed for session %s (%s)', session_id, type(exc).__name__)
+        logging.exception('Report generation failed for session %s', session_id)
         db.update_session(session_id, status='error', error_message=short_error(exc))
 
 

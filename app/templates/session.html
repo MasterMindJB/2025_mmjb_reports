@@ -14,7 +14,8 @@
 <section class="panel">
   <h2>Transcribing</h2>
   <p>The recording is with the transcription service. This page refreshes on its own. Speaker letters will appear here with a few sample lines and timestamps.</p>
-  <form method="post" action="/sessions/{{ session.id }}/retry">
+  <form method="post" action="/sessions/{{ session.id }}/retry?csrf_token={{ csrf_token }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <button type="submit" class="secondary">Run transcription again</button>
   </form>
 </section>
@@ -22,7 +23,11 @@
 <section class="panel">
   <h2>Generating reports</h2>
   <p>Individual PDFs and the group PDF are being written. This page refreshes on its own. Nothing is emailed until you press Send on the review screen.</p>
-  <form method="post" action="/sessions/{{ session.id }}/retry">
+  {% if session.progress %}
+  <p class="note">{{ session.progress }}</p>
+  {% endif %}
+  <form method="post" action="/sessions/{{ session.id }}/retry?csrf_token={{ csrf_token }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <button type="submit" class="secondary">Run report generation again</button>
   </form>
 </section>
@@ -30,7 +35,8 @@
 <section class="panel">
   <h2>Something needs attention</h2>
   <p class="error" role="alert">{{ session.error_message }}</p>
-  <form method="post" action="/sessions/{{ session.id }}/retry">
+  <form method="post" action="/sessions/{{ session.id }}/retry?csrf_token={{ csrf_token }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <button type="submit">Try again</button>
   </form>
 </section>
@@ -39,7 +45,8 @@
   <p class="eyebrow">Step 2 of 4</p>
   <h2>Name the speakers</h2>
   <p class="lede">Match each detected voice to a person. Participants receive a report. Facilitators and actors are part of the recording and do not receive one.</p>
-  <form method="post" action="/sessions/{{ session.id }}/speakers">
+  <form method="post" action="/sessions/{{ session.id }}/speakers?csrf_token={{ csrf_token }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     {% for speaker in speakers %}
     <article class="speaker">
       <header>
@@ -48,7 +55,7 @@
       <input type="hidden" name="label" value="{{ speaker.label }}">
       <ul class="samples">
         {% for sample in speaker.samples %}
-        <li><time>{{ sample.start|mmss }}–{{ sample.end|mmss }}</time> {{ sample.text }}</li>
+        <li><time>{{ sample.start|mmss }}–{{ sample.end|mmss }}</time> {{ sample.text|clip }}</li>
         {% else %}
         <li>No sample lines were stored for this speaker.</li>
         {% endfor %}
@@ -84,7 +91,8 @@
   <h2>Merge speakers</h2>
   <p>If one person was split into two voices, merge the extra letter into the one you want to keep. The kept speaker keeps the name already entered.</p>
   {% for speaker in speakers %}
-  <form method="post" action="/sessions/{{ session.id }}/merge" class="merge">
+  <form method="post" action="/sessions/{{ session.id }}/merge?csrf_token={{ csrf_token }}" class="merge">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <input type="hidden" name="source" value="{{ speaker.label }}">
     <label for="merge-{{ speaker.label }}">Merge {{ speaker.label }} into</label>
     <select id="merge-{{ speaker.label }}" name="target">
@@ -131,10 +139,12 @@
     {% else %}
     <p class="note">Send uses the {{ email_mode }} email provider. Each participant gets only the two files listed for them.</p>
     {% endif %}
-    <form method="post" action="/sessions/{{ session.id }}/send">
+    <form method="post" action="/sessions/{{ session.id }}/send?csrf_token={{ csrf_token }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <button type="submit">Send reports</button>
     </form>
-    <form method="post" action="/sessions/{{ session.id }}/reopen" class="inline">
+    <form method="post" action="/sessions/{{ session.id }}/reopen?csrf_token={{ csrf_token }}" class="inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <button type="submit" class="secondary">Edit names and regenerate</button>
     </form>
   {% else %}
@@ -149,12 +159,12 @@
   {% endif %}
   <p class="note">
     {% if session.recording_deleted_at %}
-    The recording and local transcript were deleted {{ session.recording_deleted_at }}.
+    The recording and local transcript were deleted {{ session.recording_deleted_at|pacific }}.
     {% elif session.purge_due_at %}
-    The recording and transcript are scheduled for deletion at {{ session.purge_due_at }}. Reports are kept.
+    The recording and transcript are scheduled for deletion at {{ session.purge_due_at|pacific }} (Los Angeles). Reports are kept.
     {% endif %}
     {% if session.assemblyai_deleted_at %}
-    The AssemblyAI transcript was deleted {{ session.assemblyai_deleted_at }}.
+    The AssemblyAI transcript was deleted {{ session.assemblyai_deleted_at|pacific }}.
     {% elif session.assemblyai_delete_error %}
     AssemblyAI deletion still needs a retry: {{ session.assemblyai_delete_error }}
     {% endif %}

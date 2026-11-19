@@ -69,6 +69,8 @@ class FakeLLM(BaseChatModel):
             return f'PERSONAL_SUMMARY_TOKEN_{who}'
         if 'super power' in text:
             return f'SUPERPOWER_TOKEN_{_subject(text)}'
+        if 'expert sociolinguist' in text and 'verbal tic' in text:
+            return '**What?** SIGNATURE_PHRASE_TOKEN\n* So, what? A bullet.\n### Now, what?\nTry it.'
         if 'give a title' in text:
             return 'GROUP_TITLE_TOKEN'
         if 'one paragraph summarizing the following conversation' in text:

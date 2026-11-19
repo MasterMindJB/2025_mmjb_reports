@@ -8,7 +8,8 @@
   {% if error %}
   <p class="error" role="alert">{{ error }}</p>
   {% endif %}
-  <form method="post" action="/sessions" enctype="multipart/form-data">
+  <form method="post" action="/sessions?csrf_token={{ csrf_token }}" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <div class="grid">
       <div>
         <label for="client">Client</label>

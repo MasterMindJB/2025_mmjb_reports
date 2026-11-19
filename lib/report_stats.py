@@ -26,6 +26,7 @@ import pandas as pd
 import PIL.Image
 import seaborn as sns
 
+from lib.chord_diagram import save_chord_diagram
 from lib.helper_functions import barplot, figure_to_image, gini
 
 NICE_STATS_COL_NAME = {
@@ -72,6 +73,7 @@ class ChartImages:
     speaker_wpm: PIL.Image.Image
     action_items: PIL.Image.Image
     chord_path: Path
+    matrix_path: Path
 
 
 def idea_count(text: str) -> int:
@@ -100,9 +102,13 @@ def _one_minus_gini(values) -> float:
 def _off_diagonal(frame_with_margins: pd.DataFrame) -> list:
     if frame_with_margins.shape[0] < 2 or frame_with_margins.shape[1] < 2:
         return []
-    core = frame_with_margins.iloc[:-1, :-1].copy()
+    core = frame_with_margins.iloc[:-1, :-1]
+    # The crosstab is not square when a speaker never follows anyone, or is never
+    # followed. Align rows and columns on the union of speakers. A square table is unchanged.
+    labels = list(dict.fromkeys(list(core.index) + list(core.columns)))
+    core = core.reindex(index=labels, columns=labels, fill_value=0).astype('float')
     for index in range(core.shape[0]):
-        core.iat[index, index] = pd.NA
+        core.iat[index, index] = float('nan')
     return core.melt()['value'].dropna().tolist()
 
 
@@ -280,7 +286,12 @@ def _sentiment_frame(transcript: dict, names: dict[str, str]) -> pd.DataFrame:
     return frame
 
 
-def render_charts(transcript: dict, tables: SessionTables, dest_dir: Path) -> ChartImages:
+def render_charts(
+    transcript: dict,
+    tables: SessionTables,
+    dest_dir: Path,
+    roles: dict[str, str] | None = None,
+) -> ChartImages:
     dest_dir.mkdir(parents=True, exist_ok=True)
     names = tables.df_nice_stats_data.index[:-1]
     palette = sns.color_palette('hsv', max(len(names), 1))
@@ -312,8 +323,13 @@ def render_charts(transcript: dict, tables: SessionTables, dest_dir: Path) -> Ch
     convo_wpm = _as_image(_conversation_wpm(tables.df_utter))
     speaker_wpm = _as_image(_speaker_wpm(tables.df_utter, list(tables.df_speaker_stats.index)))
     action_items = _as_image(_action_pie(tables.df_speaker_stats['action_items_count']))
-    chord_path = dest_dir / 'who_spoke_after_whom.png'
-    _save_transition_heatmap(tables.interactions_prev, chord_path)
+    ordered = tables.df_utter.sort_values('start') if 'start' in tables.df_utter.columns else tables.df_utter
+    sequence = [str(name) for name in ordered['name'].tolist()]
+    roster = [str(name) for name in tables.df_speaker_stats.index]
+    chord_path = dest_dir / 'who_talks_with_whom.png'
+    save_chord_diagram(sequence, chord_path, names=roster, roles=roles or {})
+    matrix_path = dest_dir / 'transition_matrix.png'
+    _save_transition_heatmap(tables.interactions_prev, matrix_path)
     return ChartImages(
         barplots=bar_images,
         convo_sentiment=convo_sentiment,
@@ -322,6 +338,7 @@ def render_charts(transcript: dict, tables: SessionTables, dest_dir: Path) -> Ch
         speaker_wpm=speaker_wpm,
         action_items=action_items,
         chord_path=chord_path,
+        matrix_path=matrix_path,
     )
 
 
@@ -484,3 +501,71 @@ def framework_frames(speaker_analysis: dict, framework_key: str):
             [explanations, frame.loc[['explanation']].rename(index={'explanation': name})]
         ).sort_index()
     return values, explanations
+
+
+# Most frequent bigram. A pair is skipped only when both words are stopwords,
+# unless it is a known hedge ("i think", "you know"). Ties keep the phrase that
+# appeared first. If every pair is skipped, the raw top bigram is used.
+
+import string as _string
+from collections import Counter as _Counter
+
+BIGRAM_STOPWORDS = frozenset(
+    """i me my myself we our ours ourselves you your yours yourself yourselves he him
+    his himself she her hers herself it its itself they them their theirs themselves
+    what which who whom this that these those am is are was were be been being have has
+    had having do does did doing a an the and but if or because as until while of at by
+    for with about against between into through during before after above below to from
+    up down in out on off over under again further then once here there when where why
+    how all any both each few more most other some such no nor not only own same so than
+    too very s t can will just don should now d ll m o re ve y ain aren couldn didn doesn
+    hadn hasn haven isn ma mightn mustn needn shan shouldn wasn weren won wouldn
+    dont im its thats youre theyre were ive id ill cant wont didnt doesnt isnt
+    gonna wanna yeah okay oh um uh""".split()
+)
+
+DISCOURSE_MARKERS = frozenset(
+    {
+        'i think',
+        'i mean',
+        'i guess',
+        'i feel',
+        'i believe',
+        'i know',
+        'i suppose',
+        'you know',
+        'you see',
+        'sort of',
+        'kind of',
+        'a lot',
+        'and so',
+        'so that',
+        'i would',
+        'we should',
+        'we need',
+        'you have',
+        'have to',
+        'at least',
+        'of course',
+    }
+)
+
+
+def extract_bigrams(text: str) -> list[str]:
+    cleaned = str(text or '').translate(str.maketrans('', '', _string.punctuation)).lower()
+    tokens = nltk.word_tokenize(cleaned)
+    return [f'{first} {second}' for first, second in zip(tokens, tokens[1:])]
+
+
+def top_bigram(text: str) -> tuple[str, int] | None:
+    """Return (bigram, count) for the most frequent meaningful bigram, or None."""
+    counts = _Counter(extract_bigrams(text))
+    if not counts:
+        return None
+    for phrase, count in counts.most_common():
+        first, second = phrase.split(' ', 1)
+        if phrase in DISCOURSE_MARKERS or not (
+            first in BIGRAM_STOPWORDS and second in BIGRAM_STOPWORDS
+        ):
+            return phrase, count
+    return counts.most_common(1)[0]

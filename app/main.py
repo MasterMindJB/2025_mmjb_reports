@@ -5,14 +5,16 @@ from __future__ import annotations
 import logging
 import os
 import re
+import secrets
 import shutil
 import threading
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
@@ -28,6 +30,7 @@ from app.services import (
     merge_speakers,
     purge_due,
     send_session,
+    clip_text,
     transcribe_session,
     utcnow,
     iso,
@@ -37,8 +40,8 @@ from app.transcription import AssemblyAITranscription
 
 ALLOWED_SUFFIXES = {'.mp3', '.wav', '.m4a', '.mp4', '.webm', '.aac', '.ogg', '.flac', '.mov', '.mpeg', '.mpga'}
 EMAIL_RE = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
-NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9 .'\-]{0,80}\Z")
 APP_DIR = Path(__file__).resolve().parent
+PACIFIC = ZoneInfo('America/Los_Angeles')
 
 
 class NotAuthenticated(Exception):
@@ -57,11 +60,31 @@ def require_admin(request: Request) -> None:
         raise NotAuthenticated()
 
 
+def ensure_csrf(request: Request) -> str:
+    token = request.session.get('csrf_token')
+    if not token:
+        token = secrets.token_urlsafe(32)
+        request.session['csrf_token'] = token
+    return token
+
+
+def format_pacific(value) -> str:
+    if not value:
+        return ''
+    moment = datetime.fromisoformat(str(value))
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    local = moment.astimezone(PACIFIC)
+    hour = str(int(local.strftime('%I')))
+    return f"{local.strftime('%b')} {local.day}, {local.year}, {hour}:{local.strftime('%M %p %Z')}"
+
+
 def render(request: Request, name: str, status_code: int = 200, **extra):
     context = {
         'flash': request.session.pop('flash', None),
         'email_mode': request.app.state.settings.email_provider,
         'retention_days': request.app.state.settings.retention_days,
+        'csrf_token': ensure_csrf(request),
         **extra,
     }
     return request.app.state.templates.TemplateResponse(
@@ -82,39 +105,58 @@ def clean_text(value: str, field: str, limit: int = 200) -> str:
     return text
 
 
-def clean_person_name(value: str) -> str:
-    text = ' '.join((value or '').split())
+def clean_person_name(value: str, speaker_label: str | None = None) -> str:
+    raw = value or ''
+    who = f'Speaker {speaker_label}: ' if speaker_label else ''
+    if any(ord(char) < 32 for char in raw):
+        raise ValueError(
+            f'{who}Use letters, numbers, spaces, and punctuation such as parentheses, periods, or slashes.'
+        )
+    text = ' '.join(raw.split())
+    if not text:
+        raise ValueError(f'{who}A name is required.')
     if text.casefold() == 'average':
-        raise ValueError('Average is reserved. Choose another name.')
-    if not NAME_RE.fullmatch(text):
-        raise ValueError('Names can use letters, numbers, spaces, apostrophes, and hyphens.')
+        raise ValueError(f'{who}Average is reserved. Choose another name.')
+    if len(text) > 80:
+        raise ValueError(f'{who}Use a name of 80 characters or fewer.')
+    if not any(char.isalnum() for char in text):
+        raise ValueError(f'{who}The name needs at least one letter or number.')
     return text
 
 
-def validate_assignments(names: list[str], emails: list[str], roles: list[str]) -> list[dict]:
+def validate_assignments(
+    names: list[str],
+    emails: list[str],
+    roles: list[str],
+    labels: list[str] | None = None,
+) -> list[dict]:
     if not (len(names) == len(emails) == len(roles)):
+        raise ValueError('The speaker form was incomplete. Save it again.')
+    if labels is not None and len(labels) != len(names):
         raise ValueError('The speaker form was incomplete. Save it again.')
     cleaned = []
     seen_names = set()
     seen_emails = set()
     participants = 0
-    for raw_name, raw_email, role in zip(names, emails, roles):
-        name = clean_person_name(raw_name)
+    for index, (raw_name, raw_email, role) in enumerate(zip(names, emails, roles)):
+        label = labels[index] if labels else None
+        who = f'Speaker {label}: ' if label else ''
+        name = clean_person_name(raw_name, label)
         if name.casefold() in seen_names:
-            raise ValueError(f'{name} is used more than once.')
+            raise ValueError(f'{who}{name} is already used for another speaker.')
         seen_names.add(name.casefold())
         if role not in ROLES:
-            raise ValueError('Each speaker is a participant, facilitator, or actor.')
+            raise ValueError(f'{who}Each speaker is a participant, facilitator, or actor.')
         email = (raw_email or '').strip()
         if role == 'participant':
             if not EMAIL_RE.fullmatch(email):
-                raise ValueError(f'Enter an email address for {name}.')
+                raise ValueError(f'{who}Enter an email address for {name}.')
             if email.casefold() in seen_emails:
-                raise ValueError(f'{email} is used more than once. Each participant needs their own inbox.')
+                raise ValueError(f'{who}{email} is already used. Each participant needs their own inbox.')
             seen_emails.add(email.casefold())
             participants += 1
         elif email and not EMAIL_RE.fullmatch(email):
-            raise ValueError(f'The email for {name} is not valid.')
+            raise ValueError(f'{who}The email for {name} is not valid.')
         cleaned.append({'name': name, 'email': email, 'role': role})
     if participants < 1:
         raise ValueError('At least one speaker must be a participant who receives a report.')
@@ -166,16 +208,29 @@ def create_app(
     app.state.settings = settings
     app.state.db = Database(settings.data_dir / 'hts.sqlite3')
     app.state.transcription = transcription or AssemblyAITranscription()
-    app.state.analysis = analysis or GeminiAnalysis()
+    app.state.analysis = analysis or GeminiAnalysis(settings=settings)
     app.state.emailer = emailer or build_emailer(settings)
     app.state.renderer = renderer or PdfReportRenderer()
     app.state.start_retention_thread = start_retention_thread
     templates = Jinja2Templates(directory=str(APP_DIR / 'templates'))
     templates.env.filters['mmss'] = format_ms
+    templates.env.filters['pacific'] = format_pacific
+    templates.env.filters['clip'] = clip_text
     app.state.templates = templates
 
     @app.middleware('http')
     async def housekeeping(request: Request, call_next):
+        ensure_csrf(request)
+        if request.method == 'POST':
+            # The token travels in the form address, not the body, so a large
+            # recording is not parsed twice and the route still receives its fields.
+            expected = request.session.get('csrf_token') or ''
+            supplied = request.query_params.get('csrf_token') or ''
+            if not supplied or not secrets.compare_digest(str(supplied), expected):
+                return PlainTextResponse(
+                    'The form expired. Reload the page and try again.',
+                    status_code=403,
+                )
         try:
             purge_due(request.app.state.db, request.app.state.transcription, request.app.state.settings)
         except Exception:
@@ -352,7 +407,7 @@ def create_app(
             flash(request, 'The speaker list changed. Review it and save again.')
             return RedirectResponse(f'/sessions/{session_id}', status_code=303)
         try:
-            cleaned = validate_assignments(name, email, role)
+            cleaned = validate_assignments(name, email, role, label)
         except ValueError as exc:
             flash(request, str(exc))
             return RedirectResponse(f'/sessions/{session_id}', status_code=303)
@@ -442,6 +497,7 @@ def create_app(
                     [speaker['name'] or '' for speaker in speakers],
                     [speaker['email'] or '' for speaker in speakers],
                     [speaker['role'] for speaker in speakers],
+                    [speaker['label'] for speaker in speakers],
                 )
             except ValueError as exc:
                 db.update_session(session_id, status='naming', error_message=str(exc))

@@ -1,4 +1,6 @@
 import json
+import logging
+import re
 from io import BytesIO
 from pathlib import Path
 
@@ -40,13 +42,27 @@ def pdf_text(payload: bytes) -> str:
     return '\n'.join(page.extract_text() or '' for page in reader.pages)
 
 
-def login(client: TestClient) -> None:
+def csrf_from(html: str) -> str:
+    match = re.search(r'name="csrf_token" value="([^"]+)"', html)
+    assert match, 'csrf token missing from the page'
+    return match.group(1)
+
+
+def login(client: TestClient) -> str:
+    page = client.get('/login')
+    token = csrf_from(page.text)
     response = client.post(
         '/login',
+        params={'csrf_token': token},
         data={'username': 'admin', 'password': 'test-password'},
         follow_redirects=False,
     )
     assert response.status_code == 303
+    return token
+
+
+def current_csrf(client: TestClient) -> str:
+    return csrf_from(client.get('/').text)
 
 
 def build_client(tmp_path: Path, retention_days: int = 14):
@@ -63,6 +79,7 @@ def build_client(tmp_path: Path, retention_days: int = 14):
 def upload(client: TestClient, consent: str = 'yes'):
     return client.post(
         '/sessions',
+        params={'csrf_token': current_csrf(client)},
         data={
             'client': 'Northwind',
             'group_name': 'Cohort A',
@@ -82,8 +99,10 @@ def test_login_is_required(tmp_path):
         home = client.get('/', follow_redirects=False)
         assert home.status_code == 303
         assert home.headers['location'] == '/login'
+        page = client.get('/login')
         denied = client.post(
             '/login',
+            params={'csrf_token': csrf_from(page.text)},
             data={'username': 'admin', 'password': 'wrong-password'},
             follow_redirects=False,
         )
@@ -116,6 +135,7 @@ def test_full_flow_keeps_individual_reports_private(tmp_path):
 
         saved = client.post(
             f'{session_url}/speakers',
+            params={'csrf_token': current_csrf(client)},
             data={
                 'action': 'generate',
                 'label': ['A', 'B', 'C'],
@@ -126,6 +146,8 @@ def test_full_flow_keeps_individual_reports_private(tmp_path):
             follow_redirects=True,
         )
         assert 'Preview every report' in saved.text
+        assert 'Los Angeles' in saved.text
+        assert '+00:00' not in saved.text
         assert 'alex@example.com' in saved.text
         assert 'does not receive a report' in saved.text
         assert 'Casey Quinn' in saved.text
@@ -152,6 +174,9 @@ def test_full_flow_keeps_individual_reports_private(tmp_path):
         assert 'ACTION_TITLE_ALEX' in alex
         assert 'SUPERPOWER_TOKEN_Alex_Rivera' in alex
         assert 'AMASE_TOKEN_Alex_Rivera' in alex
+        assert 'Your signature phrase:' in alex
+        assert 'SIGNATURE_PHRASE_TOKEN' in alex
+        assert 'Your signature phrase' in blake
         for foreign in (
             'PERSONAL_SUMMARY_TOKEN_BLAKE',
             'QUOTE_TAG_BLAKE',
@@ -177,10 +202,20 @@ def test_full_flow_keeps_individual_reports_private(tmp_path):
             'SUPERPOWER_TOKEN_Alex_Rivera',
             'AMASE_TOKEN_Alex_Rivera',
             'ENNEAGRAM_TOKEN_Blake_Chen',
+            'SIGNATURE_PHRASE_TOKEN',
         ):
             assert private not in group
+        assert 'MasterMind' not in group
+        assert 'Harkness Training Solutions' in group
+        assert 'Ribbon width is the number of times' in group
+        assert 'diarized turns' in group
+        assert 'navy hatch' in group
 
-        sent = client.post('/sessions/1/send', follow_redirects=True)
+        sent = client.post(
+            '/sessions/1/send',
+            params={'csrf_token': current_csrf(client)},
+            follow_redirects=True,
+        )
         assert 'saved locally' in sent.text
         messages = sorted((tmp_path / 'outbox').glob('*.json'))
         assert len(messages) == 2
@@ -202,7 +237,11 @@ def test_full_flow_keeps_individual_reports_private(tmp_path):
         ]
         assert 'Blake' not in by_recipient['alex@example.com']['body']
         assert 'Alex' not in by_recipient['blake@example.com']['body']
-        again = client.post('/sessions/1/send', follow_redirects=False)
+        again = client.post(
+            '/sessions/1/send',
+            params={'csrf_token': current_csrf(client)},
+            follow_redirects=False,
+        )
         assert again.status_code == 303
         assert len(list((tmp_path / 'outbox').glob('*.json'))) == 2
         assert transcription.deleted == []
@@ -218,6 +257,7 @@ def test_merge_and_retention_delete_sources(tmp_path):
         session_url = created.headers['location']
         merged = client.post(
             f'{session_url}/merge',
+            params={'csrf_token': current_csrf(client)},
             data={'source': 'C', 'target': 'A'},
             follow_redirects=True,
         )
@@ -228,6 +268,7 @@ def test_merge_and_retention_delete_sources(tmp_path):
 
         client.post(
             f'{session_url}/speakers',
+            params={'csrf_token': current_csrf(client)},
             data={
                 'action': 'generate',
                 'label': ['A', 'B'],
@@ -249,6 +290,99 @@ def test_merge_and_retention_delete_sources(tmp_path):
         assert transcription.deleted == ['synthetic-transcript-001']
 
 
+def test_csrf_token_is_required(tmp_path):
+    app, _transcription = build_client(tmp_path)
+    with TestClient(app) as client:
+        page = client.get('/login')
+        missing = client.post(
+            '/login',
+            data={'username': 'admin', 'password': 'test-password'},
+            follow_redirects=False,
+        )
+        assert missing.status_code == 403
+        token = csrf_from(page.text)
+        accepted = client.post(
+            '/login',
+            params={'csrf_token': token},
+            data={'username': 'admin', 'password': 'test-password'},
+            follow_redirects=False,
+        )
+        assert accepted.status_code == 303
+
+
+def test_names_allow_punctuation_and_name_the_speaker():
+    from app.main import validate_assignments
+
+    cleaned = validate_assignments(
+        ['Alex Rivera (he/him)', 'Dr. Blake Chen'],
+        ['alex@example.com', 'blake@example.com'],
+        ['participant', 'participant'],
+        ['A', 'B'],
+    )
+    assert cleaned[0]['name'] == 'Alex Rivera (he/him)'
+    try:
+        validate_assignments(['bad\nname'], ['alex@example.com'], ['participant'], ['A'])
+    except ValueError as exc:
+        assert 'Speaker A' in str(exc)
+    else:
+        raise AssertionError('a line break in a name should be rejected')
+    try:
+        validate_assignments(['Alex'], [''], ['participant'], ['C'])
+    except ValueError as exc:
+        assert 'Speaker C' in str(exc)
+    else:
+        raise AssertionError('a missing email should name the speaker')
+
+
+def test_generation_records_progress_and_logs_the_traceback(tmp_path, caplog):
+    class StoppingAnalysis:
+        def analyze(self, **kwargs):
+            kwargs['on_progress']('Writing speaker summaries')
+            raise RuntimeError('stopped on purpose')
+
+    app, _transcription = build_client(tmp_path)
+    app.state.analysis = StoppingAnalysis()
+    with TestClient(app) as client:
+        login(client)
+        created = upload(client)
+        with caplog.at_level(logging.ERROR):
+            client.post(
+                f"{created.headers['location']}/speakers",
+                params={'csrf_token': current_csrf(client)},
+                data={
+                    'action': 'generate',
+                    'label': ['A', 'B', 'C'],
+                    'name': ['Alex Rivera', 'Blake Chen', 'Casey Quinn'],
+                    'email': ['alex@example.com', 'blake@example.com', 'casey@example.com'],
+                    'role': ['participant', 'participant', 'facilitator'],
+                },
+                follow_redirects=True,
+            )
+    assert 'Traceback' in caplog.text
+    assert 'stopped on purpose' in caplog.text
+    session = app.state.db.get_session(1)
+    assert session['status'] == 'error'
+    assert session['progress'] == 'Writing speaker summaries'
+
+
+def test_samples_are_clipped_to_200_characters():
+    from app.services import speaker_previews
+
+    long_line = 'word ' * 80
+    previews = speaker_previews(
+        {'utterances': [{'speaker': 'A', 'text': long_line, 'start': 0, 'end': 1000}]}
+    )
+    assert len(previews[0]['samples'][0]['text']) <= 200
+    assert previews[0]['samples'][0]['text'].endswith('…')
+
+
+def test_deletion_time_is_shown_in_los_angeles():
+    from app.main import format_pacific
+
+    rendered = format_pacific('2026-11-19T00:00:00+00:00')
+    assert rendered == 'Nov 18, 2026, 4:00 PM PST'
+
+
 def test_retention_over_14_days_is_rejected(monkeypatch):
     monkeypatch.setenv('HTS_ADMIN_USERNAME', 'admin')
     monkeypatch.setenv('HTS_ADMIN_PASSWORD', 'test-password')
@@ -262,3 +396,31 @@ def test_retention_over_14_days_is_rejected(monkeypatch):
         assert '14' in str(exc)
     else:
         raise AssertionError('RETENTION_DAYS=15 should be rejected')
+
+
+def test_gemini_settings_are_checked_at_startup(monkeypatch):
+    from app.config import load_settings
+
+    monkeypatch.setenv('HTS_ADMIN_USERNAME', 'admin')
+    monkeypatch.setenv('HTS_ADMIN_PASSWORD', 'test-password')
+    monkeypatch.setenv('HTS_SECRET_KEY', 'test-secret-key-value')
+    monkeypatch.delenv('GEMINI_MODEL', raising=False)
+    monkeypatch.delenv('GEMINI_TIMEOUT_SECONDS', raising=False)
+    settings = load_settings()
+    assert settings.gemini_model == 'gemini-3.1-flash-lite'
+    assert settings.gemini_timeout_seconds == 120
+    monkeypatch.setenv('GEMINI_MODEL', 'gemini 2.5 flash')
+    try:
+        load_settings()
+    except RuntimeError as exc:
+        assert 'GEMINI_MODEL' in str(exc)
+    else:
+        raise AssertionError('a model id with spaces should be rejected')
+    monkeypatch.setenv('GEMINI_MODEL', 'gemini-3.1-flash-lite')
+    monkeypatch.setenv('GEMINI_TIMEOUT_SECONDS', '0')
+    try:
+        load_settings()
+    except RuntimeError as exc:
+        assert 'GEMINI_TIMEOUT_SECONDS' in str(exc)
+    else:
+        raise AssertionError('a zero Gemini timeout should be rejected')

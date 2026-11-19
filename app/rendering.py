@@ -6,7 +6,7 @@ import threading
 from pathlib import Path
 
 from app.interfaces import AnalysisBundle, RenderedReport
-from lib.pdf_functions import create_report_group, create_report_personal
+from lib.pdf_functions import create_report_group, create_report_personal, pdf_filename_for
 from lib.report_stats import framework_frames, render_charts
 
 ASSETS = Path(__file__).resolve().parents[1] / 'report_assets'
@@ -25,6 +25,7 @@ class PdfReportRenderer:
         reports_dir: Path,
         participant_labels: set[str],
         feedback_url: str,
+        roles_by_label: dict[str, str] | None = None,
     ) -> list[RenderedReport]:
         reports_dir.mkdir(parents=True, exist_ok=True)
         participant_map = {
@@ -41,8 +42,15 @@ class PdfReportRenderer:
         if missing:
             raise RuntimeError(f'Missing analysis for {", ".join(missing)}.')
 
+        roles_by_name = {}
+        for label, info in bundle.speaker_map.items():
+            role = (roles_by_label or {}).get(label, 'participant')
+            if label not in participant_labels and role == 'participant':
+                role = 'facilitator'
+            roles_by_name[info['name']] = role
+
         with _PLOT_LOCK:
-            charts = render_charts(transcript, bundle.tables, reports_dir)
+            charts = render_charts(transcript, bundle.tables, reports_dir, roles=roles_by_name)
             group_path = reports_dir / 'group.pdf'
             create_report_group(
                 images_barplot=charts.barplots,
@@ -52,6 +60,7 @@ class PdfReportRenderer:
                 image_speaker_wpm=charts.speaker_wpm,
                 image_action_items=charts.action_items,
                 path_image_chord=charts.chord_path,
+                path_image_matrix=charts.matrix_path,
                 path_report_assets=self.assets,
                 path_file=group_path,
                 summaries=bundle.summaries,
@@ -91,7 +100,7 @@ class PdfReportRenderer:
             RenderedReport('group', group_path, group_path.name, None),
         ]
         for label, info in participant_map.items():
-            filename = f"{info['name']}.pdf"
+            filename = pdf_filename_for(info['name'])
             path = reports_dir / filename
             if not path.is_file():
                 raise RuntimeError(f'Individual report was not written for {info["name"]}.')

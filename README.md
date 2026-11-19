@@ -59,11 +59,11 @@ If the app is restarted while a step is still running, open the session and use 
 
 ## Reports
 
-Individual PDFs keep the current sections, including Enneagram, Doshas, and AMASE, plus that person's own quotes and action items.
+Individual PDFs keep the current sections, including Enneagram, Doshas, and AMASE, plus that person's own quotes, action items, and a signature phrase. The signature phrase is that person's most frequent two-word phrase, with a short reading from `prompt_templates/personal_signature_phrase.txt`. It is never included in the group PDF.
 
 The group PDF is the session summary: participation counts, the group narrative, and the charts. It does not include per-person quotes, action items, or personal summaries. Those used to be printed for every speaker in the group file. They now appear only in that speaker's own PDF.
 
-The "who spoke after whom" chart is drawn locally. Names are not sent to plotapi.
+The group report opens with a chord diagram drawn locally in matplotlib. A ribbon is how many times one person's turn was immediately followed by the other's, in either direction. Facilitators and actors stay on the diagram and are hatched. Names are not sent to a chart service. A numeric matrix of the same turns is a secondary view.
 
 ## Environment
 
@@ -76,7 +76,8 @@ The "who spoke after whom" chart is drawn locally. Names are not sent to plotapi
 | `RETENTION_DAYS` | no | `0`–`14`. Default `14` |
 | `ASSEMBLYAI_API_KEY` | to transcribe | AssemblyAI key |
 | `GOOGLE_API_KEY` | to write reports | Gemini key. `GEMINI_API_KEY` is also read |
-| `GEMINI_MODEL` | no | Default `gemini-2.5-flash` |
+| `GEMINI_MODEL` | no | Default `gemini-3.1-flash-lite`. Checked when the app starts. `gemini-2.5-flash` returns 404 for new keys. |
+| `GEMINI_TIMEOUT_SECONDS` | no | Per Gemini call. Default `120`, maximum `600`. The client retries at most twice. |
 | `EMAIL_PROVIDER` | no | `dry-run` (default), `smtp`, or `api` |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM`, `SMTP_USE_TLS` | for smtp | SMTP delivery |
 | `EMAIL_API_URL`, `EMAIL_API_KEY`, `EMAIL_FROM` | for api | JSON API shaped like Resend: `from`, `to`, `subject`, `text`, `attachments[].filename`, `attachments[].content` (base64) |

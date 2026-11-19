@@ -52,6 +52,7 @@ class ReportRenderer(Protocol):
         reports_dir: Path,
         participant_labels: set[str],
         feedback_url: str,
+        roles_by_label: dict[str, str] | None = None,
     ) -> list[RenderedReport]: ...
 
 

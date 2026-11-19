@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -29,6 +30,8 @@ class Settings:
     feedback_url: str
     max_upload_mb: int
     https_only: bool
+    gemini_model: str = 'gemini-3.1-flash-lite'
+    gemini_timeout_seconds: float = 120.0
 
     @property
     def sends_email(self) -> bool:
@@ -37,6 +40,29 @@ class Settings:
 
 def _flag(name: str, default: str = 'false') -> bool:
     return os.getenv(name, default).strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
+_MODEL_RE = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]{0,80}\Z')
+
+
+def parse_gemini_model(raw: str | None) -> str:
+    model = (raw if raw is not None else 'gemini-3.1-flash-lite').strip()
+    if not _MODEL_RE.fullmatch(model):
+        raise RuntimeError(
+            'GEMINI_MODEL must be a model id such as gemini-3.1-flash-lite, '
+            'with no spaces or slashes.'
+        )
+    return model
+
+
+def parse_gemini_timeout(raw: str | None) -> float:
+    try:
+        timeout = float(raw if raw not in (None, '') else '120')
+    except ValueError as exc:
+        raise RuntimeError('GEMINI_TIMEOUT_SECONDS must be a number of seconds.') from exc
+    if timeout < 1 or timeout > 600:
+        raise RuntimeError('GEMINI_TIMEOUT_SECONDS must be between 1 and 600.')
+    return timeout
 
 
 def load_settings() -> Settings:
@@ -70,6 +96,8 @@ def load_settings() -> Settings:
     except ValueError as exc:
         raise RuntimeError('SMTP_PORT must be a whole number.') from exc
     data_dir = Path(os.getenv('HTS_DATA_DIR', 'data')).expanduser().resolve()
+    gemini_model = parse_gemini_model(os.getenv('GEMINI_MODEL'))
+    gemini_timeout_seconds = parse_gemini_timeout(os.getenv('GEMINI_TIMEOUT_SECONDS'))
     return Settings(
         admin_username=username,
         admin_password=password,
@@ -89,4 +117,6 @@ def load_settings() -> Settings:
         feedback_url=os.getenv('HTS_FEEDBACK_URL', '').strip(),
         max_upload_mb=max_upload_mb,
         https_only=_flag('HTS_HTTPS_ONLY', 'false'),
+        gemini_model=gemini_model,
+        gemini_timeout_seconds=gemini_timeout_seconds,
     )

@@ -23,18 +23,36 @@ LLM_COLUMNS = [
 ]
 
 
-def build_gemini_llm():
+def build_gemini_llm(settings=None):
     key = os.getenv('GOOGLE_API_KEY') or os.getenv('GEMINI_API_KEY')
     if not key:
         raise RuntimeError('Set GOOGLE_API_KEY before generating reports.')
-    model = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
-    return ChatGoogleGenerativeAI(model=model, temperature=0, google_api_key=key)
+    if settings is None:
+        from app.config import parse_gemini_model, parse_gemini_timeout
+
+        model = parse_gemini_model(os.getenv('GEMINI_MODEL'))
+        timeout = parse_gemini_timeout(os.getenv('GEMINI_TIMEOUT_SECONDS'))
+    else:
+        model = settings.gemini_model
+        timeout = settings.gemini_timeout_seconds
+    # gemini-2.5-flash returns 404 for new API keys. gemini-3.1-flash-lite answered
+    # on the free tier. A timeout stops a stalled call, and max_retries bounds the
+    # client backoff (the library default is 6, which spent about a minute on errors
+    # that could not succeed).
+    return ChatGoogleGenerativeAI(
+        model=model,
+        temperature=0,
+        google_api_key=key,
+        timeout=timeout,
+        max_retries=2,
+    )
 
 
 class GeminiAnalysis:
-    def __init__(self, llm=None, prompt_dir: Path = PROMPT_DIR):
+    def __init__(self, llm=None, prompt_dir: Path = PROMPT_DIR, settings=None):
         self.llm = llm
         self.prompt_dir = prompt_dir
+        self.settings = settings
 
     def analyze(
         self,
@@ -43,12 +61,15 @@ class GeminiAnalysis:
         speaker_names: dict[str, str],
         participant_labels: set[str],
         work_dir: Path,
+        on_progress=None,
     ) -> AnalysisBundle:
         if work_dir.exists():
             shutil.rmtree(work_dir)
         work_dir.mkdir(parents=True, exist_ok=True)
-        llm = self.llm if self.llm is not None else build_gemini_llm()
-        summarizer = ConversationSummarizer(work_dir, self.prompt_dir, llm=llm)
+        llm = self.llm if self.llm is not None else build_gemini_llm(self.settings)
+        summarizer = ConversationSummarizer(
+            work_dir, self.prompt_dir, llm=llm, on_progress=on_progress
+        )
         labels = sorted(
             {
                 utterance.get('speaker')

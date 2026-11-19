@@ -83,6 +83,7 @@ SESSION_FIELDS = {
     'assemblyai_delete_error',
     'sent_at',
     'speakers_expected',
+    'progress',
 }
 
 
@@ -99,6 +100,9 @@ class Database:
         self._lock = threading.Lock()
         with self._connect() as conn:
             conn.executescript(SCHEMA)
+            columns = {row['name'] for row in conn.execute('PRAGMA table_info(sessions)')}
+            if 'progress' not in columns:
+                conn.execute('ALTER TABLE sessions ADD COLUMN progress TEXT')
             conn.execute('PRAGMA journal_mode=WAL')
 
     def _connect(self) -> sqlite3.Connection:
