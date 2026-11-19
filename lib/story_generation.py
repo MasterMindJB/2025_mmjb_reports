@@ -557,8 +557,10 @@ def _unique_short_headlines(personal: dict) -> None:
     """No two people share a headline. A specific one stays, even past six words."""
     seen: set[str] = set()
     for label, draft in personal.items():
-        raw = str(draft.get('headline') or '').strip()
-        if raw and raw not in seen and raw != _GENERIC_HEADLINE:
+        from lib.story_render import fit_headline
+
+        raw = fit_headline(draft.get('headline') or '')
+        if raw and raw not in seen and raw != _GENERIC_HEADLINE and raw != 'You made one clear move.':
             chosen = raw
         else:
             word = _headline_word(draft, label)

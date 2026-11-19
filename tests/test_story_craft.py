@@ -320,7 +320,8 @@ def test_realistic_fake_has_no_fallbacks_and_a_bad_json_retries():
         word_interaction=0.39,
     )
     assert stories['fallbacks'] == []
-    assert 'onboarding plan' in stories['personal']['A']['headline'].lower()
+    assert 'onboarding' in stories['personal']['A']['headline'].lower()
+    assert len(stories['personal']['A']['headline'].split()) <= 6
     assert 'events' not in stories['group']['character']
     flaky = FlakyStoryLLM()
     draft = generate_personal_draft(

@@ -29,9 +29,16 @@ def proposal_prompt(turns: list[dict]) -> str:
     return (
         f'{PROMPT_MARK}\n'
         'One proposal is one speaker turn that puts forward a new suggestion, option, or plan. '
-        'Count at most one per turn. Restating someone else\'s earlier proposal does not count. '
-        'A question counts only when it proposes an option, such as "what if we".\n'
-        'Return JSON only, with the numbers from the list: {"turns": [0]}\n'
+        'Count at most one per turn. Restating someone else\'s earlier proposal does not count.\n'
+        'Count these:\n'
+        '- "We should try the new plan."\n'
+        '- "What if we wait until Monday?"\n'
+        '- "You should ask the client first."\n'
+        'Do not count these:\n'
+        '- "What do you all think?" A question that only asks for opinions is not a proposal.\n'
+        '- "I agree with that plan." That restates someone else.\n'
+        '- "Could you say more?" That does not offer an option.\n'
+        'Return JSON only, with the numbers from the list: {"turns": []}\n'
         f'{body}\n'
     )
 

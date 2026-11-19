@@ -473,7 +473,8 @@ def test_facilitator_is_not_cut_to_an_even_share_and_later_talk_is_not_zero():
     assert 'Target: 33%' in below[0]
     assert 'Target: 33%' in above[0]
     assert 'Target: 8%' not in below[0]
-    assert 'even third is 33%' in below[1]
+    assert 'last third' in below[1]
+    assert 'even third is 33%' not in below[1]
 
 
 def test_signature_keeps_a_reading_that_only_has_to_name_the_bigram():

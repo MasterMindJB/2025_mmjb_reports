@@ -572,10 +572,12 @@ def _habit(kind: str, *, share, speaker_count, questions, question_average, turn
             f'Ask one question before you add another point. '
             f'Target: {count_label(target, "question")}.'
         )
-        why = (
-            f'You asked {count_label(int(questions), "question")}, '
-            f'against {count_label(int(question_average), "question")} for the session.'
-        )
+        if int(questions) > int(question_average):
+            why = 'Next time, leave one question for someone else to answer.'
+        elif int(questions) < int(question_average):
+            why = 'Next time, ask one question before you add a point.'
+        else:
+            why = 'Next time, keep one question open for someone else.'
         return sentence, why
     if kind == 'talk_low':
         target = improve_toward(int(share), average, increase=True)
@@ -585,7 +587,7 @@ def _habit(kind: str, *, share, speaker_count, questions, question_average, turn
     if kind == 'turns_short':
         target = improve_toward(int(turn_words), int(session_turn_words), increase=True)
         sentence = f'Name one more detail before the turn ends. Target: {target} words in a turn.'
-        why = f'A turn of yours averages {int(turn_words)} words, against {int(session_turn_words)}.'
+        why = 'Next time, add one more detail before you stop.'
         return sentence, why
     if kind == 'thirds':
         start = int(early or 0)
@@ -601,7 +603,7 @@ def _habit(kind: str, *, share, speaker_count, questions, question_average, turn
         if not increase and target >= end:
             target = max(1, end - 1)
         sentence = f'Wait through the opening before the long story. Target: {target}% in the last third.'
-        why = f'The even third is {norm}%.'
+        why = 'Next time, save one point for the last third.'
         return sentence, why
     if kind == 'talk_high':
         target = improve_toward(int(share), average, increase=False)
@@ -618,7 +620,7 @@ def _habit(kind: str, *, share, speaker_count, questions, question_average, turn
         return sentence, why
     target = improve_toward(int(turn_words or 1), int(session_turn_words or 1), increase=False)
     sentence = f'Stop once the point is made. Target: {target} words in a turn.'
-    why = f'A turn of yours averages {int(turn_words or 0)} words, against {int(session_turn_words or 0)}.'
+    why = 'Next time, stop once the point is made.'
     return sentence, why
 
 
@@ -788,6 +790,14 @@ def questions_sentence(count: int, average: int) -> str:
     return f'{label}: {relation}.'
 
 
+def room_median(values) -> int | None:
+    """The lower middle value, so an even room never invents a count nobody had."""
+    nums = sorted(int(value) for value in values)
+    if not nums:
+        return None
+    return nums[(len(nums) - 1) // 2]
+
+
 def turns_sentence(count: int, median: int | None = None) -> str:
     """The room median is the comparator. A missing median uses this person's own count."""
     counted = int(count)
@@ -822,7 +832,7 @@ def talk_number_line(share: int, speaker_count: int) -> str:
     else:
         judge = 'That is less than an even split of the hour.'
         take = 'Next time, add one short point before you stop.'
-    return f'You spoke for {int(share)}% of the hour. {judge} {take}'
+    return f'You spoke for {int(share)}% of the hour. That is your share of the talking. {judge} {take}'
 
 
 def question_number_line(count: int, average: int) -> str:
@@ -840,13 +850,22 @@ def question_number_line(count: int, average: int) -> str:
         take = 'Next time, keep one of those questions open for someone else.'
     asked_word = 'question' if asked == 1 else 'questions'
     typical_word = 'question' if typical == 1 else 'questions'
-    return (
-        f'You asked {asked} {asked_word}. The typical person asked {typical} {typical_word}. '
-        f'{judge} {take}'
-    )
+    if asked == 0:
+        meaning = 'That means you did not ask the room anything.'
+    elif asked == 1:
+        meaning = 'That means you asked the room one thing.'
+    else:
+        meaning = 'That means you asked the room more than once.'
+    return f'You asked {asked} {asked_word}. {meaning} {judge} {take}'
 
 
-def group_plain_numbers(interaction_pct: int, participation_pct: int, speaker_count: int) -> list[str]:
+def group_plain_numbers(
+    interaction_pct: int,
+    speaker_count: int,
+    *,
+    spoke: int | None = None,
+    roster: int | None = None,
+) -> list[str]:
     """Each rate in plain words, judged against a number this session can compute."""
     people = max(int(speaker_count or 0), 0)
     moved = int(interaction_pct)
@@ -868,15 +887,33 @@ def group_plain_numbers(interaction_pct: int, participation_pct: int, speaker_co
         f'{moved}% of turns moved to someone new. {judge} '
         'Next time, after you answer, pass the question to someone who has not spoken.'
     )
-    spoke = int(participation_pct)
-    if spoke >= 100:
-        room = 'That is a strength. Everyone here took a turn.'
-        invite = 'Next time, keep passing the turn so it stays that way.'
+    if spoke is None or not roster:
+        people_line = 'Next time, invite one quiet person in before you close.'
     else:
-        room = 'That is low next to everyone in the room.'
-        invite = 'Next time, invite one quiet person in before you close.'
-    people_line = f'{spoke}% of the people here spoke. {room} {invite}'
+        people_line = people_spoke_line(spoke, roster)
     return [handoff, people_line]
+
+
+_SPOKEN_WORDS = {1: 'One', 2: 'Two', 3: 'Three', 4: 'Four', 5: 'Five', 6: 'Six', 7: 'Seven', 8: 'Eight'}
+
+
+def people_spoke_line(spoke: int, total: int) -> str:
+    """A headcount against the roster. The gini rate is not a count of people."""
+    spoke = max(0, int(spoke))
+    total = max(spoke, int(total or 0))
+    if total <= 0:
+        return f'{spoke} people spoke. Next time, invite one quiet person in before you close.'
+    silent = total - spoke
+    if silent <= 0:
+        return (
+            f'{spoke} of {total} people spoke. Everyone took a turn. '
+            'Next time, keep passing the turn.'
+        )
+    quiet = _SPOKEN_WORDS.get(silent, str(silent))
+    return (
+        f'{spoke} of {total} people spoke. {quiet} never did. '
+        'Next time, invite one quiet person in before you close.'
+    )
 
 
 def group_pattern_why(portrait: dict) -> str:
@@ -942,6 +979,32 @@ def group_headline_is_personal(text: str) -> bool:
     return bool(_PERSON_HEADLINE.search(text or ''))
 
 
+def fit_headline(text: str, fallback: str = 'You made one clear move.') -> str:
+    """Six plain words or fewer. A 'focused dialogue' line is not a headline."""
+    from lib.readability import reading_grade
+
+    cleaned = re.sub(r'\s+', ' ', str(text or '')).strip().rstrip('.')
+    if (
+        not cleaned
+        or re.search(r'focused dialogue', cleaned, re.I)
+        or len(cleaned.split()) > 6
+        or reading_grade(cleaned) > 6
+    ):
+        return fallback
+    return cleaned + '.'
+
+
+def personal_why_line(share: int, speaker_count: int, person: str = '') -> str:
+    """Second person, one behavior, and a next step. Not a generic filler."""
+    who = person or 'the next person'
+    even = room_average(max(int(speaker_count or 1), 1))
+    if int(share) > even + 2:
+        return f'You held more of the hour than an even split. Next time, hand the next point to {who}.'
+    if int(share) + 2 < even:
+        return 'You spoke less than an even split of the hour. Next time, add one short point.'
+    return f'You made one move the room could hear. Next time, let {who} answer it.'
+
+
 SHORTHAND = (
     'the room handed the turn',
     'interaction rate',
@@ -1004,6 +1067,8 @@ def narrative_text(text: str, *, big: bool = False) -> str:
         outside = _outside_quotes(sentence)
         if _NARRATIVE_JARGON.search(outside) or _NARRATIVE_FILLER.search(outside):
             continue
+        if re.search(r"\b(I|I'll|I'm|I've|I'd)\b", outside):
+            continue
         count = len(re.findall(r'\d+\s*%', outside))
         if count >= 2 or used + count > 2:
             continue
@@ -1011,14 +1076,14 @@ def narrative_text(text: str, *, big: bool = False) -> str:
         kept.append(sentence)
     result = ' '.join(kept).strip()
     if big and '?' not in _outside_quotes(result):
-        result = (result.rstrip('.') + '. ' if result else '') + 'Next time, who else should speak?'
+        result = (result.rstrip('.') + '. ' if result else '') + closing_question()
     from lib.readability import reading_grade
 
-    if result and reading_grade(result) >= 6:
+    if result and reading_grade(result) > 6:
         result = (
-            'You made one clear move. Next time, who else should speak?'
+            'You made one clear move. ' + closing_question()
             if big
-            else 'This is the part to change. Next time, try one small step.'
+            else 'You can change this next time. Try one small step.'
         )
     return result
 
@@ -1077,6 +1142,56 @@ def _split_sentences(text: str) -> list[str]:
     return refined
 
 
+def bounded_quote(text: str, *, max_words: int = 40, max_sentences: int = 2) -> str | None:
+    """One or two whole sentences, at most 40 words. A fragment is not a quote."""
+    sentences = [part.strip() for part in re.findall(r'[^.!?]*[.!?]', text or '') if part.strip()]
+    if not sentences:
+        return None
+    chosen = []
+    words = 0
+    for sentence in sentences:
+        count = len(re.findall(r"[A-Za-z0-9']+", sentence))
+        if count > max_words:
+            if chosen:
+                break
+            continue
+        if chosen and (len(chosen) >= max_sentences or words + count > max_words):
+            break
+        chosen.append(sentence)
+        words += count
+        if len(chosen) >= max_sentences:
+            break
+    if not chosen:
+        return None
+    return ' '.join(chosen)
+
+
+_VAGUE_ABOUT = {
+    'something', 'anything', 'everything', 'determine', 'exploit', 'decide', 'thing',
+    'it', 'this', 'that', 'there', 'stuff',
+}
+
+
+def closing_question(word: str = '', person: str = '') -> str:
+    """Name a person or a real noun from the moment. Not 'about' plus a bare verb."""
+    if person:
+        return f'Next time, will you let {person} answer that point?'
+    token = (word or '').lower()
+    if token and token not in _VAGUE_ABOUT and not _base_verb(token):
+        return f'Next time, who should take the {token} point?'
+    return 'Next time, who should answer after this point?'
+
+
+def question_problems(text: str) -> list[str]:
+    problems = []
+    if re.search(r'who else should speak about', text or '', re.I):
+        problems.append('generic question')
+    match = re.search(r'\babout\s+([A-Za-z]+)', text or '')
+    if match and (match.group(1).lower() in _VAGUE_ABOUT or _base_verb(match.group(1))):
+        problems.append('vague about')
+    return problems
+
+
 def _moment_word(sentence: str) -> str:
     spans = re.findall(r'"([^"]+)"', sentence or '')
     words = re.findall(r"[A-Za-z']+", spans[0] if spans else '')
@@ -1105,11 +1220,16 @@ def personal_big_thing(drama: str) -> str:
             pattern = sentence
     if not pattern:
         pattern = 'You made one clear move.'
+    if moment:
+        spans = re.findall(r'"([^"]*)"', moment)
+        if spans:
+            short = bounded_quote(spans[0])
+            if short:
+                moment = re.sub(r'"[^"]*"', f'"{short}"', moment, count=1)
+            else:
+                moment = ''
     word = _moment_word(moment)
-    if word:
-        question = f'Next time, who else should speak about {word}?'
-    else:
-        question = 'Next time, who else should speak on that point?'
+    question = closing_question(word)
     parts = [pattern]
     if moment:
         parts.append(moment)
@@ -1135,6 +1255,7 @@ def big_thing_order_problems(text: str) -> list[str]:
         problems.append('quote before the pattern')
     if re.search(r'hand off one turn sooner', text or '', re.I):
         problems.append('generic question')
+    problems.extend(question_problems(text or ''))
     return problems
 
 

@@ -317,14 +317,9 @@ def personal_story(
             if str(row_name) == 'Average':
                 continue
             turn_values.append(int(float(stats_frame.loc[row_name, 'Total Interactions'] or 0)))
-    turn_median = None
-    if turn_values:
-        ordered = sorted(turn_values)
-        mid = len(ordered) // 2
-        if len(ordered) % 2:
-            turn_median = ordered[mid]
-        else:
-            turn_median = int(round((ordered[mid - 1] + ordered[mid]) / 2))
+    from lib.story_render import room_median
+
+    turn_median = room_median(turn_values)
     numbers = [
         talk_number_line(share_pct, speaker_count),
         question_number_line(question_count, session_question_average),
@@ -535,6 +530,35 @@ def _meeting_topics(transcript: dict | None, limit: int = 3) -> list[str]:
     return ranked[:limit]
 
 
+def _duration_shares(transcript, names) -> list[tuple[str, int]]:
+    totals: dict[str, float] = {}
+    for name in (names or {}).values():
+        if name:
+            totals.setdefault(str(name), 0.0)
+    for row in (transcript or {}).get('utterances') or []:
+        who = row.get('name') or (names or {}).get(row.get('speaker')) or row.get('speaker')
+        if not who:
+            continue
+        span = max(0.0, float(row.get('end') or 0) - float(row.get('start') or 0))
+        totals[str(who)] = totals.get(str(who), 0.0) + span
+    total = sum(totals.values()) or 1
+    return [(name, int(round(100 * value / total))) for name, value in totals.items()]
+
+
+def _spoke_count(transcript, names) -> int:
+    roster = {str(name) for name in (names or {}).values() if name}
+    spoken = set()
+    for row in (transcript or {}).get('utterances') or []:
+        if not str(row.get('text') or '').strip():
+            continue
+        who = row.get('name') or (names or {}).get(row.get('speaker')) or row.get('speaker')
+        if who:
+            spoken.add(str(who))
+    if roster:
+        return len(spoken & roster)
+    return len(spoken)
+
+
 def group_story(
     *,
     summaries: dict,
@@ -613,7 +637,10 @@ def group_story(
     from lib.questions import question_counts
     from lib.story_render import group_caveat, group_pattern_why, group_plain_numbers
 
-    speaker_count = len(shares or []) or len({
+    if not shares:
+        shares = _duration_shares(transcript, names)
+    roster_names = {str(name) for name in (names or {}).values() if name}
+    speaker_count = len(roster_names) or len(shares or []) or len({
         row.get('speaker') for row in (transcript or {}).get('utterances') or [] if row.get('speaker')
     })
     one_thing = 'Ask one quiet person to speak before the next choice.'
@@ -652,7 +679,12 @@ def group_story(
         'pattern_why': group_pattern_why(portrait),
         'caveat': group_caveat(portrait),
         'transitions': transitions,
-        'numbers': group_plain_numbers(interaction_pct, participation_pct, speaker_count),
+        'numbers': group_plain_numbers(
+            interaction_pct,
+            speaker_count,
+            spoke=_spoke_count(transcript, names),
+            roster=speaker_count,
+        ),
         'shares': list(shares or []),
         'question_counts': question_counts(transcript, names),
         'proposal_counts': draft.get('proposal_counts'),

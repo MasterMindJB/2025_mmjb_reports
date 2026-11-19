@@ -144,13 +144,16 @@ def _body(pdf, text: str, size: int = 11) -> None:
 
 
 def _pull_quote(pdf, text: str, when: str = '') -> None:
-    """An indented quote under its heading. The body stays 11pt with 1.4 line spacing."""
+    """An indented quote under its heading. At most 40 words, on a sentence boundary."""
     from lib.data_story import sentence_around
-    from lib.story_render import lead_sentence
+    from lib.story_render import bounded_quote, lead_sentence
 
     if getattr(pdf, '_pending_heading', None):
         _flush_heading(pdf)
-    text = lead_sentence(_plain(sentence_around(text, text)))
+    bounded = bounded_quote(sentence_around(text, text))
+    if not bounded:
+        return
+    text = lead_sentence(_plain(bounded))
     if not text:
         return
     pdf.set_font('Poppins', '', 11)
@@ -241,7 +244,7 @@ def _talk_share(story: dict, folder: Path) -> Path:
     return _save_chart(figure, folder, 'talk-share.png')
 
 
-def _ranked_bars(pairs, folder: Path, filename: str, title: str, *, value_labels: bool = False) -> Path | None:
+def _ranked_bars(pairs, folder: Path, filename: str, title: str) -> Path | None:
     """Top bar is navy with a bold label. The other bars are gray."""
     rows = [(str(name), float(value or 0)) for name, value in (pairs or []) if str(name) != 'Average']
     if not rows:
@@ -255,15 +258,16 @@ def _ranked_bars(pairs, folder: Path, filename: str, title: str, *, value_labels
     figure, axis = plt.subplots(figsize=(5.4, max(1.8, 0.42 * len(labels) + 0.7)), facecolor=LIGHT)
     axis.set_facecolor(LIGHT)
     bars = axis.barh(labels, values, color=colors, height=0.55)
-    if value_labels:
-        axis.bar_label(
-            bars,
-            labels=[f'{int(value)}' if float(value).is_integer() else f'{value:g}' for value in values],
-            padding=3,
-            color=INK,
-            fontproperties=load_poppins('regular'),
-            fontsize=8,
-        )
+    axis.bar_label(
+        bars,
+        labels=[str(int(value)) for value in values],
+        padding=3,
+        color=INK,
+        fontproperties=load_poppins('regular'),
+        fontsize=8,
+    )
+    axis.get_xaxis().set_visible(False)
+    axis.spines['bottom'].set_visible(False)
     axis.set_title(title, color=INK, fontproperties=load_poppins('semibold'), fontsize=11, loc='left')
     axis.tick_params(colors=INK, labelsize=8)
     for tick in axis.get_yticklabels():
@@ -277,14 +281,25 @@ def _ranked_bars(pairs, folder: Path, filename: str, title: str, *, value_labels
     return _save_chart(figure, folder, filename)
 
 
-def _top_person(pairs) -> str:
+def _leaders(pairs) -> list[str]:
     ranked = sorted(
         [(str(name), float(value or 0)) for name, value in (pairs or [])],
         key=lambda item: (-item[1], item[0]),
     )
     if not ranked or ranked[0][1] <= 0:
+        return []
+    top = ranked[0][1]
+    return [name for name, value in ranked if value == top]
+
+
+def _join_names(names: list[str]) -> str:
+    if not names:
         return ''
-    return ranked[0][0]
+    if len(names) == 1:
+        return names[0]
+    if len(names) == 2:
+        return f'{names[0]} and {names[1]}'
+    return ', '.join(names[:-1]) + f', and {names[-1]}'
 
 
 def _footnote(pdf, text: str) -> None:
@@ -465,9 +480,9 @@ def write_personal_report(
     pdf.add_page()
     pdf.set_font('Poppins', '', 11)
     pdf.set_text_color(20, 33, 74)
-    headline = str(story.get('short_headline') or story.get('headline') or '')
-    if not headline or headline == 'You set the point. Name it.':
-        headline = _specific_headline(story)
+    from lib.story_render import fit_headline, personal_why_line
+
+    headline = fit_headline(story.get('short_headline') or story.get('headline') or '')
     pdf.set_font('Poppins', 'b', 16)
     pdf.multi_cell(w=0, h=pdf.font_size * 1.2, text=headline, align='L')
     pdf.ln(1)
@@ -485,8 +500,9 @@ def write_personal_report(
     _body(pdf, _keep_fresh(personal_big_thing(move), used_turns) or personal_big_thing(move))
     from lib.story_render import narrative_text
 
+    roster = story.get('roster_shares') or []
     _heading(pdf, 'Why it matters')
-    _body(pdf, narrative_text(_keep_fresh(str(story.get('goal') or ''), used_turns)))
+    _body(pdf, personal_why_line(int(story.get('share') or 0), max(len(roster), 1), str(story.get('next_voice') or '')))
     _heading(pdf, 'By the numbers')
     for line in (story.get('numbers') or [])[:3]:
         _body(pdf, line)
@@ -616,8 +632,9 @@ def write_group_story(pdf, story: dict, chord_path, chord_pairs, *, gap: float =
     pdf.add_page()
     pdf.set_text_color(20, 33, 74)
     headline = str(story.get('headline') or '')
-    if headline.strip().lower() in {'the room handed the turn.', 'the room handed the turn'}:
-        headline = 'A few people did most of the talking.'
+    from lib.story_render import fit_headline
+
+    headline = fit_headline(headline, 'A few people talked most.')
     pdf.set_font('Poppins', 'b', 16)
     pdf.multi_cell(w=0, h=pdf.font_size * 1.2, text=headline, align='L')
     pdf.ln(1)
@@ -634,28 +651,28 @@ def write_group_story(pdf, story: dict, chord_path, chord_pairs, *, gap: float =
     folder = Path(chord_path).parent if chord_path else Path('.')
     shares = story.get('shares') or []
     if shares:
-        talker = _top_person(shares)
+        talkers = _join_names(_leaders(shares))
         _image(
             pdf,
             _ranked_bars(
                 shares,
                 folder,
                 'who-talked.png',
-                f'{talker} talked the most.' if talker else 'No one talked.',
+                f'{talkers} talked the most.' if talkers else 'No one talked.',
             ),
         )
     questions = story.get('question_counts') or []
     if questions:
         from lib.questions import QUESTION_FOOTNOTE
 
-        asker = _top_person(questions)
+        askers = _join_names(_leaders(questions))
         _image(
             pdf,
             _ranked_bars(
                 questions,
                 folder,
                 'who-asked.png',
-                f'{asker} asked the most questions.' if asker else 'No one asked a question.',
+                f'{askers} asked the most questions.' if askers else 'No one asked a question.',
             ),
         )
         _footnote(pdf, QUESTION_FOOTNOTE)
@@ -664,7 +681,7 @@ def write_group_story(pdf, story: dict, chord_path, chord_pairs, *, gap: float =
     if proposals:
         _image(
             pdf,
-            _ranked_bars(proposals, folder, 'ideas.png', 'Ideas put forward', value_labels=True),
+            _ranked_bars(proposals, folder, 'ideas.png', 'Ideas put forward'),
         )
     if hasattr(pdf, 'note_y'):
         pdf.note_y()

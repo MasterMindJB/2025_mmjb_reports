@@ -60,6 +60,58 @@ def test_proposal_counts_use_the_model_indices_and_skip_a_bad_reply(tmp_path):
     assert classify_proposals(Broken(), synthetic_transcript(), tmp_path) is None
 
 
+def test_room_median_uses_a_real_count_not_a_rounded_average():
+    from lib.story_render import room_median, turns_sentence
+
+    assert room_median([1, 1, 2, 2]) == 1
+    assert room_median([1, 2, 3]) == 2
+    line = turns_sentence(2, room_median([1, 1, 2, 2]))
+    assert 'room median was 1' in line
+    assert 'room median was 2' not in line
+
+
+def test_people_spoke_line_counts_heads():
+    from lib.story_render import people_spoke_line
+
+    line = people_spoke_line(5, 7)
+    assert line.startswith('5 of 7 people spoke.')
+    assert 'Two never did.' in line
+    assert 'low next to everyone' not in line
+
+
+def test_quotes_stay_within_forty_words_and_questions_name_the_moment():
+    from lib.story_render import bounded_quote, closing_question, personal_big_thing, question_problems
+
+    long = ' '.join(['word'] * 30) + '. ' + ' '.join(['more'] * 20) + '.'
+    shown = bounded_quote(long)
+    assert shown.endswith('.')
+    assert len(shown.split()) <= 40
+    assert bounded_quote(' '.join(['word'] * 80)) is None
+    huge = 'At 0:11 you said "' + ' '.join(['alpha'] * 200) + '." You opened on the plan.'
+    big = personal_big_thing(huge)
+    assert '"' not in big or max(len(part.split()) for part in big.split('"')[1::2]) <= 40
+    assert 'who else should speak about' not in big.lower()
+    assert question_problems('Next time, who else should speak about determine?')
+    assert question_problems('Next time, who else should speak about something?')
+    assert closing_question('budget') == 'Next time, who should take the budget point?'
+
+
+def test_tied_leaders_are_all_named():
+    from lib.story_pdf import _join_names, _leaders
+
+    pairs = [('Speaker G', 4), ('Steve Switaj', 4), ('Ric', 1)]
+    assert _join_names(_leaders(pairs)) == 'Speaker G and Steve Switaj'
+
+
+def test_proposal_prompt_shows_what_is_not_a_proposal():
+    from lib.proposals import proposal_prompt
+
+    prompt = proposal_prompt([{'speaker': 'H', 'text': 'What do you all think?'}])
+    assert 'asks for opinions is not a proposal' in prompt
+    assert 'What if we wait until Monday?' in prompt
+    assert '0. H:' in prompt
+
+
 def test_idea_generation_label_is_not_a_chart_column():
     assert 'Idea Generation' not in NICE_STATS_COL_NAME.values()
 
