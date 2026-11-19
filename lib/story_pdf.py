@@ -175,23 +175,35 @@ def _clock_label(seconds: float) -> str:
     return format_clock_seconds(int(seconds))
 
 
+def timeline_bounds(story: dict) -> tuple[float, float]:
+    """Left edge is the window start, not 0:00, when the panel begins later."""
+    lines = story.get('lines') or []
+    start = float(story.get('session_start_ms') or 0) / 1000
+    end = float(story.get('session_end_ms') or 0) / 1000
+    if lines:
+        if start <= 0:
+            start = min(float(row.get('start') or 0) for row in lines) / 1000
+        if end <= 0:
+            end = max(float(row.get('end') or 0) for row in lines) / 1000
+    if end <= start:
+        end = start + 1
+    return start, end
+
+
 def _timeline(story: dict, folder: Path) -> Path | None:
     lines = story.get('lines') or []
     if not lines:
         return None
-    session_end = float(story.get('session_end_ms') or 0) / 1000
-    if session_end <= 0:
-        session_end = max(float(row.get('end') or 0) for row in lines) / 1000
-    session_end = max(session_end, 1)
+    session_start, session_end = timeline_bounds(story)
     figure, axis = plt.subplots(figsize=(5.4, 1.6), facecolor=LIGHT)
     axis.set_facecolor(LIGHT)
     for row in lines:
         start = float(row.get('start') or 0) / 1000
         end = float(row.get('end') or start) / 1000
         axis.barh(0, max(end - start, 0.2), left=start, height=0.45, color=NAVY)
-    axis.set_xlim(0, session_end)
-    axis.set_xticks([0, session_end])
-    axis.set_xticklabels([_clock_label(0), _clock_label(session_end)])
+    axis.set_xlim(session_start, session_end)
+    axis.set_xticks([session_start, session_end])
+    axis.set_xticklabels([_clock_label(session_start), _clock_label(session_end)])
     axis.set_yticks([0])
     axis.set_yticklabels(['You'])
     axis.set_xlabel('When you spoke', color=MUTED, fontproperties=load_poppins('regular'), fontsize=8)

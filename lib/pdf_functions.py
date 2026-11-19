@@ -310,7 +310,7 @@ def _add_direction_table(pdf: 'MM_PDF', pairs: list) -> None:
     heading = FontFace(family='Poppins', emphasis='BOLD', size_pt=8, color=white, fill_color=navy)
     with pdf.table(
         text_align=['LEFT', 'LEFT', 'LEFT'],
-        col_widths=(3, 2, 2),
+        col_widths=(2.4, 2.3, 2.3),
         borders_layout='HORIZONTAL_LINES',
         line_height=pdf.font_size * 1.45,
         first_row_as_headings=True,
@@ -320,14 +320,14 @@ def _add_direction_table(pdf: 'MM_PDF', pairs: list) -> None:
         header.cell('One way', style=heading)
         header.cell('The other way', style=heading)
         for index, (name_a, name_b, first_way, other_way) in enumerate(pairs):
-            from lib.names import short_name
+            from lib.names import table_name
 
-            short_a = short_name(name_a)
-            short_b = short_name(name_b)
+            short_a = table_name(name_a)
+            short_b = table_name(name_b)
             fill = light if index % 2 == 0 else white
             style = FontFace(family='Poppins', size_pt=8, color=ink, fill_color=fill)
             row = table.row()
-            row.cell(f'{name_a}  and  {name_b}', style=style)
+            row.cell(f'{short_a} and {short_b}', style=style)
             row.cell(f'{short_a} then {short_b}: {first_way}', style=style)
             row.cell(f'{short_b} then {short_a}: {other_way}', style=style)
     pdf.set_draw_color(0, 0, 0)

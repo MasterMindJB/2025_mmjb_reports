@@ -125,15 +125,41 @@ def computed_signature(bigram: str, count: int, quotes: list[str]) -> dict[str, 
 _ARTICLES = {'a', 'an', 'the', 'your', 'one', 'some', 'this', 'that'}
 
 
+_FINITE_VERBS = {
+    'establish', 'endure', 'secure', 'secured', 'is', 'are', 'was', 'were',
+    'have', 'has', 'do', 'does', 'get', 'gets', 'make', 'makes', 'keep', 'keeps',
+    'create', 'creates', 'build', 'builds', 'hold', 'holds', 'give', 'gives',
+    'spend', 'spends', 'lose', 'loses', 'pay', 'pays', 'face', 'faces',
+    'carry', 'carries', 'cost', 'costs', 'buy', 'buys', 'take', 'takes',
+    'need', 'needs', 'want', 'wants', 'leave', 'leaves', 'bring', 'brings',
+    'show', 'shows', 'find', 'finds', 'see', 'sees', 'set', 'sets', 'use', 'uses',
+    'start', 'starts', 'stop', 'stops', 'wait', 'waits', 'hand', 'hands',
+    'aim', 'aims', 'seek', 'seeks', 'try', 'tries', 'maintain', 'maintains',
+}
+
+
+def _finite_verb(word: str) -> bool:
+    token = (word or '').lower().strip('.,')
+    return token in _FINITE_VERBS
+
+
 def _benefit_clause(phrase: str) -> str:
-    """A clause, not a noun phrase. 'you' plus a verb is valid. 'you you' collapses to one 'you'."""
+    """'you' plus a verb is a clause. A noun phrase after 'you' stays a noun phrase.
+
+    'you you' collapses to one 'you'. 'you decades of professional struggle' has no
+    finite verb, so it renders as the noun phrase without a second 'you'.
+    """
     words = (phrase or '').strip().rstrip('.').split()
     while len(words) >= 2 and words[0].lower() == 'you' and words[1].lower() == 'you':
         words = words[1:]
     if not words or words == ['you']:
         raise OutputParserException('needs a clause')
-    if words[0].lower() != 'you' and words[0].lower().strip('.,') not in _ARTICLES:
-        words = ['you', *words]
+    if words[0].lower() == 'you':
+        if len(words) > 1 and _finite_verb(words[1]):
+            return ' '.join(words)
+        return ' '.join(words[1:])
+    if _finite_verb(words[0]):
+        return 'you ' + ' '.join(words)
     return ' '.join(words)
 
 
@@ -174,6 +200,41 @@ def _topic_phrase(claim: str) -> str:
     return text
 
 
+_GOAL_SENTENCE = re.compile(
+    r'^(?P<subject>the group|the objective|the room|the team|the primary objective|you)\s+'
+    r'(?P<verb>aims|aim|is|are|seeks|seek|wants|want|tries|try|needs|need)\b\s*(?P<rest>.*)$',
+    re.I,
+)
+
+
+def goal_line(claim: str, *, personal: bool = False) -> str:
+    """A full sentence stays a sentence. Only a noun phrase uses the returning-to wrapper."""
+    text = _strip_stated_by(claim).strip().rstrip('.')
+    match = _GOAL_SENTENCE.match(text)
+    if match:
+        verb = match.group('verb').lower()
+        rest = (match.group('rest') or '').strip()
+        subject = 'You' if personal else 'The room'
+        if verb == 'is' and rest.lower().startswith('to '):
+            verb = 'aim' if personal else 'aims'
+        elif personal and verb == 'aims':
+            verb = 'aim'
+        elif personal and verb == 'is':
+            verb = 'are'
+        elif personal and verb == 'seeks':
+            verb = 'seek'
+        elif personal and verb.endswith('s') and verb != 'is':
+            verb = verb[:-1]
+        sentence = f'{subject} {verb} {rest}'.strip()
+        if not sentence.endswith('.'):
+            sentence += '.'
+        return capitalize_sentences(sentence)
+    phrase = _topic_phrase(text)
+    if personal:
+        return capitalize_sentences(f'Inferred from what you said: {phrase}.')
+    return capitalize_sentences(f'The turns keep returning to {phrase}.')
+
+
 def _cap_sentence(text: str) -> str:
     text = (text or '').strip()
     if text[:1].islower():
@@ -195,16 +256,38 @@ def _word_count(text: str) -> int:
     return len(re.findall(r"[A-Za-z']+", text or ''))
 
 
+_LOGISTICS_START = re.compile(
+    r'^(thanks|thank you|let me stand up|smile|say cheese|take a photo|photo|picture)\b',
+    re.I,
+)
+_CLOSING_START = re.compile(r'^(thanks|thank you|goodbye|good night|goodnight)\b', re.I)
+_HOST_ROLES = {'host', 'facilitator', 'moderator'}
+_TOPIC_SKIP = {
+    'about', 'after', 'again', 'before', 'being', 'could', 'every', 'first', 'going',
+    'would', 'there', 'their', 'these', 'those', 'which', 'while', 'where', 'thank',
+    'thanks', 'thank', 'please', 'really', 'still', 'other', 'people', 'thing', 'think',
+    'right', 'middle', 'stay', 'stand', 'photo', 'picture', 'smile',
+}
+
+
 def is_logistics(text: str) -> bool:
-    """Photos, smiles, venue hours, thanks, and packing up are not the closer."""
-    lowered = (text or '').lower()
+    """Photos, smiles, venue hours, thanks, and packing up are not the closer.
+
+    A turn that starts with thanks, 'let me stand up', or a photo cue is logistics
+    at any length. Other logistics cues still have to be a short turn.
+    """
+    lowered = (text or '').lower().strip()
+    if not lowered:
+        return False
+    if _LOGISTICS_START.match(lowered):
+        return True
     count = _word_count(text)
     if count == 0 or count > 16:
         return False
     if any(phrase in lowered for phrase in _LOGISTICS_PHRASES):
         return True
     words = re.findall(r"[a-z']+", lowered)
-    return 'present' in words
+    return 'present' in words or 'stay there' in lowered
 
 
 def substantive_line(text: str) -> bool:
@@ -237,9 +320,71 @@ def closing_clip(text: str, limit: int = 18) -> str | None:
     return first
 
 
+def _content_tokens(text: str) -> set[str]:
+    return {
+        word
+        for word in re.findall(r"[a-z']{5,}", (text or '').lower())
+        if word not in _TOPIC_SKIP
+    }
+
+
+def _topic_keys(rows: list) -> set[str]:
+    """Content words that show up in more than one non-logistics turn."""
+    counts: dict[str, int] = {}
+    for row in rows:
+        text = str(row.get('text') or '')
+        if is_logistics(text):
+            continue
+        for token in _content_tokens(text):
+            counts[token] = counts.get(token, 0) + 1
+    return {token for token, count in counts.items() if count >= 2}
+
+
+def _topic_overlap(text: str, keys: set[str]) -> bool:
+    return bool(keys and (_content_tokens(text) & keys))
+
+
+def _is_closing_remark(row: dict) -> bool:
+    text = str(row.get('text') or '').strip()
+    if not _CLOSING_START.match(text):
+        return False
+    role = str(row.get('role') or '').lower()
+    return role in _HOST_ROLES or not role
+
+
 def discussion_rows(rows: list) -> list:
-    """Drop the photo and logistics tail, and any fragment after the real closer."""
+    """Keep the discussion through the last on-topic turn and the host's thanks.
+
+    A short turn with no topic overlap after that thanks is tail, as is a posing line.
+    """
     usable = [row for row in rows or [] if str(row.get('text') or '').strip()]
+    if not usable:
+        return []
+    keys = _topic_keys(usable)
+    if keys:
+        last = None
+        for index, row in enumerate(usable):
+            text = str(row.get('text') or '')
+            if is_logistics(text):
+                continue
+            if _topic_overlap(text, keys) and _word_count(text) >= 6:
+                last = index
+        if last is not None:
+            end = last
+            index = last + 1
+            while index < len(usable):
+                row = usable[index]
+                text = str(row.get('text') or '')
+                if _is_closing_remark(row):
+                    end = index
+                    index += 1
+                    continue
+                if _word_count(text) < 12 and not _topic_overlap(text, keys):
+                    break
+                if is_logistics(text) or not _topic_overlap(text, keys):
+                    break
+                break
+            return usable[: end + 1]
     while len(usable) > 1:
         text = str(usable[-1].get('text') or '')
         fragment = closing_clip(text) is None
@@ -248,6 +393,20 @@ def discussion_rows(rows: list) -> list:
             continue
         break
     return usable
+
+
+def _complete_clause(text: str) -> str:
+    """Group drama has to finish a sentence. A dangling tail is cut, not printed."""
+    raw = (text or '').strip()
+    if not raw:
+        raise OutputParserException('group drama ends mid-clause')
+    parts = [part.strip() for part in re.split(r'(?<=[.!?])\s+', raw) if part.strip()]
+    complete = [part for part in parts if part.endswith(('.', '!', '?')) and _word_count(part) >= 3]
+    if raw.endswith(('.', '!', '?')) and complete and len(complete) == len(parts):
+        return capitalize_sentences(raw)
+    if complete:
+        return capitalize_sentences(' '.join(complete))
+    raise OutputParserException('group drama ends mid-clause')
 
 
 def last_substantive_utterance(rows: list) -> dict | None:
@@ -802,8 +961,8 @@ def corpus_text(transcript, label: str | None = None) -> str:
 
 
 def render_numbers(keys: list, facts: dict) -> list[str]:
-    if not isinstance(keys, list) or len(keys) != 3:
-        raise OutputParserException('number_keys must be three fact keys')
+    if not isinstance(keys, list) or not 1 <= len(keys) <= 3:
+        raise OutputParserException('number_keys must be one to three fact keys')
     lines = []
     seen = set()
     for key in keys:
@@ -877,6 +1036,7 @@ def render_drama(data: dict, transcript, label: str, corpus: str, forbidden: lis
         raise OutputParserException('drama needs one or two patterns')
     sentences = []
     mights = 0
+    seen_quotes: set[str] = set()
     for pattern in patterns:
         quotes = pattern.get('quotes') if isinstance(pattern, dict) else None
         if not isinstance(quotes, list) or not quotes or len(quotes) > 3:
@@ -884,7 +1044,10 @@ def render_drama(data: dict, transcript, label: str, corpus: str, forbidden: lis
         rendered_quotes = []
         for item in quotes:
             text = own_quote(str(item.get('text') or ''), str(item.get('ts') or ''), transcript, label)
+            if _word_count(text) < 6:
+                raise OutputParserException('drama quote is under 6 words')
             rendered_quotes.append((str(item.get('ts')).strip(), text))
+            seen_quotes.add(_normalize_quote(text))
         pattern_text = _prose(
             str(pattern.get('pattern') or ''), corpus, 'pattern',
             forbidden_names=forbidden, transcript=transcript, speaker_label=label,
@@ -917,6 +1080,10 @@ def render_drama(data: dict, transcript, label: str, corpus: str, forbidden: lis
     exception_quote = own_quote(
         str(exception.get('quote') or ''), str(exception.get('ts') or ''), transcript, label
     )
+    if _word_count(exception_quote) < 6:
+        raise OutputParserException('drama quote is under 6 words')
+    if _normalize_quote(exception_quote) in seen_quotes:
+        raise OutputParserException('drama counter-moment must be a different quote from the evidence')
     happened = _prose(
         str(exception.get('what_happened') or ''), corpus, 'what_happened',
         forbidden_names=forbidden, transcript=transcript, speaker_label=label,
@@ -934,6 +1101,38 @@ def render_drama(data: dict, transcript, label: str, corpus: str, forbidden: lis
     return capitalize_sentences(rendered)
 
 
+def _normalize_quote(text: str) -> str:
+    return re.sub(r'[^a-z0-9]+', '', (text or '').lower())
+
+
+def foreign_phrase(text: str, transcript, label: str) -> str | None:
+    """A run of the headline that belongs to someone else's turn."""
+    words = re.findall(r"[A-Za-z']+", text or '')
+    own = ' '.join(
+        str(row.get('text') or '')
+        for row in (transcript or {}).get('utterances') or []
+        if row.get('speaker') == label
+    ).lower()
+    others = [
+        str(row.get('text') or '').lower()
+        for row in (transcript or {}).get('utterances') or []
+        if row.get('speaker') != label
+    ]
+    for size in (6, 5, 4):
+        if len(words) < size:
+            continue
+        for index in range(len(words) - size + 1):
+            window = words[index:index + size]
+            if not any(len(word) >= 4 for word in window):
+                continue
+            phrase = ' '.join(window).lower()
+            if phrase in own:
+                continue
+            if any(phrase in other for other in others):
+                return phrase
+    return None
+
+
 def render_personal_section(section: str, data: dict, *, transcript, label: str, facts: dict, forbidden: list[str]) -> dict:
     corpus = corpus_text(transcript, label)
     if section == 'character':
@@ -943,6 +1142,9 @@ def render_personal_section(section: str, data: dict, *, transcript, label: str,
         )
         if word_count(headline) > 12:
             raise OutputParserException('headline is over 12 words')
+        leaked = foreign_phrase(headline, transcript, label)
+        if leaked:
+            raise OutputParserException(f'headline uses another speaker\'s line: {leaked}')
         return {'headline': headline, 'numbers': render_numbers(data.get('number_keys'), facts)}
     if section == 'goal':
         claim = _prose(
@@ -951,9 +1153,8 @@ def render_personal_section(section: str, data: dict, *, transcript, label: str,
         )
         quote = data.get('quote') if isinstance(data.get('quote'), dict) else {}
         text = own_quote(str(quote.get('text') or ''), str(quote.get('ts') or ''), transcript, label)
-        return {'goal': capitalize_sentences(
-            f'Inferred from what you said: {claim.rstrip(".")}. At {quote.get("ts")} you said "{text}".'
-        )}
+        sentence = goal_line(claim, personal=True).rstrip('.')
+        return {'goal': capitalize_sentences(f'{sentence}. At {quote.get("ts")} you said "{text}".')}
     if section == 'challenge':
         claim = _prose(
             str(data.get('claim') or ''), corpus, 'claim',
@@ -1020,7 +1221,7 @@ def render_group_section(section: str, data: dict, *, transcript, facts: dict, c
         if section == 'goal':
             if re.search(r"\b[A-Z][a-z]+(?:'s|’s)\b", claim) or re.search(r'\bas stated by\b', claim, re.I):
                 raise OutputParserException('group goal must be the room\'s topic, not one person\'s theme')
-            return {'goal': capitalize_sentences(f'The turns keep returning to {_topic_phrase(claim)}.')}
+            return {'goal': goal_line(claim, personal=False)}
         closing_fact = facts.get('_closing') or {}
         speaker = closing_fact.get('name') or 'the last voice'
         spoken = closing_clip(_strip_stated_by(closing_fact.get('text') or closing)) or ''
@@ -1056,7 +1257,8 @@ def render_group_section(section: str, data: dict, *, transcript, facts: dict, c
         note = _prose(str(data.get('pattern_note') or ''), corpus, 'pattern_note')
         if note.lower().strip('.') == 'who talks to whom, and who nobody answered':
             return {'drama': cast or note}
-        return {'drama': f'{cast} {note}'.strip() if cast else note}
+        rendered = f'{cast} {note}'.strip() if cast else note
+        return {'drama': _complete_clause(rendered)}
     if section == 'one_thing':
         sentence, why = render_one_thing(data, facts, corpus, None)
         return {'one_thing': sentence, 'why': why}

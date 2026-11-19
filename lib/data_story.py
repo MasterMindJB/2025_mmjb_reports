@@ -248,6 +248,12 @@ def personal_story(
     }
     speaker_count = max(1, len(speakers))
     ends = [float(row.get('end') or 0) for row in (transcript or {}).get('utterances') or []]
+    starts = [float(row.get('start') or 0) for row in (transcript or {}).get('utterances') or []]
+    window = (transcript or {}).get('session_window') or {}
+    session_start_ms = window.get('start_ms')
+    if not session_start_ms and starts:
+        session_start_ms = min(starts)
+    session_start_ms = int(session_start_ms or 0)
     numbers = [
         share_sentence(share_pct, speaker_count),
         questions_sentence(question_count, session_question_average),
@@ -269,9 +275,22 @@ def personal_story(
         headline = 'You held the floor for a long stretch'
     else:
         headline = 'You came in and set a point down'
-    if first_event:
-        said = clip_clause(first_event['text'], 18)
-        when = first_event['time']
+    evidence_event = first_event
+    if evidence_event and len(re.findall(r"[A-Za-z']+", str(evidence_event.get('text') or ''))) < 6:
+        long_enough = [
+            event for event in events
+            if len(re.findall(r"[A-Za-z']+", str(event.get('text') or ''))) >= 6
+        ]
+        if long_enough:
+            evidence_event = max(
+                long_enough,
+                key=lambda event: len(re.findall(r"[A-Za-z']+", str(event.get('text') or ''))),
+            )
+        else:
+            evidence_event = None
+    if evidence_event:
+        said = clip_clause(evidence_event['text'], 18)
+        when = evidence_event['time']
         goal = (
             f'You came in to move the work. At {when} you said "{said}", '
             f'and that line is the aim the later turns keep testing.'
@@ -361,6 +380,7 @@ def personal_story(
         'one_thing': one_thing,
         'why': why,
         'transitions': transitions,
+        'session_start_ms': session_start_ms,
         'session_end_ms': max(ends) if ends else 0,
         'actions': [],
         'signature': {

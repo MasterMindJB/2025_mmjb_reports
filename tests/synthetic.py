@@ -31,7 +31,7 @@ UTTERANCES = [
     },
     {
         'speaker': 'B',
-        'text': 'I can own the numbers.',
+        'text': 'I can own the numbers from here.',
         'start': 15000,
         'end': 18000,
         'confidence': 0.95,

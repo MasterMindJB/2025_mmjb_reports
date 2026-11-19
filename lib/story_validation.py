@@ -57,6 +57,11 @@ def _inflected(token: str, phrase: str) -> bool:
     return False
 
 
+def ban_instruction() -> str:
+    """The full ban list, stated so the model can avoid it on the first try."""
+    return 'Never use: ' + ', '.join(BAN_PHRASES) + '.'
+
+
 def ban_hit(text: str, *, skip: tuple[str, ...] = ()) -> str | None:
     """Match a banned phrase or an inflection of a single banned word."""
     lowered = (text or '').lower()

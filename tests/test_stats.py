@@ -28,7 +28,7 @@ def test_synthetic_speaker_totals():
     tables = compute_session_tables(synthetic_transcript(), speaker_map)
     stats = tables.df_speaker_stats
     assert int(stats.loc['Alex Rivera', 'word_count']) == 14
-    assert int(stats.loc['Blake Chen', 'word_count']) == 11
+    assert int(stats.loc['Blake Chen', 'word_count']) == 13
     assert int(stats.loc['Casey Quinn', 'word_count']) == 5
     assert int(stats.loc['Blake Chen', 'question_count']) == 1
     assert int(stats.loc['Alex Rivera', 'interaction_count']) == 2

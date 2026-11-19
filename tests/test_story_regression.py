@@ -189,7 +189,7 @@ def test_group_character_accepts_one_fact_and_the_page_holds_the_chord(tmp_path)
         cast='Who talks to whom.',
     )
     assert resolved['resolution'].startswith('The meeting closed on')
-    assert 'Monday' in resolved['resolution']
+    assert 'numbers from here' in resolved['resolution']
     assert 'as stated by' not in resolved['resolution'].lower()
     image = tmp_path / 'chord.png'
     Image.new('RGB', (400, 400), 'white').save(image)
@@ -587,7 +587,7 @@ def test_goal_wrapper_does_not_glue_a_second_sentence():
         cast='',
     )
     assert 'to The group' not in rendered['goal']
-    assert rendered['goal'].startswith('The turns keep returning to identify')
+    assert rendered['goal'] == 'The room seeks to identify the core need.'
     assert capitalize_sentences('average. you struggle') == 'average. You struggle'
 
 
@@ -843,3 +843,204 @@ def test_annie_like_seven_person_report_compacts_a_thin_last_page(tmp_path):
     assert plain_ratios[-1] < 0.15
     fitted = fit_personal_report(story, tmp_path / 'fitted', make_pdf)
     assert fitted.page_fill_ratios()[-1] >= 0.15
+
+
+def test_auto_end_stops_on_the_last_topic_turn_not_the_posing_line():
+    from lib.session_window import apply_session_window, parse_clock_ms
+    from lib.story_render import is_logistics
+
+    posing = "middle or you're going to stay there."
+    assert is_logistics(
+        'Let me stand up and gather everyone into the middle so the picture includes the whole panel after the hour.'
+    )
+    rows = [
+        {
+            'speaker': 'A',
+            'role': 'participant',
+            'text': 'Knowledge management hides the value when the source is buried in the system.',
+            'start': parse_clock_ms('2:40:00'),
+            'end': parse_clock_ms('2:41:10'),
+        },
+        {
+            'speaker': 'B',
+            'role': 'participant',
+            'text': 'The value breaks again when knowledge management keeps the source from the next person.',
+            'start': parse_clock_ms('2:42:25'),
+            'end': parse_clock_ms('2:43:40'),
+        },
+        {
+            'speaker': 'H',
+            'role': 'host',
+            'text': 'Thank you all for staying with the panel.',
+            'start': parse_clock_ms('2:43:50'),
+            'end': parse_clock_ms('2:44:04'),
+        },
+        {
+            'speaker': 'Jay',
+            'role': 'participant',
+            'text': posing,
+            'start': parse_clock_ms('2:49:56'),
+            'end': parse_clock_ms('2:50:20'),
+        },
+    ]
+    trimmed = apply_session_window({'utterances': rows})
+    assert posing not in [row['text'] for row in trimmed['utterances']]
+    assert trimmed['session_window']['end_ms'] == parse_clock_ms('2:44:04')
+    assert trimmed['utterances'][-1]['text'].startswith('Thank you')
+
+
+def test_timeline_axis_starts_at_the_window_not_zero():
+    from lib.story_pdf import _clock_label, timeline_bounds
+
+    start_ms = (46 * 60 + 57) * 1000
+    start, _end = timeline_bounds({
+        'session_start_ms': start_ms,
+        'session_end_ms': (2 * 3600 + 44 * 60) * 1000,
+        'lines': [{'start': start_ms, 'end': start_ms + 4000}],
+    })
+    assert _clock_label(start) == '46:57'
+    assert _clock_label(start) != '0:00'
+
+
+def test_goal_sentences_are_not_wrapped_as_noun_phrases():
+    from lib.story_render import render_group_section
+
+    facts = {'interaction': {'value': 20, 'line': '20% interaction', 'unit': 'percent'}}
+    aims = render_group_section(
+        'goal',
+        {'claim': 'the group aims to identify where value breaks within knowledge management systems'},
+        transcript=synthetic_transcript(),
+        facts=facts,
+        cast='',
+    )['goal']
+    autonomy = render_group_section(
+        'goal',
+        {'claim': 'the objective is to maintain personal autonomy'},
+        transcript=synthetic_transcript(),
+        facts=facts,
+        cast='',
+    )['goal']
+    assert aims == 'The room aims to identify where value breaks within knowledge management systems.'
+    assert autonomy == 'The room aims to maintain personal autonomy.'
+    assert 'returning to the group aims' not in aims
+    assert 'returning to the objective is' not in autonomy
+
+
+def test_a_json_string_or_list_is_coerced_into_a_section_object(caplog):
+    import json
+    import logging
+
+    from lib.story_generation import _fill_sections
+
+    class Coercible:
+        def invoke(self, prompt):
+            return type('Reply', (), {'content': json.dumps({
+                'goal': json.dumps({'claim': 'the budget held through the hour'}),
+                'resolution': ['```json\n{"claim": "the budget held through the hour"}\n```'],
+            })})()
+
+    draft = {'accepted': []}
+    with caplog.at_level(logging.WARNING):
+        _fill_sections(
+            Coercible(),
+            audience='group',
+            sections=('goal', 'resolution'),
+            evidence='FACTS',
+            render=lambda section, data: {section: data['claim']},
+            progress_path=None,
+            draft=draft,
+        )
+    assert 'goal' not in draft.get('fallback_sections', [])
+    assert 'resolution' not in draft.get('fallback_sections', [])
+    assert 'str' in caplog.text
+    assert 'list' in caplog.text
+
+
+def test_character_accepts_one_fact_key_and_rejects_another_speakers_line():
+    transcript = {
+        'utterances': [
+            {'speaker': 'A', 'text': 'The onboarding plan needs a budget before Monday.', 'start': 0, 'end': 4000},
+            {'speaker': 'B', 'text': 'I work as a dating coach on the weekends now.', 'start': 4000, 'end': 8000},
+        ]
+    }
+
+    def render(data):
+        return render_personal_section(
+            'character', data, transcript=transcript, label='A', facts=FACTS, forbidden=[],
+        )
+
+    kept = render({'headline': 'You opened on the onboarding plan', 'number_keys': ['talk_share']})
+    assert kept['numbers']
+    with pytest.raises(OutputParserException):
+        render({'headline': 'You kept the dating coach on the weekends', 'number_keys': ['talk_share']})
+
+
+def test_cost_without_a_verb_stays_a_noun_phrase_and_drama_skips_short_quotes():
+    from lib.data_story import personal_story
+    from lib.story_render import _costs_you, render_group_section
+
+    assert _costs_you('you decades of professional struggle') == (
+        'What it costs you: decades of professional struggle.'
+    )
+    transcript = {
+        'utterances': [
+            {'speaker': 'A', 'text': 'us?', 'start': 0, 'end': 500},
+            {'speaker': 'A', 'text': "we're doing.", 'start': 500, 'end': 1000},
+            {'speaker': 'A', 'text': 'particular question?', 'start': 1000, 'end': 1500},
+            {
+                'speaker': 'A',
+                'text': 'The knowledge management system hides the value until someone names the source.',
+                'start': 1500,
+                'end': 5000,
+            },
+        ]
+    }
+    story = personal_story(
+        label='A',
+        info={'name': 'Eden'},
+        analysis={},
+        transcript=transcript,
+        stats_frame=None,
+        framework={},
+        draft={},
+    )
+    assert 'us?' not in story['drama']
+    assert "we're doing." not in story['drama']
+    assert 'particular question?' not in story['drama']
+    assert 'knowledge management' in story['drama']
+    with pytest.raises(OutputParserException):
+        render_group_section(
+            'drama',
+            {'pattern_note': 'the value breaks when'},
+            transcript=synthetic_transcript(),
+            facts={'interaction': {'value': 20, 'line': '20% interaction', 'unit': 'percent'}},
+            cast='Who talks to whom',
+        )
+
+
+def test_prompts_name_the_whole_ban_list_and_quotes_stay_distinct():
+    from lib.names import table_name
+    from lib.story_generation import _batch_prompt
+    from lib.story_validation import ban_instruction
+
+    prompt = _batch_prompt('personal', ('drama',), 'FACTS')
+    assert ban_instruction() in prompt
+    assert 'Never use:' in prompt
+    assert 'journey' in prompt and 'leverage' in prompt
+    assert table_name('Speaker F') == 'F'
+    assert table_name('Full Sail Moderator') == 'Full Sail Moderator'
+    opening = 'We should try the new onboarding plan.'
+    with pytest.raises(OutputParserException):
+        _render(
+            'drama',
+            {
+                'patterns': [{
+                    'quotes': [{'text': opening, 'ts': '0:00'}],
+                    'pattern': 'You set the plan in the first line',
+                    'twist': 'the next voice took the turn',
+                    'cost': 'a question',
+                    'gift': 'a clear start',
+                }],
+                'exception': {'quote': opening, 'ts': '0:00', 'what_happened': 'you named the plan again'},
+            },
+        )

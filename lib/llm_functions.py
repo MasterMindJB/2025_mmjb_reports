@@ -184,6 +184,7 @@ class ConversationSummarizer:
         from lib.data_story import signature_examples
         from lib.gemini_retry import invoke_llm
         from lib.report_stats import display_bigram, top_bigram
+        from lib.story_validation import ban_instruction
 
         found = top_bigram(speaker_text)
         if found is None:
@@ -201,6 +202,7 @@ class ConversationSummarizer:
             'The examples under What?, So, what?, and Now, what? are illustrative and may be invented. '
             'Each of those three answers must be 6 to 25 words. '
             'Do not use the word coaching. '
+            f'{ban_instruction()} '
             f'The phrase you discuss must be "{shown}". '
             'Do not quote the transcript. '
             'Example clips in the lines above already contain that phrase. '

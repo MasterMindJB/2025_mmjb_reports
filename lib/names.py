@@ -25,6 +25,15 @@ def display_name(name: str) -> str:
     return cleaned or 'Participant'
 
 
+def table_name(name: str) -> str:
+    """A pair-table label. 'Speaker F' is the letter, so the row does not wrap."""
+    full = display_name(name)
+    match = re.fullmatch(r'Speaker\s+([A-Za-z0-9]+)', full)
+    if match:
+        return match.group(1)
+    return short_name(full)
+
+
 def short_name(name: str) -> str:
     """A label for a chart. Role titles are never cut down to their first word."""
     full = display_name(name)

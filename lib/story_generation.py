@@ -10,6 +10,7 @@ from langchain_core.exceptions import OutputParserException
 
 from lib.chord_diagram import directed_follows
 from lib.gemini_retry import invoke_llm
+from lib.story_validation import ban_instruction
 from lib.story_craft import render_section_prompt
 from lib.story_evidence import cast_line, quote_events
 from lib.story_render import (
@@ -178,7 +179,7 @@ def _batch_prompt(audience: str, sections: tuple[str, ...], evidence: str, feedb
             'and do not treat that story as the reader\'s own life. '
             'A quote must be an exact substring of that speaker\'s turn, with its original capitalization. '
             'Do not drop or recapitalize a leading word. '
-            'Banned words include utilize and communication style, and inflections such as leveraging. '
+            f'{ban_instruction()} '
         )
     else:
         voice = (
@@ -188,7 +189,7 @@ def _batch_prompt(audience: str, sections: tuple[str, ...], evidence: str, feedb
             'Character and challenge each need at least one rate fact, not all three. '
             'Challenge uses words. The rate is already in the facts. '
             'Resolution names who said the closing line, inside quote marks. '
-            'Banned words include utilize and communication style, and inflections such as leveraging. '
+            f'{ban_instruction()} '
         )
     rejected = ''
     if feedback:
@@ -212,6 +213,27 @@ def _batch_prompt(audience: str, sections: tuple[str, ...], evidence: str, feedb
     )
 
 
+def _coerce_payload(payload, section: str):
+    """A JSON string, a fenced block, or a list of one object is still an object."""
+    if isinstance(payload, dict):
+        return payload
+    logging.warning('story section %s arrived as %s', section, type(payload).__name__)
+    if isinstance(payload, list) and len(payload) == 1:
+        return _coerce_payload(payload[0], section)
+    if isinstance(payload, str):
+        text = payload.strip()
+        if text.startswith('```'):
+            text = re.sub(r'^```(?:json)?\s*', '', text)
+            text = re.sub(r'\s*```$', '', text).strip()
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            return payload
+        if isinstance(parsed, (dict, list)):
+            return _coerce_payload(parsed, section)
+    return payload
+
+
 def _fill_sections(llm, *, audience, sections, evidence, render, progress_path, draft, turns: str = '') -> None:
     pending = [section for section in sections if section not in (draft.get('accepted') or [])]
     if not pending:
@@ -232,10 +254,14 @@ def _fill_sections(llm, *, audience, sections, evidence, render, progress_path, 
                 reasons[section] = 'missing from the batch'
                 still.append(section)
                 continue
-            payload = raw[section]
+            payload = _coerce_payload(raw[section], section)
             if not isinstance(payload, dict):
-                logging.warning('story reject [%s]: section payload was not an object', section)
-                reasons[section] = 'section payload must be an object'
+                logging.warning(
+                    'story reject [%s]: section payload was not an object (raw type %s)',
+                    section,
+                    type(raw[section]).__name__,
+                )
+                reasons[section] = f'section payload must be an object (raw type {type(raw[section]).__name__})'
                 still.append(section)
                 continue
             try:
