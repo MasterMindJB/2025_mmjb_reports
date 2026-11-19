@@ -5,7 +5,7 @@ Audience: personal
 Write the ONE THING in 25 words or fewer.
 Start with one allowed verb. Include the trigger moment and the target number from the evidence.
 No also. No second habit. The why line uses their number and the target.
-Return JSON with keys one_thing, why.
+Do not write digits in a string. Put the halfway number only in target_value. The JSON schema after the evidence is the only output.
 
 Evidence:
 {evidence}

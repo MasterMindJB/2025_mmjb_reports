@@ -70,6 +70,78 @@ def quoted_spans(text: str) -> list[str]:
     return unique
 
 
+def clock_to_ms(timestamp: str) -> int:
+    parts = str(timestamp or '').strip().split(':')
+    if len(parts) not in (2, 3):
+        _fail(f'timestamp is not a clock time: {timestamp}')
+    try:
+        numbers = [int(part) for part in parts]
+    except ValueError:
+        _fail(f'timestamp is not a clock time: {timestamp}')
+    if len(numbers) == 2:
+        minutes, seconds = numbers
+        return (minutes * 60 + seconds) * 1000
+    hours, minutes, seconds = numbers
+    return (hours * 3600 + minutes * 60 + seconds) * 1000
+
+
+def quote_word_count(text: str) -> int:
+    return len(re.findall(r"[A-Za-z0-9']+", text or ''))
+
+
+def own_quote(text: str, timestamp: str, transcript: dict | None, label: str) -> str:
+    """Accept a quote only when it is this speaker's, at least 3 words, and inside their turn."""
+    cleaned = (text or '').strip().strip('"').strip()
+    if quote_word_count(cleaned) < 3:
+        _fail('quote is under 3 words and does not count as evidence')
+    needle = _normalize(cleaned)
+    moment = clock_to_ms(timestamp)
+    for row in (transcript or {}).get('utterances') or []:
+        if row.get('speaker') != label:
+            continue
+        if needle not in _normalize(str(row.get('text') or '')):
+            continue
+        start = float(row.get('start') or 0)
+        end = float(row.get('end') or start)
+        if start <= moment <= end:
+            return cleaned
+    _fail(f'quote is not inside a turn by {label}: {cleaned}')
+    return cleaned
+
+
+GLUE_WORDS = {
+    'about', 'above', 'after', 'again', 'against', 'also', 'answers', 'asked', 'average',
+    'back', 'before', 'began', 'below', 'came', 'center', 'conversation', 'decision',
+    'doing', 'early', 'entered', 'every', 'exchange', 'finished', 'first', 'floor',
+    'forward', 'from', 'held', 'here', 'into', 'interaction', 'last', 'later', 'left',
+    'made', 'most', 'named', 'near', 'next', 'once', 'opened', 'panel', 'participation',
+    'percent', 'point', 'question', 'questions', 'quiet', 'room', 'said', 'same',
+    'second', 'serial', 'session', 'share', 'speaker', 'started', 'talk', 'that',
+    'then', 'third', 'this', 'time', 'times', 'took', 'turn', 'turns', 'voice',
+    'voices', 'wait', 'what', 'when', 'where', 'which', 'with', 'word', 'words',
+    'talks', 'nobody', 'answered', 'whom', 'quietest', 'decision', 'stayed',
+    'your', 'have', 'been', 'were', 'they', 'them', 'their', 'just', 'only', 'than',
+    'more', 'less', 'much', 'very', 'into', 'over', 'under', 'after', 'before',
+    'would', 'could', 'should', 'there', 'these', 'those', 'other', 'side', 'hard',
+    'interesting', 'specific', 'moment', 'start', 'line', 'buys', 'costs', 'doing',
+    'phrase', 'often', 'reads', 'right', 'after', 'open', 'using', 'used', 'reach',
+    'familiar', 'second', 'offer', 'target', 'halfway', 'step', 'asked', 'question',
+}
+
+
+def unsupported_words(text: str, corpus: str) -> list[str]:
+    """Content words in text that never appear in the corpus. Glue words are allowed."""
+    blob = _normalize(corpus)
+    missing = []
+    for word in re.findall(r"[A-Za-z']{4,}", text or ''):
+        token = word.lower().strip("'")
+        if token in GLUE_WORDS or len(token) < 4:
+            continue
+        if token not in blob:
+            missing.append(token)
+    return missing
+
+
 def quotes_are_in_transcript(text: str, transcript: dict | None) -> None:
     blob = _normalize(
         ' '.join(str(row.get('text') or '') for row in (transcript or {}).get('utterances') or [])

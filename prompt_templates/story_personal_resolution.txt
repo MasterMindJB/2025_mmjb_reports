@@ -4,8 +4,7 @@ Section: resolution
 Audience: personal
 Write the RESOLUTION: what happened, why it matters for how they talk, and the opening for the next move.
 Use one quote with its timestamp from the evidence. Do not name another participant.
-Return JSON with keys body, transition.
-transition is one unused Resolution>One Thing sentence.
+Do not write digits. The JSON schema after the evidence is the only output.
 
 Evidence:
 {evidence}

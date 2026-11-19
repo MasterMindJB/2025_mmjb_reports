@@ -53,7 +53,10 @@ def _top_framework(values, explanations, name: str) -> str:
         note = str(explanations.loc[name, best] or '').strip()
     line = f'{best} ({score}/5).'
     if note:
-        line = f'{line} {note}'
+        from lib.story_validation import BAN_PHRASES
+
+        if not any(phrase in note.lower() for phrase in BAN_PHRASES):
+            line = f'{line} {note}'
     return line
 
 
@@ -178,21 +181,28 @@ def personal_story(
     bigram = str(signature.get('bigram') or '')
     phrase_quotes = quotes_for_phrase(lines, bigram)
     cards = signature_card(str(signature.get('analysis') or ''))
+    from lib.story_render import count_label, pick_transitions, questions_sentence, share_sentence, turns_sentence
+
     share_pct = int(round(share))
     question_count = int(questions)
     turn_count = int(turns)
+    speakers = {
+        row.get('speaker')
+        for row in (transcript or {}).get('utterances') or []
+        if row.get('speaker')
+    }
+    speaker_count = max(1, len(speakers))
+    ends = [float(row.get('end') or 0) for row in (transcript or {}).get('utterances') or []]
     numbers = [
-        (
-            f'{share_pct}% talk time: you held the floor most of the way, '
-            'more than the rest of the room.'
-        ),
-        (
-            f'{question_count} questions: you stated the point without asking, '
-            'against the session average.'
-        ),
-        f'{turn_count} turns: you entered the conversation {turn_count} times.',
+        share_sentence(share_pct, speaker_count),
+        questions_sentence(question_count, session_question_average),
+        turns_sentence(turn_count),
     ]
-    headline = 'Opened on the plan, then got specific.' if opening else 'Held the floor for most of the session.'
+    if opening:
+        snippet = ' '.join(opening.split()[:5])
+        headline = f"'{snippet}': where you began."
+    else:
+        headline = 'You took your turns in this session.'
     goal = (
         f'Inferred from what you said: you came to move the plan forward. '
         f'At {opening_time} you said "{opening}".'
@@ -206,13 +216,13 @@ def personal_story(
         )
     else:
         challenge = f'You asked {question_count} questions across {turn_count} turns.'
-    if opening and next_text and last_event and last_event['time'] != opening_time:
+    if opening and last_event and last_event['time'] != opening_time:
         drama = (
             f'At {opening_time} you said "{opening}". '
-            'You might already know this about yourself: this phrase often reads as a bid to get moving. '
-            f'Here\'s what\'s interesting: the next speaker said "{next_text}". '
-            'It\'s doing a job for you. It buys a start. It also costs the question. '
-            f'The one moment it didn\'t happen was {last_event["time"]}, '
+            'This phrase often reads as a bid to get moving. '
+            "Here's what's interesting: the next speaker took the next turn. "
+            "It's doing a job for you. It buys a start. It also costs the question. "
+            f"The one moment it didn't happen was {last_event['time']}, "
             'and that\'s when you got specific.'
         )
     elif opening:
@@ -227,18 +237,17 @@ def personal_story(
         if last_event
         else 'The session ended without another turn from you.'
     )
-    one_thing = f'Ask one question before you offer the plan. Target: {target} questions.'
-    why = f'You asked {question_count} questions, so {target} is the halfway step.'
-    transitions = {
-        'after_character': "That's who showed up. Here's what they came to do.",
-        'after_goal': "It didn't go to plan, and not only because of you.",
-        'after_challenge': 'Now the interesting part.',
-        'after_drama': 'So how did it end?',
-        'after_resolution': 'If you change one thing next time, make it this.',
-    }
+    one_thing = f'Ask one question before your second turn. Target: {count_label(target, "question")}.'
+    why = (
+        f'You asked {count_label(question_count, "question")}, '
+        f'so {count_label(target, "question")} is the halfway step.'
+    )
+    transitions = pick_transitions(label)
     draft = draft or {}
     if draft.get('headline'):
         headline = draft['headline']
+    if draft.get('numbers'):
+        numbers = draft['numbers']
     character_body = draft.get('character_body') or ''
     goal = draft.get('goal') or goal
     challenge = draft.get('challenge') or challenge
@@ -246,10 +255,14 @@ def personal_story(
     resolution = draft.get('resolution') or resolution
     one_thing = draft.get('one_thing') or one_thing
     why = draft.get('why') or why
-    transitions.update(draft.get('transitions') or {})
-    resolution = _append_note(resolution, str(info.get('personal_summary') or ''))
-    resolution = _append_note(resolution, str(analysis.get('personal_super_power') or ''))
-    actions = list(info.get('personal_action_items') or [])[:3]
+    if draft.get('transitions'):
+        transitions = draft['transitions']
+    if 'what' in signature or signature.get('computed'):
+        cards = {
+            'what': signature.get('what') or '',
+            'so_what': signature.get('so_what') or '',
+            'now_what': signature.get('now_what') or '',
+        }
     return {
         'name': name,
         'headline': headline,
@@ -267,14 +280,15 @@ def personal_story(
         'one_thing': one_thing,
         'why': why,
         'transitions': transitions,
-        'actions': actions,
+        'session_end_ms': max(ends) if ends else 0,
+        'actions': [],
         'signature': {
             'phrase': bigram,
             'count': int(signature.get('count') or 0),
             'quotes': phrase_quotes[:2],
             **cards,
         },
-        'contributions': list(info.get('personal_key_contributions') or [])[:2],
+        'contributions': [],
         'lines': lines,
         'appendix': {
             'AMASE': _top_framework(framework.get('amase_values'), framework.get('amase_notes'), name),
@@ -312,13 +326,9 @@ def group_story(
     resolution = ''
     one_thing = f'Ask one question back before the next decision. Target: {target}% interaction.'
     why = f'Interaction was {interaction_pct}%, so {target}% is the halfway step.'
-    transitions = {
-        'after_character': "That's who showed up. Here's what they came to do.",
-        'after_goal': "It didn't go to plan, and not only because of you.",
-        'after_challenge': 'Now the interesting part.',
-        'after_drama': 'So how did it end?',
-        'after_resolution': 'If you change one thing next time, make it this.',
-    }
+    from lib.story_render import pick_transitions
+
+    transitions = pick_transitions('group')
     draft = draft or {}
     if draft.get('headline'):
         headline = draft['headline']
@@ -329,9 +339,8 @@ def group_story(
     resolution = draft.get('resolution') or resolution
     one_thing = draft.get('one_thing') or one_thing
     why = draft.get('why') or why
-    transitions.update(draft.get('transitions') or {})
-    goal = _append_note(goal, str(summaries.get('conversation_summary_short') or ''))
-    resolution = _append_note(resolution, str(summaries.get('conversation_summary_long') or ''))
+    if draft.get('transitions'):
+        transitions = draft['transitions']
     return {
         'headline': headline,
         'character': character,

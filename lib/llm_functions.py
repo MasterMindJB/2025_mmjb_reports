@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import os
 from pathlib import Path
 from typing import TypeAlias
@@ -141,13 +142,64 @@ class ConversationSummarizer:
         bigram, count = found
         prompt = self.get_prompt_template(Path('personal_signature_phrase.txt')).format(bigram=bigram)
         examples = signature_examples(speaker_text, bigram)
-        message = prompt if not examples else prompt + '\n\nLines this person actually said:\n' + examples
-        raw = self.llm.invoke(message)
-        analysis = raw.content if hasattr(raw, 'content') else str(raw)
-        if isinstance(analysis, list):
-            analysis = ' '.join(str(part) for part in analysis)
-        analysis = validate_llm_output('personal_signature_phrase', str(analysis))
-        return {'bigram': bigram, 'count': int(count), 'analysis': analysis, 'examples': examples}
+        message = prompt
+        if examples:
+            message += '\n\nLines this person actually said:\n' + examples
+        message += (
+            '\n\nReturn JSON only, with keys what, so_what, now_what. '
+            'Write in second person. If you include an example sentence, copy it from the lines above. '
+            'Do not invent a scene.'
+        )
+        from lib.story_validation import quoted_spans, reject_craft_violations
+
+        parsed = None
+        for _attempt in range(3):
+            raw = self.llm.invoke(message)
+            analysis = raw.content if hasattr(raw, 'content') else str(raw)
+            if isinstance(analysis, list):
+                analysis = ' '.join(str(part) for part in analysis)
+            try:
+                analysis = validate_llm_output('personal_signature_phrase', str(analysis))
+                cleaned = analysis.strip()
+                if cleaned.startswith('```'):
+                    cleaned = re.sub(r'^```(?:json)?\s*', '', cleaned)
+                    cleaned = re.sub(r'\s*```$', '', cleaned)
+                data = json.loads(cleaned)
+                if not isinstance(data, dict):
+                    raise ValueError('signature phrase must be an object')
+                fields = {}
+                for key in ('what', 'so_what', 'now_what'):
+                    value = reject_craft_violations(str(data.get(key) or ''))
+                    lowered = value.lower()
+                    if re.search(r'\b(he|she|his|her|they|their|this person)\b', lowered):
+                        raise ValueError('signature phrase must stay in second person')
+                    for span in quoted_spans(value):
+                        if len(span.split()) < 3 or span.lower() not in speaker_text.lower():
+                            raise ValueError('signature example is not this person\'s words')
+                    fields[key] = value
+                parsed = fields
+                break
+            except (OutputParserException, json.JSONDecodeError, ValueError, TypeError):
+                parsed = None
+        if parsed is None:
+            return {
+                'bigram': bigram,
+                'count': int(count),
+                'analysis': '',
+                'examples': examples,
+                'computed': True,
+                'what': '',
+                'so_what': '',
+                'now_what': '',
+            }
+        return {
+            'bigram': bigram,
+            'count': int(count),
+            'analysis': parsed['what'],
+            'examples': examples,
+            'computed': False,
+            **parsed,
+        }
 
     def speaker_map_rename(self) -> JSON:
         """Shows some information from the speaker maps and asks for the names of the speakers so that the speaker map has real names.

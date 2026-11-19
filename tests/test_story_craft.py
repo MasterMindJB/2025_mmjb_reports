@@ -143,3 +143,78 @@ def test_personal_story_obeys_the_craft_rules():
         reject_craft_violations(line, transcript=transcript, allowed_numbers=allowed, forbidden_names=forbidden)
     assert 'storyteller' not in story['headline'].lower()
     assert 'People who say' not in story['drama']
+    assert 'more than the rest of the room' not in ' '.join(story['numbers'])
+
+
+def test_share_line_follows_the_comparison_and_plural():
+    from lib.story_render import questions_sentence, rate_sentence, share_sentence
+
+    line = share_sentence(17, 7)
+    assert 'near the room average' in line
+    assert 'most of the way' not in line
+    assert 'more than the rest' not in line
+    assert questions_sentence(1, 2).startswith('1 question:')
+    assert '1 questions' not in questions_sentence(1, 2)
+    assert rate_sentence(77, 'participation') == '77% participation'
+    assert 'events' not in rate_sentence(77, 'participation')
+
+
+def test_other_speakers_quote_is_rejected():
+    from lib.story_validation import own_quote
+
+    transcript = {
+        'utterances': [
+            {
+                'speaker': 'A',
+                'text': 'We should try the new onboarding plan.',
+                'start': 0,
+                'end': 4000,
+            },
+            {
+                'speaker': 'B',
+                'text': "It's a feeling and an internal GPS.",
+                'start': 124000,
+                'end': 130000,
+            },
+        ]
+    }
+    with pytest.raises(OutputParserException):
+        own_quote("It's a feeling and an internal GPS.", '2:04', transcript, 'A')
+    with pytest.raises(OutputParserException):
+        own_quote('internal GPS', '2:04', transcript, 'B')
+    assert 'onboarding' in own_quote('We should try the new onboarding plan.', '0:00', transcript, 'A')
+
+
+def test_realistic_fake_has_no_fallbacks_and_a_bad_json_retries():
+    from tests.fakes import FakeLLM, FlakyStoryLLM
+    from lib.story_generation import generate_personal_draft, generate_report_stories, speaker_stats_for_story
+
+    transcript = synthetic_transcript()
+    speaker_map = {
+        'A': {'name': 'Alex Rivera'},
+        'B': {'name': 'Blake Chen'},
+        'C': {'name': 'Casey Quinn'},
+    }
+    stories = generate_report_stories(
+        FakeLLM(),
+        transcript=transcript,
+        speaker_map=speaker_map,
+        participant_labels={'A', 'B'},
+        participation=0.83,
+        interaction=0.42,
+        word_interaction=0.39,
+    )
+    assert stories['fallbacks'] == []
+    assert 'onboarding plan' in stories['personal']['A']['headline'].lower()
+    assert 'events' not in stories['group']['character']
+    flaky = FlakyStoryLLM()
+    draft = generate_personal_draft(
+        flaky,
+        transcript=transcript,
+        label='A',
+        info=speaker_map['A'],
+        stats=speaker_stats_for_story(transcript, speaker_map, 'A'),
+        forbidden_names=['Blake Chen', 'Casey Quinn'],
+    )
+    assert 'character' not in draft['fallback_sections']
+    assert sum('Section: character' in call and 'Audience: personal' in call for call in flaky.calls) >= 2

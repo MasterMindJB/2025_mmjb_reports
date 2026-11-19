@@ -169,10 +169,10 @@ def test_full_flow_keeps_individual_reports_private(tmp_path):
         alex = text_for('Alex Rivera.pdf')
         blake = text_for('Blake Chen.pdf')
         group = text_for('group.pdf')
-        assert 'PERSONAL_SUMMARY_TOKEN_ALEX' in alex
-        assert 'QUOTE_TAG_ALEX' in alex
-        assert 'ACTION_TITLE_ALEX' in alex
-        assert 'SUPERPOWER_TOKEN_Alex_Rivera' in alex
+        assert 'PERSONAL_SUMMARY_TOKEN_ALEX' not in alex
+        assert 'QUOTE_TAG_ALEX' not in alex
+        assert 'ACTION_TITLE_ALEX' not in alex
+        assert 'SUPERPOWER_TOKEN_Alex_Rivera' not in alex
         assert 'AMASE_TOKEN_Alex_Rivera' in alex
         assert 'Your signature phrase:' in alex
         assert 'SIGNATURE_PHRASE_TOKEN' in alex
@@ -190,7 +190,8 @@ def test_full_flow_keeps_individual_reports_private(tmp_path):
         assert 'PERSONAL_SUMMARY_TOKEN_ALEX' not in blake
         assert 'QUOTE_TAG_ALEX' not in blake
         assert 'Alex Rivera' not in blake
-        assert 'GROUP_LONG_TOKEN' in group
+        assert 'GROUP_LONG_TOKEN' not in group
+        assert 'GROUP_SHORT_TOKEN' not in group
         for private in (
             'PERSONAL_SUMMARY_TOKEN_ALEX',
             'PERSONAL_SUMMARY_TOKEN_BLAKE',

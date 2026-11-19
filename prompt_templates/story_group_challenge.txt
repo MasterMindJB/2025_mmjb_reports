@@ -3,8 +3,7 @@
 Section: challenge
 Audience: group
 Write the CHALLENGE for the room. One measured rate from the evidence.
-Return JSON with keys body, transition.
-transition is one unused Challenge>Drama sentence.
+Do not write digits. The JSON schema after the evidence is the only output.
 
 Evidence:
 {evidence}

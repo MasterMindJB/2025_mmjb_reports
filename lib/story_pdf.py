@@ -100,21 +100,35 @@ def _talk_share(story: dict, folder: Path) -> Path:
     return _save_chart(figure, folder, 'talk-share.png')
 
 
+def _clock_label(seconds: float) -> str:
+    whole = max(0, int(seconds))
+    return f'{whole // 60}:{whole % 60:02d}'
+
+
 def _timeline(story: dict, folder: Path) -> Path | None:
     lines = story.get('lines') or []
     if not lines:
         return None
-    figure, axis = plt.subplots(figsize=(5.2, 1.3), facecolor=LIGHT)
+    session_end = float(story.get('session_end_ms') or 0) / 1000
+    if session_end <= 0:
+        session_end = max(float(row.get('end') or 0) for row in lines) / 1000
+    session_end = max(session_end, 1)
+    figure, axis = plt.subplots(figsize=(5.4, 1.6), facecolor=LIGHT)
     axis.set_facecolor(LIGHT)
     for row in lines:
         start = float(row.get('start') or 0) / 1000
         end = float(row.get('end') or start) / 1000
-        axis.barh(0, max(end - start, 0.2), left=start, height=0.4, color=NAVY)
-    axis.set_yticks([])
-    axis.set_xlabel('Seconds', color=MUTED, fontproperties=load_poppins('regular'), fontsize=8)
+        axis.barh(0, max(end - start, 0.2), left=start, height=0.45, color=NAVY)
+    axis.set_xlim(0, session_end)
+    axis.set_xticks([0, session_end])
+    axis.set_xticklabels([_clock_label(0), _clock_label(session_end)])
+    axis.set_yticks([0])
+    axis.set_yticklabels(['You'])
+    axis.set_xlabel('When you spoke', color=MUTED, fontproperties=load_poppins('regular'), fontsize=8)
     axis.tick_params(colors=INK, labelsize=8)
-    for spine in ('top', 'right', 'left'):
+    for spine in ('top', 'right'):
         axis.spines[spine].set_visible(False)
+    axis.spines['left'].set_color(LINE)
     axis.spines['bottom'].set_color(LINE)
     figure.tight_layout()
     return _save_chart(figure, folder, 'turns.png')
@@ -167,11 +181,6 @@ def write_personal_report(pdf, story: dict, chart_dir: Path) -> None:
     _transition(pdf, (story.get('transitions') or {}).get('after_goal'))
     _heading(pdf, 'Challenge')
     _body(pdf, story['challenge'])
-    for item in story.get('contributions') or []:
-        quote = item.get('quote') or ''
-        tag = item.get('tagline') or ''
-        if quote or tag:
-            _body(pdf, f'{tag} "{quote}"'.strip())
     _image(pdf, _timeline(story, chart_dir))
     _transition(pdf, (story.get('transitions') or {}).get('after_challenge'))
     _heading(pdf, 'Drama')
@@ -194,10 +203,6 @@ def write_personal_report(pdf, story: dict, chart_dir: Path) -> None:
     _transition(pdf, (story.get('transitions') or {}).get('after_resolution'))
     _heading(pdf, 'One thing')
     _callout(pdf, story['one_thing'], story['why'])
-    if story.get('actions'):
-        _body(pdf, 'Supporting moves for the next conversation:', size=9)
-        for item in story['actions']:
-            _body(pdf, f"{item.get('title') or 'Next'}. {item.get('action') or ''}".strip(), size=9)
     _heading(pdf, 'Appendix: style lenses')
     _body(pdf, 'These lenses stay in the file for now. Each line is only the top result.')
     for name, line in story['appendix'].items():
@@ -219,12 +224,13 @@ def write_group_story(pdf, story: dict, chord_path, chord_pairs) -> None:
     _heading(pdf, 'Challenge')
     _body(pdf, story['challenge'])
     _transition(pdf, (story.get('transitions') or {}).get('after_challenge'))
+    pdf.add_page()
     _heading(pdf, 'Drama')
     _body(pdf, story.get('drama') or '')
     _body(
         pdf,
         'Who spoke right after whom. A wider ribbon means those two followed each other more often. '
-        'Color is the person who spoke first.',
+        'Color is the person who spoke first. The clock runs from the start of the session to the end.',
     )
     if chord_path and Path(chord_path).is_file():
         _room(pdf, 70)

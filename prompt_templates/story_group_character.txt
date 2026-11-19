@@ -4,8 +4,7 @@ Section: character
 Audience: group
 Write the CHARACTER headline for the whole conversation, 12 words or fewer, then one short paragraph.
 Use the interaction score and the comparison in the evidence. Do not invent a rate.
-Return JSON with keys headline, body, transition.
-transition is one unused Character>Goal sentence.
+Do not write digits. Rates are percents, never a count of events. The JSON schema after the evidence is the only output.
 
 Evidence:
 {evidence}
