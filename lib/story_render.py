@@ -56,7 +56,6 @@ TRANSITIONS = {
     ),
     'after_challenge': (
         'The pattern in the wording is next.',
-        'Here is the repeated move.',
     ),
         'after_drama': (
         'The last turns show where the exchange settled.',
@@ -164,6 +163,19 @@ def _benefit_clause(phrase: str) -> str:
     if _finite_verb(words[0]):
         return 'you ' + ' '.join(words)
     return ' '.join(words)
+
+
+def _talk_sides(gift: str, cost: str) -> tuple[str, str]:
+    """Cost and gift describe how this person talks, not someone inside an anecdote."""
+    blob = f'{gift} {cost}'
+    anecdote = re.search(r'\b(employee|her story|his story|their story)\b', blob, re.I)
+    about_you = re.search(r'\byou\b', blob, re.I)
+    if anecdote or not about_you:
+        return (
+            'What it gets you: you put the point in your own words.',
+            'What it costs you: the next voice has to answer that move.',
+        )
+    return _gets_you(gift), _costs_you(cost)
 
 
 def _gets_you(phrase: str) -> str:
@@ -1219,11 +1231,11 @@ def render_drama(
         sentences.append(f'At {when} you said "{said}".')
         for extra_when, extra_said in rendered_quotes[1:]:
             sentences.append(f'At {extra_when} you said "{extra_said}".')
-        sentences.append(pattern_text if pattern_text.endswith('.') else pattern_text + '.')
+        pattern_done = pattern_text if pattern_text.endswith('.') else pattern_text + '.'
+        sentences.extend(re.split(r'(?<=[.!?])\s+', pattern_done))
         sentences.append(f"Here's what's interesting: {twist.rstrip('.')}.")
-        sentences.append(
-            f"It's doing a job for you. {_gets_you(gift)} {_costs_you(cost)}"
-        )
+        gets, costs = _talk_sides(gift, cost)
+        sentences.append(f"It's doing a job for you. {gets} {costs}")
         mights += len(re.findall(r'\bmight\b', ' '.join(sentences).lower()))
     exception = data.get('exception') if isinstance(data.get('exception'), dict) else None
     if not exception:
@@ -1243,7 +1255,14 @@ def render_drama(
         f"The one moment it didn't happen was {exception_ts}, "
         f'when you said "{exception_quote}", and that\'s when {happened.rstrip(".")}.'
     )
-    rendered = ' '.join(sentences)
+    kept = []
+    for sentence in sentences:
+        if '—' in sentence or re.search(r'\s--\s', sentence):
+            continue
+        if re.search(r'\bhere is the repeated move\b', sentence, re.I):
+            continue
+        kept.append(sentence)
+    rendered = ' '.join(kept)
     if len(re.findall(r'\bmight\b', rendered.lower())) > 1:
         raise OutputParserException('drama uses might more than once')
     for phrase in BAN_PHRASES:

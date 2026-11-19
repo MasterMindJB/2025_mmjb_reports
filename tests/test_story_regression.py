@@ -531,6 +531,35 @@ def test_closing_line_skips_fragments_and_the_next_sentence_is_capitalized():
         )
 
 
+def test_drama_cost_is_about_the_speaker_not_the_employee_in_the_story():
+    opening = 'We should try the new onboarding plan.'
+    rendered = render_personal_section(
+        'drama',
+        {
+            'patterns': [{
+                'quotes': [{'text': opening, 'ts': '0:00'}],
+                'pattern': 'You set the plan in the first line. The room shifted — and then nothing.',
+                'twist': 'the next voice took the turn',
+                'cost': 'the employee endured the pressure',
+                'gift': 'the employee kept the job',
+            }],
+            'exception': {
+                'quote': 'That might work if we start Monday.',
+                'ts': '0:11',
+                'what_happened': 'you named Monday',
+            },
+        },
+        transcript=synthetic_transcript(),
+        label='A',
+        facts=FACTS,
+        forbidden=[],
+    )
+    assert 'employee' not in rendered['drama'].lower()
+    assert 'What it gets you: you put the point in your own words.' in rendered['drama']
+    assert '—' not in rendered['drama']
+    assert 'Here is the repeated move' not in rendered['drama']
+
+
 def test_gift_and_cost_take_a_clause():
     from lib.story_render import _costs_you, _gets_you, turns_sentence
 
