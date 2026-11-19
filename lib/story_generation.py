@@ -325,6 +325,7 @@ def generate_personal_draft(
         question_average=stats['session_question_average'],
         speaker_count=stats['speaker_count'],
     )
+    facts['_quote_log'] = []
     own, _following = _quote_lists(stats['events'])
     # Other people's lines stay out of this prompt. Exact-quote checks still use the transcript.
     evidence = facts_prompt(facts, own, [])

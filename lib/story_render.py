@@ -1186,7 +1186,7 @@ def render_drama(
     sentences = []
     mights = 0
     seen_quotes: set[str] = set()
-    seen_turns: set[str] = set()
+    seen_turns: set[str] = set(_quote_log(facts) or [])
     allowed_numbers = {
         str(item['value'])
         for item in (facts or {}).values()
@@ -1268,6 +1268,11 @@ def render_drama(
     for phrase in BAN_PHRASES:
         if phrase in rendered.lower():
             raise OutputParserException(f'drama contains {phrase!r}')
+    log = _quote_log(facts)
+    if log is not None:
+        for turn_id in seen_turns:
+            if turn_id not in log:
+                log.append(turn_id)
     return capitalize_sentences(rendered)
 
 
@@ -1312,6 +1317,28 @@ def _next_distinct_turn(transcript, label: str, used: set[str]) -> tuple[str, st
     if not pool:
         return None
     return pool[0]
+
+
+def _quote_log(facts: dict | None) -> list | None:
+    log = (facts or {}).get('_quote_log')
+    return log if isinstance(log, list) else None
+
+
+def _fresh_quote(text: str, timestamp: str, transcript, label: str, facts: dict) -> tuple[str, str]:
+    """A quote whose turn has not already been cited in this report."""
+    log = _quote_log(facts)
+    used = set(log or [])
+    shown, turn_id = own_quote_turn(text, timestamp, transcript, label)
+    if turn_id in used:
+        replacement = _next_distinct_turn(transcript, label, used)
+        if replacement is None:
+            raise OutputParserException('quote reuses a turn already cited in this report')
+        when, shown, turn_id = replacement
+    else:
+        when = str(timestamp or '').strip()
+    if log is not None and turn_id not in log:
+        log.append(turn_id)
+    return when, shown
 
 
 def _drama_quote(text: str, timestamp: str, transcript, label: str, used: set[str]) -> tuple[str, str, str]:
@@ -1440,9 +1467,11 @@ def render_personal_section(section: str, data: dict, *, transcript, label: str,
             forbidden_names=forbidden, transcript=transcript, speaker_label=label,
         )
         quote = data.get('quote') if isinstance(data.get('quote'), dict) else {}
-        text = own_quote(str(quote.get('text') or ''), str(quote.get('ts') or ''), transcript, label)
+        when, text = _fresh_quote(
+            str(quote.get('text') or ''), str(quote.get('ts') or ''), transcript, label, facts
+        )
         sentence = goal_line(claim, personal=True).rstrip('.')
-        return {'goal': capitalize_sentences(f'{sentence}. At {quote.get("ts")} you said "{text}".')}
+        return {'goal': capitalize_sentences(f'{sentence}. At {when} you said "{text}".')}
     if section == 'challenge':
         claim = _prose(
             str(data.get('claim') or ''), corpus, 'claim',
@@ -1466,10 +1495,12 @@ def render_personal_section(section: str, data: dict, *, transcript, label: str,
             forbidden_names=forbidden, transcript=transcript, speaker_label=label,
         )
         quote = data.get('quote') if isinstance(data.get('quote'), dict) else {}
-        text = own_quote(str(quote.get('text') or ''), str(quote.get('ts') or ''), transcript, label)
+        when, text = _fresh_quote(
+            str(quote.get('text') or ''), str(quote.get('ts') or ''), transcript, label, facts
+        )
         happened = _what_happened(claim)
         return {'resolution': capitalize_sentences(
-            f'{happened.rstrip(".")}. At {quote.get("ts")} you said "{text}".'
+            f'{happened.rstrip(".")}. At {when} you said "{text}".'
         )}
     if section == 'one_thing':
         sentence, why = render_one_thing(

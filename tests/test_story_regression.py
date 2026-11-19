@@ -1450,6 +1450,32 @@ def test_speaker_e_fragment_cannot_replace_the_hosts_thanks_closer():
     assert 'et cetera' not in chosen['text']
 
 
+def test_goal_and_resolution_cannot_cite_the_same_turn():
+    opening = 'We should try the new onboarding plan.'
+    facts = {**FACTS, '_quote_log': []}
+    goal = render_personal_section(
+        'goal',
+        {'claim': 'identify the onboarding plan', 'quote': {'text': opening, 'ts': '0:00'}},
+        transcript=synthetic_transcript(),
+        label='A',
+        facts=facts,
+        forbidden=[],
+    )
+    resolution = render_personal_section(
+        'resolution',
+        {'claim': 'Monday became the stake', 'quote': {'text': opening, 'ts': '0:00'}},
+        transcript=synthetic_transcript(),
+        label='A',
+        facts=facts,
+        forbidden=[],
+    )
+    assert '0:00' in goal['goal']
+    assert '0:11' in resolution['resolution']
+    assert 'Monday' in resolution['resolution']
+    assert goal['goal'].count('0:00') == 1
+    assert '0:00' not in resolution['resolution']
+
+
 def test_resolution_uses_the_host_closer_and_a_what_happened_clause():
     from lib.story_generation import _coerce_payload
     from lib.story_render import render_group_section
