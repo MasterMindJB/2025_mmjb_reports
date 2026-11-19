@@ -209,7 +209,8 @@ def test_full_flow_keeps_individual_reports_private(tmp_path):
             assert private not in group
         assert 'MasterMind' not in group
         assert 'Harkness Training Solutions' in group
-        assert 'Top pairs, each direction' in group
+        assert 'Top pairs, each direction' not in group
+        assert 'Most exchanges ran through' in group
 
         sent = client.post(
             '/sessions/1/send',
@@ -540,6 +541,85 @@ def test_generate_session_substitutes_a_repeated_drama_turn(tmp_path):
     drama = captured['stories']['personal']['S']['drama']
     assert 'budget can wait' in drama
     assert 'different turn' not in drama
+
+
+def test_short_four_speaker_session_keeps_drama_without_a_counter(tmp_path):
+    """One substantive turn drops the counter-moment instead of stubbing the section."""
+    from app.analysis import GeminiAnalysis
+    from app.services import generate_session
+    from lib.session_window import parse_clock_ms
+    from tests.fakes import FakeLLM
+
+    class SameTurnDramaLLM(FakeLLM):
+        def _reply(self, text: str) -> str:
+            reply = super()._reply(text)
+            if 'BATCH:' in text and 'BATCH: group' not in text and 'FACTS' in text:
+                payload = json.loads(reply)
+                drama = payload.get('drama') or {}
+                quotes = ((drama.get('patterns') or [{}])[0].get('quotes') or [{}])
+                if quotes and quotes[0].get('text'):
+                    drama['exception'] = {
+                        'quote': quotes[0]['text'],
+                        'ts': quotes[0]['ts'],
+                        'what_happened': 'you named the plan',
+                    }
+                    payload['drama'] = drama
+                return json.dumps(payload)
+            return reply
+
+    captured = {}
+
+    class CaptureRenderer:
+        def render(self, **kwargs):
+            captured['stories'] = getattr(kwargs['bundle'], 'stories', {})
+            return []
+
+    rows = [
+        {'speaker': 'S', 'text': 'We should try the new onboarding plan before the hour ends.', 'start': 0, 'end': 4000},
+        {'speaker': 'L', 'text': 'The budget can wait until Monday if the room agrees.', 'start': 5000, 'end': 9000},
+        {'speaker': 'L', 'text': 'I can own the numbers from here.', 'start': 10000, 'end': 14000},
+        {'speaker': 'T', 'text': 'Name the owner before the next decision lands.', 'start': 15000, 'end': 19000},
+        {'speaker': 'T', 'text': 'That line still needs one reply from across the room.', 'start': 20000, 'end': 24000},
+        {'speaker': 'T', 'text': 'I will draft the timeline after this turn.', 'start': 25000, 'end': 29000},
+        {'speaker': 'H', 'text': 'Thank you all for coming to the session today.', 'start': 30000, 'end': 34000},
+    ]
+    app, _transcription = build_client(tmp_path)
+    app.state.analysis = GeminiAnalysis(llm=SameTurnDramaLLM())
+    app.state.renderer = CaptureRenderer()
+    db = app.state.db
+    transcript_path = tmp_path / 'transcript.json'
+    transcript_path.write_text(json.dumps({'utterances': rows}), encoding='utf-8')
+    session_id = db.create_session(
+        client='Full Sail', group_name='Cohort', session_name='Short', session_date='2026-11-18',
+        speakers_expected=4, recording_path='', recording_filename='',
+        created_at='2026-11-19T00:00:00+00:00', window_end_ms=parse_clock_ms('2:00'),
+    )
+    db.update_session(session_id, transcript_path=str(transcript_path), status='naming')
+    db.replace_speakers(
+        session_id,
+        [{'label': label, 'samples': []} for label in ('S', 'L', 'T', 'H')],
+    )
+    people = {
+        'S': ('Stephen', 'stephen@example.com', 'participant'),
+        'L': ('Leslie', 'leslie@example.com', 'participant'),
+        'T': ('Steve', 'steve@example.com', 'participant'),
+        'H': ('Host', '', 'host'),
+    }
+    for speaker in db.list_speakers(session_id):
+        name, email, role = people[speaker['label']]
+        db.update_speaker(speaker['id'], name=name, email=email, role=role, name_status='confirmed')
+    generate_session(
+        db, app.state.analysis, app.state.renderer, app.state.transcription, app.state.settings, session_id,
+    )
+    personal = captured['stories']['personal']
+    assert 'onboarding plan' in personal['S']['drama']
+    assert "didn't happen" not in personal['S']['drama']
+    for label in ('S', 'L', 'T'):
+        assert 'different turn' not in personal[label]['drama']
+        assert personal[label]['drama']
+    headlines = [personal[label]['headline'] for label in ('S', 'L', 'T')]
+    assert len(headlines) == len(set(headlines))
+    assert 'You set the point. Name it.' not in headlines
 
 
 def test_generate_session_stamps_the_host_before_the_closer(tmp_path):

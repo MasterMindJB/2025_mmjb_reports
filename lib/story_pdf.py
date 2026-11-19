@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import matplotlib
@@ -90,10 +91,38 @@ def _gap(pdf) -> float:
     return float(getattr(pdf, '_story_gap', 1.0) or 1.0)
 
 
+def _plain(text: str) -> str:
+    """Customer text does not say bigram or phatic marker."""
+    text = re.sub(r'\bphatic markers\b', 'filler words', text or '', flags=re.I)
+    text = re.sub(r'\bphatic marker\b', 'filler word', text, flags=re.I)
+    text = re.sub(r'\bbigrams\b', 'phrases', text, flags=re.I)
+    text = re.sub(r'\bbigram\b', 'phrase', text, flags=re.I)
+    return text
+
+
+def _clocks(text: str) -> list[str]:
+    return re.findall(r'\b\d+:\d{2}(?::\d{2})?\b', text or '')
+
+
+def _keep_fresh(text: str, used: set[str]) -> str:
+    """Drop sentences whose timestamp was already used in this report."""
+    if not text:
+        return ''
+    sentences = re.split(r'(?<=[.!?])\s+', text.strip())
+    kept = []
+    for sentence in sentences:
+        stamps = _clocks(sentence)
+        if stamps and any(stamp in used for stamp in stamps):
+            continue
+        kept.append(sentence)
+        used.update(stamps)
+    return ' '.join(kept)
+
+
 def _body(pdf, text: str, size: int = 11) -> None:
     from lib.story_render import lead_sentence
 
-    text = lead_sentence(text)
+    text = lead_sentence(_plain(text))
     if size == 11:
         size = int(getattr(pdf, '_body_size', 11) or 11)
     if not text:
@@ -115,10 +144,13 @@ def _body(pdf, text: str, size: int = 11) -> None:
 
 
 def _pull_quote(pdf, text: str, when: str = '') -> None:
-    """An indented quote. The body stays 11pt with 1.4 line spacing."""
+    """An indented quote under its heading. The body stays 11pt with 1.4 line spacing."""
+    from lib.data_story import sentence_around
     from lib.story_render import lead_sentence
 
-    text = lead_sentence(text)
+    if getattr(pdf, '_pending_heading', None):
+        _flush_heading(pdf)
+    text = lead_sentence(_plain(sentence_around(text, text)))
     if not text:
         return
     pdf.set_font('Poppins', '', 11)
@@ -181,7 +213,7 @@ def _talk_share(story: dict, folder: Path) -> Path:
     """Ranked talk time. This person is navy, everyone else is gray, with an even-share line."""
     share = max(0, min(100, float(story.get('share') or 0)))
     roster = list(story.get('roster_shares') or [])
-    name = str(story.get('name') or 'You')
+    name = _display_name(story.get('name') or 'You')
     if not any(item[0] == name for item in roster):
         roster.append((name, share))
     roster.sort(key=lambda item: item[1])
@@ -195,9 +227,9 @@ def _talk_share(story: dict, folder: Path) -> Path:
     axis.barh(labels, values, color=colors, height=0.55)
     axis.axvline(even, color=SKY, linestyle='--', linewidth=1)
     finding = (
-        f'{name.split()[0]} spoke more than an even share of {even:.0f}%.'
+        f'{name} spoke more than an even share of {even:.0f}%.'
         if share >= even
-        else f'{name.split()[0]} spoke less than an even share of {even:.0f}%.'
+        else f'{name} spoke less than an even share of {even:.0f}%.'
     )
     axis.set_title(finding, color=INK, fontproperties=load_poppins('semibold'), fontsize=9, loc='left')
     axis.tick_params(colors=INK, labelsize=8)
@@ -325,6 +357,24 @@ def _appendix_block(pdf, lines: list[str], size: int, columns: int) -> None:
         pdf.note_y()
 
 
+def _display_name(name: str) -> str:
+    """Drop a leading honorific so a chart title does not stop at 'Dr.'."""
+    parts = str(name or 'You').split()
+    honorifics = {'dr', 'prof', 'mr', 'ms', 'mrs', 'professor'}
+    while parts and parts[0].lower().rstrip('.') in honorifics:
+        parts.pop(0)
+    return ' '.join(parts) or str(name or 'You')
+
+
+def _specific_headline(story: dict) -> str:
+    source = f"{story.get('drama') or ''} {story.get('goal') or ''}"
+    word = next(
+        (token.lower() for token in re.findall(r"[A-Za-z']+", source) if len(token) > 5),
+        'point',
+    )
+    return f'You name {word}.'
+
+
 def _short_headline(share: int, role: str) -> str:
     role = (role or '').lower()
     if role in {'facilitator', 'host', 'moderator'}:
@@ -358,34 +408,49 @@ def write_personal_report(
     pdf.add_page()
     pdf.set_font('Poppins', '', 11)
     pdf.set_text_color(20, 33, 74)
-    headline = str(story.get('headline') or '')
-    if len(headline.split()) > 6:
-        headline = _short_headline(int(story.get('share') or 0), story.get('role') or 'participant')
+    headline = str(story.get('short_headline') or story.get('headline') or '')
+    if not headline or headline == 'You set the point. Name it.':
+        headline = _specific_headline(story)
     pdf.set_font('Poppins', 'b', 16)
     pdf.multi_cell(w=0, h=pdf.font_size * 1.2, text=headline, align='L')
     pdf.ln(1)
+    used_turns: set[str] = set()
+    drama = str(story.get('drama') or '')
+    cost = ''
+    move = drama
+    if 'What it costs you' in drama:
+        before, _, after = drama.partition('What it costs you')
+        move = before.strip()
+        cost = ('What it costs you' + after).strip()
+    from lib.story_render import personal_big_thing
+
     _heading(pdf, '1 big thing')
-    big = story.get('big') or story.get('character_body') or story.get('goal') or ''
-    _body(pdf, str(big).split('. ')[0].rstrip('.') + ('.' if big else ''))
+    _body(pdf, _keep_fresh(personal_big_thing(move), used_turns) or personal_big_thing(move))
+    from lib.story_render import narrative_text
+
     _heading(pdf, 'Why it matters')
-    _body(pdf, story.get('goal') or '')
-    why_line = story.get('why') or ''
-    if why_line:
-        _body(pdf, why_line)
+    _body(pdf, narrative_text(_keep_fresh(str(story.get('goal') or ''), used_turns)))
     _heading(pdf, 'By the numbers')
-    _body(pdf, 'Interaction % is how often a turn moved to someone new.')
     for line in (story.get('numbers') or [])[:3]:
         _body(pdf, line)
     _image(pdf, _talk_share(story, chart_dir))
     _heading(pdf, 'What you said')
     quotes = story.get('pull_quotes') or (story.get('signature') or {}).get('quotes') or []
-    if quotes:
-        for quote in quotes[:2]:
-            _pull_quote(pdf, str(quote))
-    else:
-        _pull_quote(pdf, story.get('drama') or '')
+    shown = 0
+    for quote in quotes:
+        fresh = _keep_fresh(str(quote), used_turns)
+        if not fresh:
+            continue
+        _pull_quote(pdf, fresh)
+        shown += 1
+        if shown >= 2:
+            break
+    if shown == 0:
+        _pull_quote(pdf, _keep_fresh(move, used_turns) or move)
     _heading(pdf, 'Yes, but')
-    _body(pdf, story.get('challenge') or '')
+    _body(pdf, narrative_text(_keep_fresh(str(story.get('challenge') or ''), used_turns)))
+    if cost:
+        _body(pdf, _keep_fresh(cost, used_turns) or cost)
     _heading(pdf, 'Your next rep')
     _body(pdf, story.get('one_thing') or '')
     if story.get('why') and story.get('why') not in (story.get('one_thing') or ''):
@@ -401,14 +466,15 @@ def write_personal_report(
         from lib.report_stats import display_bigram
 
         _body(pdf, f'You said "{display_bigram(str(card["phrase"]))}" {card.get("count") or 0} times.')
-    from lib.story_render import clip_clause
-
-    shown = 0
+    shown_examples = 0
     for quote in card.get('quotes') or []:
-        if shown >= 2:
+        if shown_examples >= 2:
             break
-        _body(pdf, clip_clause(str(quote), 25))
-        shown += 1
+        fresh = _keep_fresh(str(quote), used_turns)
+        if not fresh:
+            continue
+        _pull_quote(pdf, fresh)
+        shown_examples += 1
     _image(pdf, _phrase_chart(story, chart_dir), width=0.55)
     for label, key in (('What?', 'what'), ('So, what?', 'so_what'), ('Now, what?', 'now_what')):
         if card.get(key):
@@ -444,13 +510,26 @@ def fit_personal_report(story: dict, chart_dir: Path, make_pdf):
     return chosen
 
 
-def _chord_hero(pdf, chord_path) -> None:
+def _top_exchange(pairs) -> str:
+    scores: dict[str, int] = {}
+    for left, right, forward, back, *rest in pairs or []:
+        weight = int(forward or 0) + int(back or 0)
+        scores[str(left)] = scores.get(str(left), 0) + weight
+        scores[str(right)] = scores.get(str(right), 0) + weight
+    if not scores:
+        return ''
+    return max(scores, key=lambda name: (scores[name], name))
+
+
+def _chord_hero(pdf, chord_path, pairs=None) -> None:
     """The diagram sits under the headline. It stays on this page, scaled to leave room below."""
-    _body(
-        pdf,
-        'Who spoke right after whom. A wider ribbon means those two followed each other more often. '
-        'Color is the person who spoke first.',
+    top = _display_name(_top_exchange(pairs))
+    finding = (
+        f'Most exchanges ran through {top}.'
+        if top
+        else 'Who spoke right after whom. A wider ribbon means those two followed each other more often.'
     )
+    _body(pdf, finding)
     pdf._chord_page = pdf.page
     if not chord_path or not Path(chord_path).is_file():
         return
@@ -462,7 +541,8 @@ def _chord_hero(pdf, chord_path) -> None:
             px_w, px_h = image.size
         if px_w and px_h:
             height = width * px_h / px_w
-            cap = max(70, _remaining(pdf) - 46)
+            # Leave the story on this page. The pair table no longer fills a second page.
+            cap = max(70, min(100, _remaining(pdf) - 140))
             if height > cap:
                 width = width * cap / height
     except (OSError, ValueError):
@@ -487,23 +567,24 @@ def write_group_story(pdf, story: dict, chord_path, chord_pairs, *, gap: float =
     pdf.ln(1)
     if hasattr(pdf, 'note_y'):
         pdf.note_y()
-    _chord_hero(pdf, chord_path)
-    _heading(pdf, '1 big thing')
-    _body(pdf, story['character'])
-    _transition(pdf, (story.get('transitions') or {}).get('after_character'))
-    from lib.pdf_functions import _add_direction_table
+    _chord_hero(pdf, chord_path, chord_pairs)
+    from lib.story_render import narrative_text
 
-    _add_direction_table(pdf, (chord_pairs or [])[:4])
+    _heading(pdf, '1 big thing')
+    _body(pdf, narrative_text(story['character'], big=True))
+    _heading(pdf, 'By the numbers')
+    for line in story.get('numbers') or []:
+        _body(pdf, line)
     if hasattr(pdf, 'note_y'):
         pdf.note_y()
     _heading(pdf, 'Why it matters')
-    _body(pdf, story['goal'])
+    _body(pdf, narrative_text(story['goal']))
     _heading(pdf, 'Yes, but')
-    _body(pdf, story['challenge'])
+    _body(pdf, narrative_text(story['challenge']))
     if story.get('drama'):
-        _body(pdf, story['drama'])
+        _body(pdf, narrative_text(story['drama']))
     if story.get('resolution'):
-        _body(pdf, story['resolution'])
+        _body(pdf, narrative_text(story['resolution']))
     _heading(pdf, 'Your next rep')
     _body(pdf, story['one_thing'])
     if story.get('why'):

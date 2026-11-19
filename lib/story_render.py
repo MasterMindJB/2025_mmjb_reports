@@ -70,7 +70,7 @@ TRANSITIONS = {
 GROUP_TRANSITIONS = {
     'after_character': (
         'The numbers describe the room. The aim comes next.',
-        'Those rates describe this session.',
+        'The aim comes next.',
     ),
     'after_goal': (
         'Here is what made the exchange hard.',
@@ -316,7 +316,7 @@ def verb_phrase(claim: str) -> str:
         if len(words_out) > 20:
             phrase = ' '.join(words_out[:20])
         if re.match(r'^(?:feel|live) rather than\b', phrase, re.I):
-            phrase = 'share a flexible aim rather than ' + phrase.split('rather than', 1)[1].strip()
+            return 'AIM:' + 'a flexible aim rather than ' + phrase.split('rather than', 1)[1].strip()
         return phrase
     phrase = text.strip().rstrip('.')
     if phrase[:1].isupper():
@@ -329,9 +329,7 @@ def verb_phrase(claim: str) -> str:
         first = re.sub(r'[^\w]', '', words_out[0])
         if _base_verb(first) or _tagged_verb(first):
             return phrase
-        if _clause_has_verb(phrase):
-            return f'make the case that {phrase}'
-        return f'share {phrase}'
+        return 'AIM:' + phrase
     raise OutputParserException('goal must be a verb phrase starting with a base verb')
 
 
@@ -348,8 +346,13 @@ def _what_happened(claim: str) -> str:
 
 
 def goal_line(claim: str, *, personal: bool = False) -> str:
-    """'The room set out to <verb phrase>.' A wrapped sentence is not a second wrapper."""
+    """'The room set out to <verb phrase>.' A non-verb phrase is 'Your aim: ...', never 'share <verb>'."""
     phrase = verb_phrase(claim)
+    if phrase.startswith('AIM:'):
+        bare = phrase[4:].strip()
+        if personal:
+            return f'Your aim: {bare}.'
+        return f"The room's aim: {bare}."
     subject = 'You' if personal else 'The room'
     return f'{subject} set out to {phrase}.'
 
@@ -756,15 +759,17 @@ def room_average(speaker_count: int) -> int:
 
 
 def share_relation(share: int, speaker_count: int) -> str:
+    """Talk share against an even share of 1/N. 'Near' is only ±2 points."""
     average = room_average(speaker_count)
-    gap = int(share) - average
-    if abs(gap) <= 5:
+    gap = int(round(int(share) - average))
+    if abs(gap) <= 2:
         return 'near the room average'
-    if gap > 0 and int(share) >= 40:
-        return 'above the room average, and you held the floor most of the way'
+    times = (int(share) / average) if average else 0
+    if times >= 1.5:
+        return f'about {int(round(times))}× an even share of {average}%'
     if gap > 0:
-        return 'above the room average'
-    return 'below the room average'
+        return f'{gap} points above an even share of {average}%'
+    return f'{abs(gap)} points below an even share of {average}%'
 
 
 def share_sentence(share: int, speaker_count: int) -> str:
@@ -785,11 +790,18 @@ def questions_sentence(count: int, average: int) -> str:
     return f'{label}: {relation}.'
 
 
-def turns_sentence(count: int) -> str:
+def turns_sentence(count: int, median: int | None = None) -> str:
     label = count_label(count, 'turn')
-    if int(count) == 1:
-        return f'{label}: you came in once.'
-    return f'{label}: you came in {int(count)} times.'
+    if median is None:
+        if int(count) == 1:
+            return f'{label}: you came in once.'
+        return f'{label}: you came in {int(count)} times.'
+    gap = int(count) - int(median)
+    if gap == 0:
+        return f'{label}: the same as the room median of {int(median)}.'
+    if gap > 0:
+        return f'{label}: {gap} above the room median of {int(median)}.'
+    return f'{label}: {abs(gap)} below the room median of {int(median)}.'
 
 
 def rate_sentence(value: int, name: str) -> str:
@@ -828,32 +840,102 @@ def group_headline_is_personal(text: str) -> bool:
     return bool(_PERSON_HEADLINE.search(text or ''))
 
 
+_NARRATIVE_JARGON = re.compile(r'\b(interaction|participation|talk time)\b', re.I)
+_NARRATIVE_FILLER = re.compile(r'\bthose rates describe this session\b', re.I)
+
+
+def _outside_quotes(text: str) -> str:
+    """Exact quotes stay in the story. The rules apply to the words around them."""
+    return re.sub(r'(?:"[^"]*"|“[^”]*”)', '', text or '')
+
+
+def narrative_problems(text: str, *, big: bool = False) -> list[str]:
+    """A story section may not stack percentages or name a metric, and 1 big thing asks something."""
+    problems = []
+    prose = _outside_quotes(text or '')
+    if _NARRATIVE_FILLER.search(prose):
+        problems.append('filler')
+    if _NARRATIVE_JARGON.search(prose):
+        problems.append('metric jargon')
+    used = 0
+    for sentence in re.split(r'(?<=[.!?])\s+', (text or '').strip()):
+        count = len(re.findall(r'\d+\s*%', _outside_quotes(sentence)))
+        used += count
+        if count >= 2:
+            problems.append('two percentages in one sentence')
+            break
+    if used > 2 and 'two percentages in one sentence' not in problems:
+        problems.append('more than two percentages in the section')
+    if big and '?' not in prose:
+        problems.append('no question')
+    return problems
+
+
+def narrative_text(text: str, *, big: bool = False) -> str:
+    """Drop metric dumps. Keep a grounded sentence, and keep one question on 1 big thing."""
+    kept = []
+    used = 0
+    for sentence in re.split(r'(?<=[.!?])\s+', (text or '').strip()):
+        if not sentence:
+            continue
+        outside = _outside_quotes(sentence)
+        if _NARRATIVE_JARGON.search(outside) or _NARRATIVE_FILLER.search(outside):
+            continue
+        count = len(re.findall(r'\d+\s*%', outside))
+        if count >= 2 or used + count > 2:
+            continue
+        used += count
+        kept.append(sentence)
+    result = ' '.join(kept).strip()
+    if big and '?' not in _outside_quotes(result):
+        result = (result.rstrip('.') + '. ' if result else '') + 'Next time, who will draw that voice in earlier?'
+    return result
+
+
 def group_character_copy(facts: dict) -> str:
-    """Two or three sentences from the room's rates, not one bare percentage."""
-    interaction = int((facts.get('interaction') or {}).get('value') or 0)
-    participation = int((facts.get('participation') or {}).get('value') or 0)
+    """The group's 1 big thing: the pattern, the moment, and one invitation. No metric dump."""
     portrait = facts.get('_portrait') or {}
-    sentences = [
-        (
-            f'{interaction}% interaction is how often a turn moved to someone new, '
-            f'beside {participation}% participation.'
-        )
-    ]
     pair = portrait.get('pair') or ()
+    least = portrait.get('least') or 'the quietest voice'
     if len(pair) >= 2 and pair[0] and pair[1]:
-        sentences.append(f'{pair[0]} and {pair[1]} followed each other more than any other pair.')
-    least = portrait.get('least')
-    low = portrait.get('low_share')
-    high = portrait.get('high_share')
-    if least and low is not None and high is not None:
-        verb = 'were' if ' and ' in str(least) else 'was'
-        sentences.append(
-            f'{least} {verb} the least connected, and talk time ran from {int(low)}% to {int(high)}%.'
-        )
-    elif least:
-        verb = 'were' if ' and ' in str(least) else 'was'
-        sentences.append(f'{least} {verb} the least connected voice in the room.')
-    return ' '.join(sentences[:3])
+        pattern = f'Most of the talk ran between {pair[0]} and {pair[1]}, while {least} spoke least.'
+    else:
+        pattern = f'The talk stayed with a few voices, while {least} spoke least.'
+    closing = facts.get('_closing') or {}
+    name = str(closing.get('name') or '').strip()
+    quote = str(closing.get('text') or '').strip()
+    if name and quote:
+        mattered = f'{name} still delivered the line that closed the session: "{quote}".'
+    elif name:
+        mattered = f'{name} still delivered the line that closed the session.'
+    else:
+        mattered = 'The last voice still had to land the point the room had been circling.'
+    invite = f'Next time, who will draw {least} in earlier?'
+    return f'{pattern} {mattered} {invite}'
+
+
+def personal_big_thing(drama: str) -> str:
+    """Pattern, the moment it showed up, and an invitation. One question, no metric names."""
+    kept = []
+    used_percents = 0
+    for sentence in re.split(r'(?<=[.!?])\s+', (drama or '').strip()):
+        if not sentence or 'What it costs you' in sentence:
+            continue
+        if _NARRATIVE_JARGON.search(sentence) or _NARRATIVE_FILLER.search(sentence):
+            continue
+        count = len(re.findall(r'\d+\s*%', sentence))
+        if used_percents + count > 2:
+            continue
+        used_percents += count
+        kept.append(sentence)
+        if len(kept) == 2:
+            break
+    text = ' '.join(kept).strip()
+    if not text:
+        text = 'You made one move the room could hear.'
+    if '?' not in _outside_quotes(text):
+        text = text.rstrip('.') + '. Next time, what would you hand off one turn sooner?'
+    return text
 
 
 def _no_digits(text: str, label: str, allowed: set[str] | None = None) -> str:
@@ -1271,23 +1353,25 @@ def render_drama(
         sentences.append(f"It's doing a job for you. {gets} {costs}")
         mights += len(re.findall(r'\bmight\b', ' '.join(sentences).lower()))
     exception = data.get('exception') if isinstance(data.get('exception'), dict) else None
-    if not exception:
-        raise OutputParserException('drama needs an exception')
-    exception_ts, exception_quote, exception_turn = _drama_counter(
-        str(exception.get('quote') or ''),
-        str(exception.get('ts') or ''),
-        transcript,
-        label,
-        seen_turns,
-    )
-    happened = _prose(
-        str(exception.get('what_happened') or ''), corpus, 'what_happened',
-        forbidden_names=forbidden, transcript=transcript, speaker_label=label,
-    )
-    sentences.append(
-        f"The one moment it didn't happen was {exception_ts}, "
-        f'when you said "{exception_quote}", and that\'s when {happened.rstrip(".")}.'
-    )
+    one_turn = len(_speaker_turns(transcript, label)) < 2
+    if not one_turn:
+        if not exception:
+            raise OutputParserException('drama needs an exception')
+        exception_ts, exception_quote, exception_turn = _drama_counter(
+            str(exception.get('quote') or ''),
+            str(exception.get('ts') or ''),
+            transcript,
+            label,
+            seen_turns,
+        )
+        happened = _prose(
+            str(exception.get('what_happened') or ''), corpus, 'what_happened',
+            forbidden_names=forbidden, transcript=transcript, speaker_label=label,
+        )
+        sentences.append(
+            f"The one moment it didn't happen was {exception_ts}, "
+            f'when you said "{exception_quote}", and that\'s when {happened.rstrip(".")}.'
+        )
     kept = []
     for sentence in sentences:
         if '—' in sentence or re.search(r'\s--\s', sentence):
@@ -1522,7 +1606,15 @@ def render_personal_section(section: str, data: dict, *, transcript, label: str,
         if inverted:
             raise OutputParserException(inverted)
         line = str(facts[key]['line']).rstrip('.')
-        return {'challenge': capitalize_sentences(f'{line}. {claim.rstrip(".")}.')}
+        claim_text = claim.rstrip('.')
+        if narrative_problems(line + '.'):
+            text = capitalize_sentences(f'{claim_text}.')
+        else:
+            text = capitalize_sentences(f'{line}. {claim_text}.')
+        problems = [item for item in narrative_problems(text) if item != 'no question']
+        if problems:
+            raise OutputParserException(f'challenge {problems[0]}')
+        return {'challenge': text}
     if section == 'drama':
         return {'drama': render_drama(data, transcript, label, corpus, forbidden, facts)}
     if section == 'resolution':
@@ -1632,13 +1724,14 @@ def render_group_section(section: str, data: dict, *, transcript, facts: dict, c
             raise OutputParserException(
                 'group challenge must use words; the rate is already in the facts'
             )
-        line = str(facts[key]['line']).rstrip('.')
-        return {
-            'challenge': capitalize_sentences(
-                f'{line}. {claim.rstrip(".")}. '
-                'A turn could finish without an answer from across the room.'
-            )
-        }
+        claim_text = claim.rstrip('.')
+        text = capitalize_sentences(
+            f'{claim_text}. A turn could finish without an answer from across the room.'
+        )
+        problems = [item for item in narrative_problems(text) if item != 'no question']
+        if problems:
+            raise OutputParserException(f'group challenge {problems[0]}')
+        return {'challenge': text}
     if section == 'drama':
         note = _prose(str(data.get('pattern_note') or ''), corpus, 'pattern_note')
         if note.lower().strip('.') == 'who talks to whom, and who nobody answered':

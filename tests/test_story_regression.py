@@ -180,7 +180,8 @@ def test_group_character_accepts_one_fact_and_the_page_holds_the_chord(tmp_path)
         facts=facts,
         cast='Who talks to whom.',
     )
-    assert '42% interaction' in rendered['character']
+    assert 'interaction' not in rendered['character'].lower()
+    assert '?' in rendered['character']
     resolved = render_group_section(
         'resolution',
         {'claim': 'the budget held'},
@@ -396,7 +397,8 @@ def test_group_headline_and_halfway_target_are_about_the_room():
         cast='Who talks to whom.',
     )
     assert 'creative' not in replaced['headline'].lower()
-    assert '20% interaction' in replaced['character']
+    assert 'interaction' not in replaced['character'].lower()
+    assert '?' in replaced['character']
     assert 'Alex Rivera and Blake Chen' in replaced['character']
     target, norm, name = group_halfway_target(20, 80, 40)
     assert target == 50
@@ -420,7 +422,8 @@ def test_group_headline_and_halfway_target_are_about_the_room():
     )
     sentences = [part for part in rendered['character'].split('.') if part.strip()]
     assert 2 <= len(sentences) <= 3
-    assert '20% interaction' in rendered['character']
+    assert 'interaction' not in rendered['character'].lower()
+    assert '?' in rendered['character']
     assert 'Leslie' in rendered['character']
 
 
@@ -858,7 +861,8 @@ def test_group_character_keeps_the_facts_when_the_headline_is_personal(tmp_path)
         cast='',
     )
     assert 'creative' not in rendered['headline'].lower()
-    assert '42% interaction' in rendered['character']
+    assert 'interaction' not in rendered['character'].lower()
+    assert '?' in rendered['character']
 
     class PersonalHeadline:
         def invoke(self, prompt):
@@ -877,7 +881,8 @@ def test_group_character_keeps_the_facts_when_the_headline_is_personal(tmp_path)
         draft=draft,
     )
     assert 'character' not in draft.get('fallback_sections') or []
-    assert '42% interaction' in draft['character']
+    assert 'interaction' not in draft['character'].lower()
+    assert '?' in draft['character']
     write_fallback_reasons(tmp_path, {'group:character': 'group headline must describe the room'})
     saved = json.loads((tmp_path / 'fallbacks.json').read_text(encoding='utf-8'))
     assert saved['group:character'] == 'group headline must describe the room'
@@ -1232,6 +1237,43 @@ def test_forty_turn_window_ends_on_the_host_thanks_block():
     assert 'Thank' not in closer_turn(rows)['text']
 
 
+def test_group_big_thing_tells_a_story_without_a_metric_dump():
+    from lib.story_render import group_character_copy, narrative_problems, personal_big_thing
+
+    text = group_character_copy({
+        'interaction': {'value': 20},
+        'participation': {'value': 77},
+        '_portrait': {'pair': ('Full Sail Moderator', 'Ric Viers'), 'least': 'Speaker G'},
+        '_closing': {'name': 'Speaker G', 'text': 'The line that closed the hour still belongs to the quiet voice.'},
+    })
+    assert narrative_problems(text, big=True) == []
+    assert 'interaction' not in text.lower()
+    assert 'participation' not in text.lower()
+    assert '%' not in text
+    assert 'Those rates describe this session' not in text
+    assert text.endswith('?')
+    assert 'Ric Viers' in text and 'Speaker G' in text
+    dumped = (
+        '20% interaction is how often a turn moved to someone new, beside 77% participation. '
+        'Those rates describe this session.'
+    )
+    assert 'two percentages' in ' '.join(narrative_problems(dumped, big=True))
+    assert 'metric jargon' in narrative_problems(dumped, big=True)
+    assert 'filler' in narrative_problems(dumped, big=True)
+    personal = personal_big_thing(
+        'At 0:11 you said "We should try the new onboarding plan." '
+        'You held 20% of the talk time. What it gets you: you put the point in your own words. '
+        'What it costs you: the next voice has to answer that move.'
+    )
+    asked = personal_big_thing('At 0:04 you said "Could we check the budget first?" You opened on the budget.')
+    assert narrative_problems(personal, big=True) == []
+    assert 'talk time' not in personal.lower()
+    assert 'What it costs you' not in personal
+    assert '?' in personal
+    assert 'hand off' in asked
+    assert narrative_problems(asked, big=True) == []
+
+
 def test_a_goal_that_already_starts_with_a_verb_is_not_prefixed_with_share():
     from lib.story_render import goal_line, lead_sentence
 
@@ -1243,7 +1285,8 @@ def test_a_goal_that_already_starts_with_a_verb_is_not_prefixed_with_share():
     )
     assert 'share prioritize' not in goal_line('prioritize the work for the team', personal=True)
     fixed = goal_line('feel rather than a rigid plan for the room', personal=True)
-    assert fixed.startswith('You set out to share a flexible aim rather than')
+    assert fixed.startswith('Your aim: a flexible aim rather than')
+    assert 'share a flexible' not in fixed
     assert 'to feel rather than' not in fixed
     assert lead_sentence('you advocate for the next voice.').startswith('You advocate')
 
@@ -1262,7 +1305,8 @@ def test_goal_keeps_a_grounded_phrase_and_trims_the_fallback_filler():
         'Oh, I just wanted to add, I think the knowledge systems should stay visible to the team.',
         personal=True,
     )
-    assert kept.startswith('You set out to ')
+    assert kept.startswith('Your aim:')
+    assert 'share ' not in kept.lower()
     assert 'wanted to add' not in kept.lower()
     assert 'knowledge systems' in kept
     transcript = {
@@ -1331,7 +1375,8 @@ def test_goal_fallback_accepts_a_short_verb_and_skips_a_self_introduction():
     )
     assert 'No turn of yours is long enough' not in story['goal']
     assert 'Noco International' not in story['goal']
-    assert story['goal'].startswith('You set out to share ')
+    assert story['goal'].startswith('Your aim:')
+    assert 'share the knowledge' not in story['goal'].lower()
     assert 'knowledge systems' in story['goal']
 
 
@@ -1784,28 +1829,30 @@ def test_drama_counter_moment_must_be_a_different_turn_and_cost_keeps_fact_digit
             },
         ]
     }
-    with pytest.raises(OutputParserException, match='different turn'):
-        render_personal_section(
-            'drama',
-            {
-                'patterns': [{
-                    'quotes': [{'text': 'We should try the new onboarding plan', 'ts': '0:00'}],
-                    'pattern': 'You set the plan in the first line',
-                    'twist': 'the next voice took the turn',
-                    'cost': 'a delay of 3 years',
-                    'gift': 'a clear start',
-                }],
-                'exception': {
-                    'quote': 'That might work if we start Monday',
-                    'ts': '0:00',
-                    'what_happened': 'you named Monday',
-                },
+    alone = render_personal_section(
+        'drama',
+        {
+            'patterns': [{
+                'quotes': [{'text': 'We should try the new onboarding plan', 'ts': '0:00'}],
+                'pattern': 'You set the plan in the first line',
+                'twist': 'the next voice took the turn',
+                'cost': 'a delay of 3 years',
+                'gift': 'a clear start',
+            }],
+            'exception': {
+                'quote': 'That might work if we start Monday',
+                'ts': '0:00',
+                'what_happened': 'you named Monday',
             },
-            transcript=same_turn,
-            label='A',
-            facts=FACTS,
-            forbidden=[],
-        )
+        },
+        transcript=same_turn,
+        label='A',
+        facts=FACTS,
+        forbidden=[],
+    )
+    assert 'different turn' not in alone['drama']
+    assert 'onboarding plan' in alone['drama']
+    assert "didn't happen" not in alone['drama']
     kept = render_personal_section(
         'drama',
         {
@@ -2016,10 +2063,10 @@ def test_group_pair_table_keeps_four_and_signature_stays_with_its_line(tmp_path)
     write_group_story(pdf, story, image, pairs)
     pdf.output(tmp_path / 'group.pdf')
     text = '\n'.join(page.extract_text() or '' for page in PdfReader(tmp_path / 'group.pdf').pages)
-    assert 'Person 0' in text
-    assert 'Person 3' in text
-    assert 'Person 4' not in text
-    assert 'Person 5' not in text
+    assert 'Top pairs, each direction' not in text
+    assert 'One way' not in text
+    assert 'Most exchanges ran through Person 5.' in text
+    assert 'Person 0' not in text
 
     personal = MM_PDF(path_report_assets=__import__('pathlib').Path('report_assets'))
     long_drama = ' '.join(['You set the point and the next voice took it up before the hour moved on.'] * 40)

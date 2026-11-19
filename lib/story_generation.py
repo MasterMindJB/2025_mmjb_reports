@@ -281,6 +281,7 @@ def _fill_sections(llm, *, audience, sections, evidence, render, progress_path, 
             except (OutputParserException, TypeError, ValueError, KeyError, AttributeError) as exc:
                 logging.warning('story reject [%s]: %s', section, exc)
                 reasons[section] = str(exc)
+                _checkpoint(progress_path, section, str(exc))
                 still.append(section)
                 continue
             if not isinstance(rendered, dict):
@@ -510,6 +511,7 @@ def generate_report_stories(
     for label, (sentence, why) in unique_habits(profiles).items():
         personal[label]['one_thing'] = sentence
         personal[label]['why'] = why
+    _unique_short_headlines(personal)
     group = generate_group_draft(
         llm,
         transcript=transcript,
@@ -528,6 +530,60 @@ def generate_report_stories(
         reasons[f'group:{section}'] = reason
     write_fallback_reasons(progress_dir, reasons)
     return {'personal': personal, 'group': group, 'fallbacks': fallbacks, 'rejection_reasons': reasons}
+
+
+_GENERIC_HEADLINE = 'You set the point. Name it.'
+_HEADLINE_SKIP = {
+    'should', 'would', 'could', 'about', 'before', 'after', 'there', 'their',
+    'which', 'where', 'while', 'being', 'other', 'every', 'still', 'those',
+}
+
+
+def _headline_word(draft: dict, label: str) -> str:
+    source = f"{draft.get('drama') or ''} {draft.get('goal') or ''} {label}"
+    for token in re.findall(r"[A-Za-z']+", source):
+        word = token.lower()
+        if len(word) > 5 and word not in _HEADLINE_SKIP:
+            return word
+    return str(label).lower()
+
+
+def _unique_short_headlines(personal: dict) -> None:
+    """No two people share a headline. A specific one stays, even past six words."""
+    seen: set[str] = set()
+    for label, draft in personal.items():
+        raw = str(draft.get('headline') or '').strip()
+        if raw and raw not in seen and raw != _GENERIC_HEADLINE:
+            chosen = raw
+        else:
+            word = _headline_word(draft, label)
+            chosen = f'You name {word}.'
+            extra = 2
+            while chosen in seen:
+                chosen = f'You name {word} {extra}.'
+                extra += 1
+        seen.add(chosen)
+        draft['headline'] = chosen
+
+
+def _checkpoint(progress_path, section: str, reason: str) -> None:
+    """The exact rejection from each live attempt, next to the saved draft."""
+    if not progress_path:
+        return
+    from pathlib import Path
+
+    path = Path(progress_path).parent / 'checkpoints.json'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    existing = []
+    if path.is_file():
+        try:
+            existing = json.loads(path.read_text(encoding='utf-8'))
+        except json.JSONDecodeError:
+            existing = []
+    if not isinstance(existing, list):
+        existing = []
+    existing.append({'section': section, 'reason': reason})
+    path.write_text(json.dumps(existing, indent=2), encoding='utf-8')
 
 
 def write_fallback_reasons(progress_dir, reasons: dict) -> None:

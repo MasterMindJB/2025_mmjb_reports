@@ -101,13 +101,30 @@ def quotes_for_phrase(lines: list[dict], phrase: str, limit: int = 2) -> list[st
         text = str(utterance.get('text') or '')
         if needle and needle not in text.lower():
             continue
-        clip = centered_bigram_clip(text, phrase)
+        clip = sentence_around(centered_bigram_clip(text, phrase) or phrase, text)
         if not clip:
             continue
         found.append(f'{_clock(utterance.get("start"))} "{clip}"')
         if len(found) >= limit:
             break
     return found
+
+
+def sentence_around(fragment: str, source: str) -> str:
+    """The full sentence that holds the fragment. An ellipsis only if it starts mid-sentence."""
+    fragment = (fragment or '').strip().strip('"').lstrip('…').strip()
+    if not fragment:
+        return ''
+    source = (source or fragment).strip()
+    sentences = [part.strip() for part in re.split(r'(?<=[.!?])\s+', source) if part.strip()]
+    key = re.sub(r'[^a-z0-9]+', '', fragment.lower())[:40]
+    for sentence in sentences:
+        bare = re.sub(r'[^a-z0-9]+', '', sentence.lower())
+        if key and key in bare:
+            return sentence
+    if fragment[0].islower():
+        return '…' + fragment
+    return fragment
 
 
 def centered_bigram_clip(text: str, bigram: str) -> str:
@@ -268,6 +285,7 @@ def personal_story(
     from lib.story_render import (
         clip_clause,
         closing_clip,
+        goal_line,
         one_thing_from_gap,
         pick_transitions,
         questions_sentence,
@@ -291,10 +309,24 @@ def personal_story(
     if not session_start_ms and starts:
         session_start_ms = min(starts)
     session_start_ms = int(session_start_ms or 0)
+    turn_values = []
+    if stats_frame is not None and 'Total Interactions' in getattr(stats_frame, 'columns', []):
+        for row_name in getattr(stats_frame, 'index', []):
+            if str(row_name) == 'Average':
+                continue
+            turn_values.append(int(float(stats_frame.loc[row_name, 'Total Interactions'] or 0)))
+    turn_median = None
+    if turn_values:
+        ordered = sorted(turn_values)
+        mid = len(ordered) // 2
+        if len(ordered) % 2:
+            turn_median = ordered[mid]
+        else:
+            turn_median = int(round((ordered[mid - 1] + ordered[mid]) / 2))
     numbers = [
         share_sentence(share_pct, speaker_count),
         questions_sentence(question_count, session_question_average),
-        turns_sentence(turn_count),
+        turns_sentence(turn_count, turn_median),
     ]
     def _substantive(event) -> bool:
         words = re.findall(r"[A-Za-z']+", str((event or {}).get('text') or ''))
@@ -325,9 +357,15 @@ def personal_story(
         if shared[:1].isupper():
             shared = shared[0].lower() + shared[1:]
         if shared:
-            goal = f'You set out to share {shared}.'
+            first = re.sub(r'[^\w]', '', shared.split()[0])
+            from lib.story_render import _base_verb, _tagged_verb
+
+            if _base_verb(first) or _tagged_verb(first):
+                goal = goal_line(shared, personal=True)
+            else:
+                goal = f'Your aim: {shared}.'
         else:
-            goal = 'You set out to share what you added in the room.'
+            goal = 'Your aim: what you added in the room.'
         if thin:
             drama = (
                 f'At {when} you said "{said}". '
@@ -340,7 +378,7 @@ def personal_story(
                 f'That line does a job for you: it starts the point, and it also costs the room a reply.'
             )
     else:
-        goal = 'You set out to share what you added in the room.'
+        goal = 'Your aim: what you added in the room.'
         drama = (
             f'You held {share_pct}% of the talk time. '
             'The pattern is how little of the exchange waited for a longer line from you.'
@@ -508,7 +546,13 @@ def group_story(
     pairs: list | None = None,
     shares: list | None = None,
 ) -> dict:
-    from lib.story_render import clip_clause, group_character_copy, group_halfway_target
+    from lib.session_window import closer_turn
+    from lib.story_render import (
+        closing_clip,
+        group_character_copy,
+        group_halfway_target,
+        narrative_problems,
+    )
 
     interaction_pct = int(round(100 * interaction))
     participation_pct = int(round(100 * participation))
@@ -532,6 +576,14 @@ def group_story(
         'participation': {'value': participation_pct},
         '_portrait': portrait,
     }
+    last_name = 'the last voice'
+    last_line = ''
+    closing_row = closer_turn((transcript or {}).get('utterances') or [])
+    if closing_row:
+        last_line = closing_clip(str(closing_row.get('text') or '')) or ''
+        last_name = (names or {}).get(closing_row.get('speaker')) or last_name
+    if last_line:
+        facts['_closing'] = {'name': last_name, 'text': last_line}
     character = group_character_copy(facts)
     topics = _meeting_topics(transcript)
     if len(topics) >= 2:
@@ -540,32 +592,20 @@ def group_story(
     elif topics:
         goal = f'The turns keep returning to {topics[0]}.'
     else:
-        goal = (
-            f'The turns are the record of the meeting. '
-            f'{interaction_pct}% interaction means a point could finish inside one voice.'
-        )
+        goal = 'The turns are the record of the meeting, and a point could finish inside one voice.'
     challenge = (
-        f'{interaction_pct}% interaction. '
-        'The turns stayed inside a few voices, so a point could end before someone new answered.'
+        'A point could finish inside one voice before anyone new answered. '
+        'What would change if the next reply came from across the room?'
     )
     drama = cast or 'Who talks to whom, and who nobody answered.'
-    from lib.session_window import closer_turn
-    from lib.story_render import closing_clip
-
-    last_name = 'the last voice'
-    last_line = ''
-    closing_row = closer_turn((transcript or {}).get('utterances') or [])
-    if closing_row:
-        last_line = closing_clip(str(closing_row.get('text') or '')) or ''
-        last_name = (names or {}).get(closing_row.get('speaker')) or last_name
     if last_line:
         resolution = (
             f'The meeting closed on {last_name}, who said "{last_line}". '
-            f'{interaction_pct}% interaction is where that last line had to land.'
+            'That last line had to land with someone new.'
         )
     else:
         resolution = (
-            f'The meeting closed with the exchange still at {interaction_pct}% interaction, '
+            'The meeting closed with the exchange still inside the same voices, '
             'so the last turn did not have to travel to a new voice.'
         )
     one_thing = f'Name one reply before the next decision. Target: {target}% interaction.'
@@ -576,7 +616,9 @@ def group_story(
     draft = draft or {}
     if draft.get('headline'):
         headline = draft['headline']
-    character = draft.get('character') or character
+    draft_character = str(draft.get('character') or '')
+    if draft_character and not narrative_problems(draft_character, big=True):
+        character = draft_character
     goal = draft.get('goal') or goal
     challenge = draft.get('challenge') or challenge
     drama = draft.get('drama') or drama
@@ -595,4 +637,8 @@ def group_story(
         'one_thing': one_thing,
         'why': why,
         'transitions': transitions,
+        'numbers': [
+            f'Interaction is how often a turn moved to someone new: {interaction_pct}%.',
+            f'Participation is the share of people who spoke: {participation_pct}%.',
+        ],
     }

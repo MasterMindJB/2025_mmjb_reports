@@ -132,6 +132,7 @@ def test_personal_story_obeys_the_craft_rules():
     )
     assert re.search(r'\d', story['one_thing'])
     allowed.update(re.findall(r'\d+', story['one_thing'] + story['why']))
+    allowed.update(re.findall(r'\d+', ' '.join(story['numbers'])))
     assert word_count(story['headline']) <= 12
     assert word_count(story['one_thing']) <= 25
     forbidden = ['Blake Chen', 'Casey Quinn']
@@ -155,7 +156,9 @@ def test_share_line_follows_the_comparison_and_plural():
     from lib.story_render import questions_sentence, rate_sentence, share_sentence
 
     line = share_sentence(17, 7)
-    assert 'near the room average' in line
+    assert 'near the room average' not in line
+    assert '3 points above an even share of 14%' in line
+    assert 'near the room average' in share_sentence(15, 7)
     assert 'most of the way' not in line
     assert 'more than the rest' not in line
     assert questions_sentence(1, 2).startswith('1 question:')
