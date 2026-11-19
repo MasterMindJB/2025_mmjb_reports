@@ -1153,6 +1153,50 @@ def test_forty_turn_window_ends_on_the_host_thanks_block():
     assert 'Thank' not in closer_turn(rows)['text']
 
 
+def test_goal_keeps_a_grounded_phrase_and_trims_the_fallback_filler():
+    from lib.data_story import personal_story
+    from lib.story_render import goal_line
+
+    assert goal_line('trying to keep the workflow open for the group', personal=True) == (
+        'You set out to keep the workflow open for the group.'
+    )
+    assert goal_line('wanted to show the room one clear next step', personal=True) == (
+        'You set out to show the room one clear next step.'
+    )
+    kept = goal_line(
+        'Oh, I just wanted to add, I think the knowledge systems should stay visible to the team.',
+        personal=True,
+    )
+    assert kept.startswith('You set out to ')
+    assert 'wanted to add' not in kept.lower()
+    assert 'knowledge systems' in kept
+    transcript = {
+        'utterances': [
+            {
+                'speaker': 'A',
+                'start': 0,
+                'end': 8000,
+                'text': (
+                    'Oh, I just wanted to add, I think the knowledge systems still hide the design '
+                    'until the workflow is named.'
+                ),
+            },
+        ],
+    }
+    story = personal_story(
+        label='A',
+        info={'name': 'Eden'},
+        analysis={},
+        transcript=transcript,
+        stats_frame=None,
+        framework={},
+        draft={},
+    )
+    assert 'the point you brought into the room' not in story['goal']
+    assert 'wanted to add' not in story['goal'].lower()
+    assert 'knowledge systems' in story['goal']
+
+
 def test_goal_fallback_accepts_a_short_verb_and_skips_a_self_introduction():
     from lib.data_story import personal_story
     from lib.story_render import goal_line

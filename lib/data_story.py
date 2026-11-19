@@ -313,10 +313,18 @@ def personal_story(
     if evidence_event:
         said = closing_clip(evidence_event['text']) or clip_clause(evidence_event['text'], 18)
         when = evidence_event['time']
-        shared = said.rstrip('.').strip()
+        from lib.story_render import _trim_discourse
+
+        shared = _trim_discourse(said)
+        if len(re.findall(r"[A-Za-z']+", shared)) < 3:
+            shared = _trim_discourse(str(evidence_event.get('text') or ''))
+        shared = shared.rstrip('.').strip(' ,')
         if shared[:1].isupper():
             shared = shared[0].lower() + shared[1:]
-        goal = f'You set out to share {shared}.'
+        if shared:
+            goal = f'You set out to share {shared}.'
+        else:
+            goal = 'You set out to share what you added in the room.'
         if thin:
             drama = (
                 f'At {when} you said "{said}". '
@@ -329,7 +337,7 @@ def personal_story(
                 f'That line does a job for you: it starts the point, and it also costs the room a reply.'
             )
     else:
-        goal = 'You set out to share the point you brought into the room.'
+        goal = 'You set out to share what you added in the room.'
         drama = (
             f'You held {share_pct}% of the talk time. '
             'The pattern is how little of the exchange waited for a longer line from you.'

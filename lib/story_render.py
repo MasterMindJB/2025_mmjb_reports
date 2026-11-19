@@ -245,19 +245,45 @@ def _base_verb(token: str) -> str | None:
     return None
 
 
+_DISCOURSE = re.compile(
+    r'^(?:i just wanted to add|i just want to add|just because|i think|i mean|you know|'
+    r'oh|um+|uh+|so|well|yeah|yes)\b[,:]?\s*',
+    re.I,
+)
+
+
+def _trim_discourse(text: str) -> str:
+    """Drop leading oh / I think / I just wanted to add, and the same kind of filler."""
+    cleaned = (text or '').strip()
+    previous = None
+    while cleaned and previous != cleaned:
+        previous = cleaned
+        cleaned = _DISCOURSE.sub('', cleaned).strip(' ,')
+    return cleaned
+
+
+def _clause_has_verb(text: str) -> bool:
+    for word in re.findall(r"[A-Za-z']+", text or ''):
+        if _base_verb(word) or _tagged_verb(word):
+            return True
+    return False
+
+
 def verb_phrase(claim: str) -> str:
-    """A goal is a verb phrase. The first kept token is a base verb, never 'the'."""
+    """A goal is a verb phrase. A grounded phrase that is not one gets a verb prefix."""
     text = _strip_stated_by(claim).strip().rstrip('.')
     text = re.sub(r'^(?:the room|you)\s+set out to\s+', '', text, flags=re.I)
+    text = _trim_discourse(text)
     previous = None
     while previous != text:
         previous = text
         text = re.sub(
-            r'^(?:i want to|we need to|the goal is to|to|you)\s+',
+            r'^(?:i want to|i wanted to|we need to|we wanted to|trying to|wanted to|the goal is to|to|you)\s+',
             '',
             text,
             flags=re.I,
         )
+        text = _trim_discourse(text)
     words = text.split()
     for index, word in enumerate(words):
         if word.lower() == 'the':
@@ -274,9 +300,20 @@ def verb_phrase(claim: str) -> str:
         words_out = phrase.split()
         if len(words_out) < 3:
             continue
-        if len(words_out) > 15:
-            phrase = ' '.join(words_out[:15])
+        if len(words_out) > 20:
+            phrase = ' '.join(words_out[:20])
         return phrase
+    phrase = text.strip().rstrip('.')
+    if phrase[:1].isupper():
+        phrase = phrase[0].lower() + phrase[1:]
+    words_out = phrase.split()
+    if len(words_out) > 20:
+        phrase = ' '.join(words_out[:20])
+        words_out = phrase.split()
+    if len(words_out) >= 3:
+        if _clause_has_verb(phrase):
+            return f'make the case that {phrase}'
+        return f'share {phrase}'
     raise OutputParserException('goal must be a verb phrase starting with a base verb')
 
 
