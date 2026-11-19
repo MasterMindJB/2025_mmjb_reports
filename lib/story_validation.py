@@ -275,6 +275,88 @@ def quotes_are_in_transcript(text: str, transcript: dict | None) -> None:
             _fail(f'quoted span is not in the transcript: {span}')
 
 
+_KEEP_CAPITALS = {
+    'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday',
+    'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August',
+    'September', 'October', 'November', 'December',
+    'I',
+}
+
+
+def normalize_mid_sentence_capitals(text: str, names: list[str] | None = None) -> str:
+    """Lower a capital that is not starting a sentence and is not a name.
+
+    'that's when You' becomes 'that's when you'. 'It buys Living' becomes 'It buys living'.
+    Text inside quotation marks is left alone.
+    """
+    keep = set(_KEEP_CAPITALS)
+    for name in names or []:
+        keep.update(part for part in re.findall(r"[A-Za-z']+", name) if part[:1].isupper())
+
+    def fix_segment(segment: str) -> str:
+        sentences = re.split(r'(?<=[.!?])\s+', segment)
+        fixed = []
+        for sentence in sentences:
+            words = sentence.split(' ')
+            out = []
+            for index, word in enumerate(words):
+                match = re.match(r"^([^A-Za-z']*)([A-Za-z']+)(.*)$", word)
+                if index > 0 and match:
+                    core = match.group(2)
+                    if core not in keep and core[:1].isupper() and not core.isupper():
+                        word = match.group(1) + core.lower() + match.group(3)
+                out.append(word)
+            fixed.append(' '.join(out))
+        return ' '.join(fixed)
+
+    pieces = re.split(r'("[^"]*"|“[^”]*”)', text or '')
+    rendered = []
+    for piece in pieces:
+        if piece.startswith('"') or piece.startswith('“'):
+            rendered.append(piece)
+        else:
+            rendered.append(fix_segment(piece))
+    return ''.join(rendered)
+
+
+def _outside_quotes(text: str) -> str:
+    return re.sub(r'("[^"]*"|“[^”]*”)', ' ', text or '')
+
+
+_RELAY = re.compile(
+    r"\b(my student|a student|the student|she said|he said|they said|told me|"
+    r"her family|his family|their family)\b",
+    re.I,
+)
+_OWN_LIFE = re.compile(
+    r"\b(you lived|you grew|your family|you were born|you speak|your mother|your father|you moved)\b",
+    re.I,
+)
+_RELAYED_FRAME = re.compile(
+    r"\b(you told|you recounted|you relayed|student's story|a student's)\b",
+    re.I,
+)
+
+
+def reported_speech_problem(text: str, transcript: dict | None, label: str | None) -> str | None:
+    """A relayed story must not be written as the reader's own life."""
+    if not label:
+        return None
+    own = ' '.join(
+        str(row.get('text') or '')
+        for row in (transcript or {}).get('utterances') or []
+        if row.get('speaker') == label
+    )
+    if not _RELAY.search(own):
+        return None
+    if _OWN_LIFE.search(_outside_quotes(text)) and not _RELAYED_FRAME.search(text):
+        return (
+            'this recounts someone else\'s story; attribute it as relayed, '
+            'for example "you told a student\'s story about..."'
+        )
+    return None
+
+
 def reject_craft_violations(
     text: str,
     *,
@@ -290,6 +372,8 @@ def reject_craft_violations(
 ) -> str:
     """Return the cleaned text, or raise OutputParserException."""
     cleaned = (text or '').strip()
+    if personal_voice or speaker_label is not None:
+        cleaned = normalize_mid_sentence_capitals(cleaned, participant_names)
     if not cleaned:
         _fail('story text is empty')
     lowered = cleaned.lower()
@@ -326,12 +410,17 @@ def reject_craft_violations(
             if person.casefold() not in allowed and not person.casefold().startswith('speaker '):
                 _fail(f'story text names someone who is not in the session: {person}')
     if personal_voice or speaker_label is not None:
-        if re.search(r'\b(the speaker|the student|the participant)\b', lowered):
+        outside = _outside_quotes(cleaned)
+        outside_lower = outside.lower()
+        if re.search(r'\b(the speaker|the student|the participant|the individual)\b', outside_lower):
             _fail('personal story must say you, not a role label')
-        if re.search(r'\b(he|she|his|her|they)\b', lowered):
+        if re.search(r'\b(he|she|his|her|they)\b', outside_lower):
             _fail('personal story must stay in second person')
-        if re.search(r'(?<=\s)(He|She|They|His|Her)\b', cleaned):
-            _fail('personal story capitalizes a pronoun mid-sentence')
+        if re.search(r"\b(I|I'll|I'm|I've|I'd)\b", outside):
+            _fail('personal story uses first person outside a quote')
+        relay = reported_speech_problem(cleaned, transcript, speaker_label)
+        if relay:
+            _fail(relay)
     if headline and word_count(cleaned) > 12:
         _fail(f'headline is {word_count(cleaned)} words; the maximum is 12')
     if one_thing:

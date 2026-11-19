@@ -168,13 +168,15 @@ class ConversationSummarizer:
         said fewer than two words.
         """
         from lib.data_story import signature_examples
-        from lib.report_stats import top_bigram
+        from lib.gemini_retry import invoke_llm
+        from lib.report_stats import display_bigram, top_bigram
 
         found = top_bigram(speaker_text)
         if found is None:
             return None
         bigram, count = found
-        prompt = self.get_prompt_template(Path('personal_signature_phrase.txt')).format(bigram=bigram)
+        shown = display_bigram(bigram)
+        prompt = self.get_prompt_template(Path('personal_signature_phrase.txt')).format(bigram=shown)
         examples = signature_examples(speaker_text, bigram)
         message = prompt
         if examples:
@@ -185,14 +187,15 @@ class ConversationSummarizer:
             'The examples under What?, So, what?, and Now, what? are illustrative and may be invented. '
             'Each of those three answers must be 6 to 25 words. '
             'Do not use the word coaching. '
-            f'The phrase you discuss must be "{bigram}". '
-            'Do not quote the transcript.'
+            f'The phrase you discuss must be "{shown}". '
+            'Do not quote the transcript. '
+            'Example clips in the lines above already contain that phrase. '
+            'Each answer is 6 to 25 words.'
         )
-        from lib.story_validation import reject_craft_violations
-
         parsed = None
+        feedback = ''
         for _attempt in range(2):
-            raw = self.llm.invoke(message)
+            raw = invoke_llm(self.llm, message + feedback)
             analysis = raw.content if hasattr(raw, 'content') else str(raw)
             if isinstance(analysis, list):
                 analysis = ' '.join(str(part) for part in analysis)
@@ -202,6 +205,10 @@ class ConversationSummarizer:
                 break
             except (OutputParserException, json.JSONDecodeError, ValueError, TypeError) as exc:
                 logging.warning('signature reject: %s', exc)
+                feedback = (
+                    f'\n\nThe previous answer was rejected: {exc}. '
+                    'Fix that specific problem and answer again.\n'
+                )
                 parsed = None
         if parsed is None:
             from lib.story_render import computed_signature

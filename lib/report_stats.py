@@ -528,6 +528,28 @@ BIGRAM_STOPWORDS = frozenset(
     gonna wanna yeah okay oh um uh""".split()
 )
 
+LIGHT_VERBS = frozenset(
+    """got get gets getting set sets go goes going went come came say said says
+    tell told make made do did does done""".split()
+)
+PRONOUNS = frozenset('i you we they he she it me him her us them'.split())
+
+
+def display_bigram(bigram: str) -> str:
+    """Capitalize a lone i for the page. Grounding stays case-insensitive."""
+    return ' '.join('I' if part.lower() == 'i' else part for part in (bigram or '').split())
+
+
+def _function_pair(phrase: str) -> bool:
+    """A pair with no content word, including pronoun plus a light verb."""
+    first, second = phrase.split(' ', 1)
+    if first in BIGRAM_STOPWORDS and second in BIGRAM_STOPWORDS:
+        return True
+    if first in PRONOUNS and second in LIGHT_VERBS:
+        return True
+    return False
+
+
 DISCOURSE_MARKERS = frozenset(
     {
         'i think',
@@ -562,14 +584,15 @@ def extract_bigrams(text: str) -> list[str]:
 
 
 def top_bigram(text: str) -> tuple[str, int] | None:
-    """Return (bigram, count) for the most frequent meaningful bigram, or None."""
+    """Return (bigram, count) for the most frequent content-bearing bigram, or None.
+
+    Pure function-word pairs, including 'i got' and 'you set', are skipped
+    unless every pair is one of those.
+    """
     counts = _Counter(extract_bigrams(text))
     if not counts:
         return None
     for phrase, count in counts.most_common():
-        first, second = phrase.split(' ', 1)
-        if phrase in DISCOURSE_MARKERS or not (
-            first in BIGRAM_STOPWORDS and second in BIGRAM_STOPWORDS
-        ):
+        if phrase in DISCOURSE_MARKERS or not _function_pair(phrase):
             return phrase, count
     return counts.most_common(1)[0]

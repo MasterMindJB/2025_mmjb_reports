@@ -105,23 +105,20 @@ def pick_transitions(seed: str, *, group: bool = False) -> dict[str, str]:
 
 def computed_signature(bigram: str, count: int, quotes: list[str]) -> dict[str, str]:
     """A real reading when the model does not return What / So, what / Now, what."""
-    shown = ''
-    if quotes:
-        raw = re.sub(r'^\d+:\d+\s*', '', str(quotes[0])).strip().strip('"')
-        shown = clip_clause(raw, 20)
+    from lib.report_stats import display_bigram
+
+    shown = display_bigram(bigram)
     times = count_label(int(count or 0), 'time')
     if bigram:
-        what = f'You reach for "{bigram}" while finding the next point.'
-        so_what = f'It showed up {times} in this session.'
-        if shown:
-            so_what = f'{so_what} One line was "{shown}".'
+        what = f'You reach for "{shown}" when you want the next point to land with the room.'
+        so_what = f'It showed up {times}, so the room hears that phrase as your way in.'
     else:
-        what = 'No two-word phrase repeated often enough to name.'
-        so_what = 'The turns do not lean on one repeated pair.'
+        what = 'No two-word phrase repeated often enough to name one habit.'
+        so_what = 'The turns do not lean on one repeated pair, so no phrase stands in for you.'
     return {
         'what': what,
         'so_what': so_what,
-        'now_what': 'Pause once before using the phrase again.',
+        'now_what': 'Pause once before you use it, and let the other person answer.',
     }
 
 
@@ -373,6 +370,63 @@ def rate_sentence(value: int, name: str) -> str:
     return f'{int(value)}% {name}'
 
 
+def group_halfway_target(interaction: int, participation: int, word_interaction: int) -> tuple[int, int, str]:
+    """Halfway from interaction toward a norm this session actually measured.
+
+    The norm is the higher of participation and the share of words exchanged.
+    It is not a fixed 70.
+    """
+    options = []
+    if int(participation) > int(interaction):
+        options.append((int(participation), 'participation'))
+    if int(word_interaction) > int(interaction):
+        options.append((int(word_interaction), 'the share of words exchanged'))
+    if options:
+        norm, name = max(options)
+    else:
+        norm, name = min(100, int(interaction) + 20), 'a wider exchange'
+    target = int(round((int(interaction) + norm) / 2))
+    if target <= int(interaction):
+        target = min(100, int(interaction) + 1)
+    return target, norm, name
+
+
+_PERSON_HEADLINE = re.compile(
+    r'\b(you|professional|individual|creative|participant|speaker)\b',
+    re.I,
+)
+
+
+def group_headline_is_personal(text: str) -> bool:
+    return bool(_PERSON_HEADLINE.search(text or ''))
+
+
+def group_character_copy(facts: dict) -> str:
+    """Two or three sentences from the room's rates, not one bare percentage."""
+    interaction = int((facts.get('interaction') or {}).get('value') or 0)
+    participation = int((facts.get('participation') or {}).get('value') or 0)
+    portrait = facts.get('_portrait') or {}
+    sentences = [
+        (
+            f'{interaction}% interaction is how often a turn moved to someone new, '
+            f'beside {participation}% participation.'
+        )
+    ]
+    pair = portrait.get('pair') or ()
+    if len(pair) >= 2 and pair[0] and pair[1]:
+        sentences.append(f'{pair[0]} and {pair[1]} followed each other more than any other pair.')
+    least = portrait.get('least')
+    low = portrait.get('low_share')
+    high = portrait.get('high_share')
+    if least and low is not None and high is not None:
+        sentences.append(
+            f'{least} was the least connected, and talk time ran from {int(low)}% to {int(high)}%.'
+        )
+    elif least:
+        sentences.append(f'{least} was the least connected voice in the room.')
+    return ' '.join(sentences[:3])
+
+
 def _no_digits(text: str, label: str, allowed: set[str] | None = None) -> str:
     cleaned = (text or '').strip()
     extra = [number for number in re.findall(r'\d+', cleaned) if not allowed or number not in allowed]
@@ -475,11 +529,7 @@ def group_facts(*, participation: float, interaction: float, word_interaction: f
     participation_pct = int(round(100 * participation))
     interaction_pct = int(round(100 * interaction))
     word_pct = int(round(100 * word_interaction))
-    target = improve_toward(
-        interaction_pct,
-        70 if interaction_pct < 70 else interaction_pct + 1,
-        increase=True,
-    )
+    target, _norm, _name = group_halfway_target(interaction_pct, participation_pct, word_pct)
     return {
         'participation': {
             'value': participation_pct,
@@ -602,9 +652,11 @@ def render_one_thing(
     meta = facts.get('_meta') or {}
     if 'interaction' in facts and 'questions' not in facts:
         current = int(facts['interaction']['value'])
-        target = improve_toward(current, 70 if current < 70 else current + 1, increase=True)
+        participation = int((facts.get('participation') or {}).get('value') or current)
+        words = int((facts.get('word_interaction') or {}).get('value') or current)
+        target, norm, name = group_halfway_target(current, participation, words)
         sentence = f'Name one reply before the next decision. Target: {target}% interaction.'
-        why = f'Interaction is {current}%, so {target}% is a step up.'
+        why = f'Interaction is {current}%, halfway toward {norm}% {name}.'
         return sentence, why
     sentence, why = one_thing_from_gap(
         share=int(meta.get('share', facts['talk_share']['value'])),
@@ -730,13 +782,13 @@ def render_group_section(section: str, data: dict, *, transcript, facts: dict, c
         headline = _prose(str(data.get('headline') or ''), corpus, 'headline')
         if word_count(headline) > 12:
             raise OutputParserException('headline is over 12 words')
-        keys = [key for key in (data.get('number_keys') or []) if key in facts and not str(key).startswith('target')]
-        if not keys:
-            keys = [key for key in GROUP_NUMBER_KEYS if key in facts][:1]
-        if not keys:
+        if group_headline_is_personal(headline):
+            raise OutputParserException(
+                'group headline must describe the room, not one person: ' + headline
+            )
+        if 'interaction' not in facts and 'participation' not in facts:
             raise OutputParserException('group character needs at least one rate fact')
-        lines = [facts[key]['line'].rstrip('.') + '.' for key in keys]
-        return {'headline': headline, 'character': ' '.join(lines)}
+        return {'headline': headline, 'character': group_character_copy(facts)}
     if section in ('goal', 'resolution'):
         claim = _prose(str(data.get('claim') or ''), corpus, section)
         closing = ''
@@ -747,8 +799,14 @@ def render_group_section(section: str, data: dict, *, transcript, facts: dict, c
                 closing = clip_clause(text, 12)
                 break
         if section == 'goal':
-            return {'goal': f'Inferred from the turns in this session: {claim.rstrip(".")}.'}
-        landed = f'The meeting closed on "{closing}". ' if closing else ''
+            return {'goal': f'The turns keep testing one aim: {claim.rstrip(".")}.'}
+        closing_fact = facts.get('_closing') or {}
+        speaker = closing_fact.get('name') or 'the last voice'
+        spoken = closing_fact.get('text') or closing
+        if spoken:
+            landed = f'The meeting closed on {speaker}, who said "{spoken}". '
+        else:
+            landed = ''
         return {'resolution': f'{landed}{claim.rstrip(".")}.'}
     if section == 'challenge':
         claim = _prose(str(data.get('claim') or ''), corpus, 'claim')
@@ -757,7 +815,17 @@ def render_group_section(section: str, data: dict, *, transcript, facts: dict, c
             key = 'interaction' if 'interaction' in facts else next(iter(facts), '')
         if key not in facts:
             raise OutputParserException('group challenge needs one rate fact')
-        return {'challenge': f'{facts[key]["line"]}. {claim.rstrip(".")}.'}
+        if re.search(r'\d', claim):
+            raise OutputParserException(
+                'group challenge must use words; the rate is already in the facts'
+            )
+        line = str(facts[key]['line']).rstrip('.')
+        return {
+            'challenge': (
+                f'{line}. {claim.rstrip(".")}. '
+                'A turn could finish without an answer from across the room.'
+            )
+        }
     if section == 'drama':
         note = _prose(str(data.get('pattern_note') or ''), corpus, 'pattern_note')
         if note.lower().strip('.') == 'who talks to whom, and who nobody answered':

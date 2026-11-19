@@ -258,7 +258,9 @@ def write_personal_report(pdf, story: dict, chart_dir: Path) -> None:
     _room(pdf, 40)
     _body(pdf, 'Your signature phrase:')
     if card.get('phrase'):
-        _body(pdf, f'You said "{card["phrase"]}" {card.get("count") or 0} times.')
+        from lib.report_stats import display_bigram
+
+        _body(pdf, f'You said "{display_bigram(str(card["phrase"]))}" {card.get("count") or 0} times.')
     from lib.story_render import clip_clause
 
     shown = 0
@@ -278,11 +280,23 @@ def write_personal_report(pdf, story: dict, chart_dir: Path) -> None:
     _transition(pdf, (story.get('transitions') or {}).get('after_resolution'))
     _heading(pdf, 'One thing')
     _callout(pdf, story['one_thing'], story['why'])
-    _heading(pdf, 'Appendix: style lenses')
-    _body(pdf, 'Top result for each lens.')
-    for name, line in story['appendix'].items():
-        _body(pdf, f'{name}: {line}')
     _flush_heading(pdf)
+    appendix = [f'{name}: {line}' for name, line in (story.get('appendix') or {}).items()]
+    needed = 14 + 6 * (1 + len(appendix))
+    if _remaining(pdf) < needed:
+        pdf.add_page()
+    pdf.ln(2)
+    pdf.set_x(pdf.l_margin)
+    pdf.set_font('Poppins', 'b', 14)
+    pdf.set_text_color(20, 33, 74)
+    pdf.cell(w=0, h=8, text='Appendix: style lenses', ln=True)
+    pdf.set_font('Poppins', '', 10)
+    pdf.multi_cell(w=0, text='Top result for each lens.', align='L')
+    for line in appendix:
+        pdf.set_x(pdf.l_margin)
+        pdf.multi_cell(w=0, text=line, align='L')
+    if hasattr(pdf, 'note_y'):
+        pdf.note_y()
 
 
 def _chord_hero(pdf, chord_path) -> None:
@@ -319,7 +333,7 @@ def write_group_story(pdf, story: dict, chord_path, chord_pairs) -> None:
     pdf.set_text_color(20, 33, 74)
     _kicker(pdf, 'The session')
     pdf.set_font('Poppins', 'b', 16)
-    pdf.multi_cell(w=0, text=story['headline'])
+    pdf.multi_cell(w=0, text=story['headline'], align='L')
     pdf.ln(1)
     if hasattr(pdf, 'note_y'):
         pdf.note_y()

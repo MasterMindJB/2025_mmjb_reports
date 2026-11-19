@@ -67,21 +67,71 @@ def quotes_for_phrase(lines: list[dict], phrase: str, limit: int = 2) -> list[st
         text = str(utterance.get('text') or '')
         if needle and needle not in text.lower():
             continue
-        found.append(f'{_clock(utterance.get("start"))} "{text}"')
+        clip = centered_bigram_clip(text, phrase)
+        if not clip:
+            continue
+        found.append(f'{_clock(utterance.get("start"))} "{clip}"')
         if len(found) >= limit:
             break
-    if found or not lines:
-        return found
-    for utterance in lines[:limit]:
-        found.append(f'{_clock(utterance.get("start"))} "{utterance.get("text")}"')
     return found
 
 
+def centered_bigram_clip(text: str, bigram: str) -> str:
+    """A 6 to 25 word window centered on one occurrence of the bigram."""
+    tokens = re.findall(r'\S+', text or '')
+    parts = (bigram or '').lower().split()
+    if len(tokens) < 2 or len(parts) != 2:
+        return ''
+
+    def norm(token: str) -> str:
+        return re.sub(r"[^a-z0-9']+", '', token.lower())
+
+    norms = [norm(token) for token in tokens]
+    for index in range(len(tokens) - 1):
+        if norms[index:index + 2] != parts:
+            continue
+        start, end = index, index + 2
+        while end - start < 6 and (start > 0 or end < len(tokens)):
+            if start > 0:
+                start -= 1
+            else:
+                end += 1
+        while end - start < 12 and end < len(tokens) and end - start < 25:
+            end += 1
+        while end - start > 25:
+            if index - start >= end - (index + 2):
+                start += 1
+            else:
+                end -= 1
+        if end - start < 6:
+            continue
+        clip = ' '.join(tokens[start:end]).strip(' ,;')
+        if start > 0:
+            clip = '…' + clip.lstrip()
+        words = re.findall(r"[A-Za-z0-9']+", clip)
+        if not 6 <= len(words) <= 25:
+            continue
+        if bigram.lower() not in re.sub(r'\s+', ' ', clip).lower():
+            continue
+        bare = re.sub(r'[^a-z]+', '', clip.lower())
+        if bare in {'repetition', 'yeah', 'yes', 'right'}:
+            continue
+        return clip
+    return ''
+
+
 def signature_examples(speaker_text: str, bigram: str) -> str:
-    """Up to four of this person's own sentences that contain the bigram."""
-    sentences = re.split(r'(?<=[.!?])\s+', speaker_text or '')
-    hits = [sentence.strip() for sentence in sentences if bigram and bigram in sentence.lower()]
-    return '\n'.join(f'- {sentence}' for sentence in hits[:4])
+    """Up to four clips that contain the bigram, each 6 to 25 words."""
+    hits = []
+    for sentence in re.split(r'(?<=[.!?])\s+', speaker_text or ''):
+        clip = centered_bigram_clip(sentence, bigram)
+        if not clip:
+            clip = centered_bigram_clip(speaker_text, bigram)
+        if clip and clip not in hits:
+            hits.append(clip)
+        if len(hits) >= 4:
+            break
+    return '\n'.join(f'- {clip}' for clip in hits)
 
 
 def _strip_preamble(text: str) -> str:
@@ -205,47 +255,60 @@ def personal_story(
         questions_sentence(question_count, session_question_average),
         turns_sentence(turn_count),
     ]
-    used_quotes: set[str] = set()
+    def _substantive(event) -> bool:
+        words = re.findall(r"[A-Za-z']+", str((event or {}).get('text') or ''))
+        if len(words) >= 8:
+            return True
+        return len(words) >= 4 and words[0].lower() not in {
+            'yeah', 'yes', 'yep', 'right', 'ok', 'okay', 'sure', 'mm', 'hmm', 'uh', 'um',
+        }
 
-    def _once(event):
-        if not event:
-            return None
-        clause = clip_clause(event['text'])
-        key = clause.lower()
-        if not clause or key in used_quotes:
-            return None
-        used_quotes.add(key)
-        return clause, event['time']
-
-    opening_bit = _once(first_event)
-    later_bit = _once(last_event)
-    if opening_bit:
-        clause, _when = opening_bit
-        headline = clause if len(clause.split()) <= 12 else ' '.join(clause.split()[:12])
+    thin = sum(1 for event in events if _substantive(event)) < 4
+    question_line = questions_sentence(question_count, session_question_average).rstrip('.')
+    if thin:
+        headline = 'You entered in short turns'
+    elif share_pct >= 40:
+        headline = 'You held the floor for a long stretch'
     else:
-        headline = turns_sentence(turn_count)
-    if opening_bit:
-        goal = f'Inferred from the opening line at {opening_bit[1]}.'
-    else:
-        goal = 'Inferred from the turns in this session.'
-    question_line = questions_sentence(question_count, session_question_average)
-    if early_late:
-        challenge = f'{early_late.rstrip(".")}. {question_line}'
-    else:
-        challenge = question_line
-    if opening_bit and later_bit:
-        drama = (
-            f'At {opening_bit[1]} you said "{opening_bit[0]}". '
-            f'A later line, at {later_bit[1]}, was "{later_bit[0]}".'
+        headline = 'You came in and set a point down'
+    if first_event:
+        said = clip_clause(first_event['text'], 18)
+        when = first_event['time']
+        goal = (
+            f'You came in to move the work. At {when} you said "{said}", '
+            f'and that line is the aim the later turns keep testing.'
         )
-    elif opening_bit:
-        drama = f'At {opening_bit[1]} you said "{opening_bit[0]}".'
+        if thin:
+            drama = (
+                f'At {when} you said "{said}". '
+                f'You held {share_pct}% of the talk time across {turn_count} turns, '
+                f'so the pattern is when you chose to enter, not a long story.'
+            )
+        else:
+            drama = (
+                f'At {when} you said "{said}". '
+                f'That line does a job for you: it starts the point, and it also costs the room a reply.'
+            )
     else:
-        drama = 'No turn in this session gives a line to quote.'
-    resolution = (
-        f'{turns_sentence(turn_count)} {question_line} '
-        'The gap in those counts is the part to change.'
+        goal = 'You came in to move the work, and the later turns keep testing that aim.'
+        drama = (
+            f'You held {share_pct}% of the talk time. '
+            'The pattern is how little of the exchange waited for a longer line from you.'
+        )
+    challenge = (
+        f'{question_line}. '
+        'That is the gap a listener can hear, because a turn can end before anyone has to answer you.'
     )
+    if thin:
+        resolution = (
+            f'You used {turn_count} turns and left the longer story to the room. '
+            'One extra clause the next time you enter would give that short line a point.'
+        )
+    else:
+        resolution = (
+            f'{question_line}. '
+            'The part to change is the next turn, where one added question would make the aim land.'
+        )
     early = late = None
     if early_late and ' then ' in early_late:
         early = int(re.search(r'\d+', early_late).group(0))
@@ -348,22 +411,35 @@ def group_story(
     cast: str = '',
     draft: dict | None = None,
     transcript: dict | None = None,
+    names: dict | None = None,
+    pairs: list | None = None,
+    shares: list | None = None,
 ) -> dict:
-    from lib.story_render import improve_toward
+    from lib.story_render import clip_clause, group_character_copy, group_halfway_target
 
     interaction_pct = int(round(100 * interaction))
     participation_pct = int(round(100 * participation))
     word_pct = int(round(100 * word_interaction))
-    target = improve_toward(
-        interaction_pct,
-        70 if interaction_pct < 70 else interaction_pct + 1,
-        increase=True,
+    target, norm, norm_name = group_halfway_target(interaction_pct, participation_pct, word_pct)
+    headline = (
+        'The turns stayed with a few voices'
+        if interaction_pct < 50
+        else 'The room kept handing the turn across'
     )
-    headline = f'A session at {interaction_pct}% interaction.'
-    character = (
-        f'{participation_pct}% participation. {word_pct}% of the words were exchanged across turns. '
-        + ('A few voices carried the airtime.' if participation < 0.75 else 'Airtime was fairly shared.')
-    )
+    portrait = {}
+    if pairs:
+        portrait['pair'] = (pairs[0][0], pairs[0][1])
+    if shares:
+        low = min(shares, key=lambda item: item[1])
+        portrait['least'] = low[0]
+        portrait['low_share'] = min(item[1] for item in shares)
+        portrait['high_share'] = max(item[1] for item in shares)
+    facts = {
+        'interaction': {'value': interaction_pct},
+        'participation': {'value': participation_pct},
+        '_portrait': portrait,
+    }
+    character = group_character_copy(facts)
     topics = _meeting_topics(transcript)
     if len(topics) >= 2:
         listed = ', '.join(topics[:-1]) + f', and {topics[-1]}'
@@ -371,23 +447,36 @@ def group_story(
     elif topics:
         goal = f'The turns keep returning to {topics[0]}.'
     else:
-        goal = f'The turns are the record of the meeting. Interaction was {interaction_pct}%.'
-    challenge = f'Interaction was {interaction_pct}%.'
+        goal = (
+            f'The turns are the record of the meeting. '
+            f'{interaction_pct}% interaction means a point could finish inside one voice.'
+        )
+    challenge = (
+        f'{interaction_pct}% interaction. '
+        'The turns stayed inside a few voices, so a point could end before someone new answered.'
+    )
     drama = cast or 'Who talks to whom, and who nobody answered.'
+    last_name = 'the last voice'
     last_line = ''
     for utterance in reversed((transcript or {}).get('utterances') or []):
         text = str(utterance.get('text') or '').strip()
         if text:
-            from lib.story_render import clip_clause
-
             last_line = clip_clause(text, 12)
+            label = utterance.get('speaker')
+            last_name = (names or {}).get(label) or last_name
             break
     if last_line:
-        resolution = f'The meeting closed on "{last_line}". Interaction finished at {interaction_pct}%.'
+        resolution = (
+            f'The meeting closed on {last_name}, who said "{last_line}". '
+            f'{interaction_pct}% interaction is where that last line had to land.'
+        )
     else:
-        resolution = f'Interaction finished at {interaction_pct}%.'
+        resolution = (
+            f'The meeting closed with the exchange still at {interaction_pct}% interaction, '
+            'so the last turn did not have to travel to a new voice.'
+        )
     one_thing = f'Name one reply before the next decision. Target: {target}% interaction.'
-    why = f'Interaction was {interaction_pct}%, so {target}% is the next step.'
+    why = f'Interaction is {interaction_pct}%, halfway toward {norm}% {norm_name}.'
     from lib.story_render import pick_transitions
 
     transitions = pick_transitions('group', group=True)

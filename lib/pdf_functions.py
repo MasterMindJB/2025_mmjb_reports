@@ -90,15 +90,22 @@ class MM_PDF(FPDF):
 
     def note_y(self) -> None:
         page = int(self.page)
-        self.content_bottom[page] = max(self.content_bottom.get(page, self.t_margin), self.get_y())
+        y = float(self.get_y())
+        # The footer parks the cursor below the content box, which used to report ~1.02.
+        if y >= self.h - self.b_margin - 0.5:
+            return
+        self.content_bottom[page] = max(self.content_bottom.get(page, self.t_margin), y)
 
     def page_fill_ratios(self) -> list[float]:
-        self.note_y()
+        if float(self.get_y()) < self.h - self.b_margin - 0.5:
+            self.note_y()
         usable = max(self.h - self.t_margin - self.b_margin, 1)
-        return [
-            max(0.0, (self.content_bottom.get(page, self.t_margin) - self.t_margin) / usable)
-            for page in range(1, int(self.page) + 1)
-        ]
+        limit = self.h - self.b_margin
+        ratios = []
+        for page in range(1, int(self.page) + 1):
+            bottom = min(self.content_bottom.get(page, self.t_margin), limit)
+            ratios.append(max(0.0, min(1.0, (bottom - self.t_margin) / usable)))
+        return ratios
 
         # Font settings
         self.set_font('Poppins', '', 12)
@@ -264,6 +271,11 @@ def _place_chord_image(pdf: 'MM_PDF', path: Path) -> None:
 
 
 def _add_direction_table(pdf: 'MM_PDF', pairs: list) -> None:
+    rows = len(pairs or []) + 2
+    needed = 28 + rows * 7
+    usable = pdf.h - pdf.t_margin - pdf.b_margin
+    if needed < usable and pdf.h - pdf.get_y() - pdf.b_margin < needed:
+        pdf.add_page()
     ink = (20, 33, 74)
     muted = (85, 98, 138)
     navy = (28, 44, 91)
@@ -524,6 +536,13 @@ def create_report_group(
     if chord_pairs:
         left, right, forward, back = chord_pairs[0][:4]
         cast = f'Who talks to whom: {left} and {right} lead with {int(forward) + int(back)}.'
+    shares = []
+    if df_nice_stats_data is not None and 'Speaking Time (%)' in getattr(df_nice_stats_data, 'columns', []):
+        for name, value in df_nice_stats_data['Speaking Time (%)'].items():
+            if str(name) == 'Average':
+                continue
+            shares.append((str(name), int(round(float(value or 0)))))
+    names = {label: info.get('name') for label, info in speaker_map.items() if info.get('name')}
     story = group_story(
         summaries=summaries,
         participation=gini_reverse_interventions,
@@ -532,6 +551,9 @@ def create_report_group(
         cast=cast,
         draft=story_draft,
         transcript=transcript,
+        names=names,
+        pairs=chord_pairs,
+        shares=shares,
     )
     write_group_story(pdf, story, path_image_chord, chord_pairs)
     if pdf.link_feedback:

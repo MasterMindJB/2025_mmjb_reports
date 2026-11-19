@@ -9,6 +9,7 @@ import re
 from langchain_core.exceptions import OutputParserException
 
 from lib.chord_diagram import directed_follows
+from lib.gemini_retry import invoke_llm
 from lib.story_craft import render_section_prompt
 from lib.story_evidence import cast_line, quote_events
 from lib.story_render import (
@@ -165,13 +166,16 @@ def _store_progress(path, payload: dict) -> None:
     path.write_text(json.dumps(payload, indent=2), encoding='utf-8')
 
 
-def _batch_prompt(audience: str, sections: tuple[str, ...], evidence: str) -> str:
+def _batch_prompt(audience: str, sections: tuple[str, ...], evidence: str, feedback: dict | None = None, turns: str = '') -> str:
     schemas = '\n'.join(f'{section}: {SCHEMAS[audience][section]}' for section in sections)
     if audience == 'personal':
         voice = (
             'Write every string to the reader as you. '
-            'Do not say the speaker, the student, or the participant. '
-            'Do not use he, she, or they for the reader, and do not capitalize He, She, or They mid-sentence. '
+            'Do not say the speaker, the student, the participant, or the individual. '
+            'Do not use he, she, or they for the reader, and do not capitalize a word mid-sentence. '
+            'Do not write I will outside quotation marks. '
+            'If the speaker recounts someone else\'s story, write "you told a student\'s story about" '
+            'and do not treat that story as the reader\'s own life. '
             'A quote must be an exact substring of that speaker\'s turn, with its original capitalization. '
             'Do not drop or recapitalize a leading word. '
             'Banned words include their inflections, such as leveraging, leveraged, and empowering. '
@@ -179,10 +183,21 @@ def _batch_prompt(audience: str, sections: tuple[str, ...], evidence: str) -> st
     else:
         voice = (
             'Write about the room. Do not address a reader as you. '
+            'The headline must describe the group, not one person. '
             'Character and challenge each need at least one rate fact, not all three. '
-            'Resolution should use the closing line of the session. '
+            'Challenge uses words. The rate is already in the facts. '
+            'Resolution names who said the closing line, inside quote marks. '
             'Banned words include their inflections, such as leveraging, leveraged, and empowering. '
         )
+    rejected = ''
+    if feedback:
+        lines = ['The previous draft was rejected. Fix each reason and do not repeat it.']
+        for section, reason in feedback.items():
+            lines.append(f'- {section}: {reason}')
+        if turns and any('quote' in str(reason).lower() for reason in feedback.values()):
+            lines.append('That quote is not from this speaker. Here are this speaker\'s turns:')
+            lines.append(turns)
+        rejected = '\n'.join(lines) + '\n'
     return (
         f'BATCH: {audience}\n'
         f'Sections still needed: {", ".join(sections)}\n'
@@ -191,31 +206,36 @@ def _batch_prompt(audience: str, sections: tuple[str, ...], evidence: str) -> st
         'Do not write a digit inside a string unless it is one of the fact values. '
         'Do not quote another person. '
         f'{voice}\n'
+        f'{rejected}'
         f'{schemas}\n'
     )
 
 
-def _fill_sections(llm, *, audience, sections, evidence, render, progress_path, draft) -> None:
+def _fill_sections(llm, *, audience, sections, evidence, render, progress_path, draft, turns: str = '') -> None:
     pending = [section for section in sections if section not in (draft.get('accepted') or [])]
     if not pending:
         return
+    reasons: dict[str, str] = {}
     for _attempt in range(ATTEMPTS):
         if not pending:
             break
-        raw = _parse_safely(llm, _batch_prompt(audience, tuple(pending), evidence))
+        raw = _parse_safely(llm, _batch_prompt(audience, tuple(pending), evidence, reasons, turns))
         if not isinstance(raw, dict):
             logging.warning('story reject [batch %s]: response was not an object', audience)
+            reasons['batch'] = 'the response was not a JSON object'
             continue
         still = []
         for section in pending:
             if section not in raw:
                 logging.warning('story reject [%s]: missing from the batch', section)
+                reasons[section] = 'missing from the batch'
                 still.append(section)
                 continue
             try:
                 rendered = render(section, raw[section])
             except (OutputParserException, TypeError, ValueError, KeyError) as exc:
                 logging.warning('story reject [%s]: %s', section, exc)
+                reasons[section] = str(exc)
                 still.append(section)
                 continue
             draft.update(rendered)
@@ -229,9 +249,12 @@ def _fill_sections(llm, *, audience, sections, evidence, render, progress_path, 
 
 def _parse_safely(llm, prompt: str):
     try:
-        return _parse_json(_content(llm.invoke(prompt)))
+        return _parse_json(_content(invoke_llm(llm, prompt)))
     except (OutputParserException, json.JSONDecodeError, TypeError, ValueError) as exc:
         logging.warning('story reject [batch]: %s', exc)
+        return None
+    except Exception as exc:
+        logging.warning('story call failed: %s', exc)
         return None
 
 
@@ -247,8 +270,23 @@ def generate_personal_draft(
         question_average=stats['session_question_average'],
         speaker_count=stats['speaker_count'],
     )
-    own, following = _quote_lists(stats['events'])
-    evidence = facts_prompt(facts, own, following)
+    own, _following = _quote_lists(stats['events'])
+    # Other people's lines stay out of this prompt. Exact-quote checks still use the transcript.
+    evidence = facts_prompt(facts, own, [])
+    substantive = 0
+    for event in stats['events']:
+        words = re.findall(r"[A-Za-z']+", str(event.get('text') or ''))
+        if len(words) >= 8 or (len(words) >= 4 and words and words[0].lower() not in {
+            'yeah', 'yes', 'yep', 'right', 'ok', 'okay', 'sure', 'mm', 'hmm', 'uh', 'um',
+        }):
+            substantive += 1
+    if substantive < 4:
+        evidence += (
+            '\nTHIN DATA: fewer than 4 substantive turns. '
+            'Drama is about those short entries and when this person chose to come in. '
+            'Resolution stays to two sentences. Use only the turns listed above.\n'
+        )
+    turns = '\n'.join(f'{item["time"]} {item["text"]}' for item in own)
     path = _progress_file(progress_dir, f'personal-{label}')
     saved = _load_progress(path)
     draft = {
@@ -275,6 +313,7 @@ def generate_personal_draft(
         ),
         progress_path=path,
         draft=draft,
+        turns=turns,
     )
     return draft
 
@@ -300,6 +339,41 @@ def generate_group_draft(
         interaction=interaction,
         word_interaction=word_interaction,
     )
+    from lib.story_render import clip_clause
+
+    durations = {}
+    for row in transcript.get('utterances') or []:
+        text = str(row.get('text') or '').strip()
+        if not text:
+            continue
+        who = name_by_label.get(row.get('speaker')) or row.get('speaker') or 'a voice'
+        span = max(0.0, float(row.get('end') or 0) - float(row.get('start') or 0))
+        durations[who] = durations.get(who, 0.0) + span
+    total = sum(durations.values()) or 1
+    shares = [(name, int(round(100 * value / total))) for name, value in durations.items()]
+    best = None
+    best_count = -1
+    for source, row in enumerate(directed):
+        for target, count in enumerate(row):
+            if source != target and count > best_count:
+                best_count = count
+                best = (order[source], order[target]) if source < len(order) and target < len(order) else None
+    portrait = {}
+    if best and best[0] and best[1]:
+        portrait['pair'] = best
+    if shares:
+        portrait['least'] = min(shares, key=lambda item: item[1])[0]
+        portrait['low_share'] = min(item[1] for item in shares)
+        portrait['high_share'] = max(item[1] for item in shares)
+    facts['_portrait'] = portrait
+    for row in reversed(transcript.get('utterances') or []):
+        text = str(row.get('text') or '').strip()
+        if text:
+            facts['_closing'] = {
+                'name': name_by_label.get(row.get('speaker')) or 'the last voice',
+                'text': clip_clause(text, 12),
+            }
+            break
     evidence = facts_prompt(
         facts,
         [],

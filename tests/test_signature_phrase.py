@@ -16,6 +16,17 @@ def test_top_bigram_keeps_discourse_markers():
     assert top_bigram(text) == ('i think', 3)
 
 
+def test_top_bigram_skips_pronoun_plus_a_light_verb():
+    from lib.report_stats import display_bigram
+
+    text = 'I got it. I got it. You set the table. The budget needs work. The budget needs work.'
+    phrase, count = top_bigram(text)
+    assert phrase not in {'i got', 'you set'}
+    assert count >= 2
+    assert display_bigram('i got') == 'I got'
+    assert display_bigram('we should') == 'we should'
+
+
 def test_top_bigram_falls_back_to_raw_top_and_handles_short_text():
     assert top_bigram('and i and i') == ('and i', 2)
     assert top_bigram('Hello') is None

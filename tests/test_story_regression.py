@@ -205,7 +205,8 @@ def test_group_character_accepts_one_fact_and_the_page_holds_the_chord(tmp_path)
     write_group_story(pdf, story, image, [('Alex Rivera', 'Blake Chen', 2, 1)])
     assert pdf._chord_page == 1
     pdf.output(tmp_path / 'group.pdf')
-    ratios = MM_PDF.latest_ratios
+    pdf.set_y(-15)
+    ratios = pdf.page_fill_ratios()
     for ratio in ratios[:-1]:
         assert ratio >= 0.40
     assert ratios[-1] >= 0.15
@@ -279,3 +280,155 @@ def test_bad_sections_are_rejected():
         reject_craft_violations('We can leverage the plan.', allowed_numbers={'44'})
     with pytest.raises(OutputParserException):
         _render('resolution', {'claim': 'We can leverage Monday', 'quote': {'text': opening, 'ts': '0:00'}})
+
+
+def test_rejection_reason_is_sent_on_the_retry():
+    from tests.fakes import FakeLLM
+    from lib.story_generation import generate_personal_draft, speaker_stats_for_story
+
+    class JourneyOnce(FakeLLM):
+        def _reply(self, text):
+            if 'BATCH:' in text and 'was rejected' not in text:
+                import json
+                payload = json.loads(super()._reply(text))
+                payload['goal']['claim'] = 'This journey stays with the plan'
+                return json.dumps(payload)
+            return super()._reply(text)
+
+    llm = JourneyOnce()
+    transcript = synthetic_transcript()
+    speaker_map = {'A': {'name': 'Alex Rivera'}, 'B': {'name': 'Blake Chen'}}
+    draft = generate_personal_draft(
+        llm,
+        transcript=transcript,
+        label='A',
+        info=speaker_map['A'],
+        stats=speaker_stats_for_story(transcript, speaker_map, 'A'),
+        forbidden_names=['Blake Chen'],
+    )
+    assert 'goal' not in draft['fallback_sections']
+    assert any('was rejected' in call and 'journey' in call for call in llm.calls)
+    assert all('NEXT SPEAKER' not in call for call in llm.calls if 'BATCH: personal' in call)
+
+
+def test_gemini_timeout_is_retried_without_adding_a_story_call():
+    from lib.gemini_retry import invoke_llm
+
+    class Boom:
+        def __init__(self):
+            self.calls = 0
+
+        def invoke(self, prompt):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError('504 Gateway Timeout')
+            return type('Reply', (), {'content': 'ok'})()
+
+    boom = Boom()
+    reply = invoke_llm(boom, 'hello', pause=lambda _delay: None)
+    assert reply.content == 'ok'
+    assert boom.calls == 2
+
+
+def test_relayed_story_is_not_written_as_the_readers_life():
+    transcript = {
+        'utterances': [
+            {
+                'speaker': 'S',
+                'text': (
+                    'A student of mine moved to New York. '
+                    'Her family is still in Iraq and they speak Farsi at home.'
+                ),
+                'start': 0,
+                'end': 8000,
+            }
+        ]
+    }
+    with pytest.raises(OutputParserException):
+        reject_craft_violations(
+            'You grew up in New York and your family speaks Farsi.',
+            transcript=transcript,
+            speaker_label='S',
+        )
+    kept = reject_craft_violations(
+        "You told a student's story about New York and a family in Iraq.",
+        transcript=transcript,
+        speaker_label='S',
+    )
+    assert "student's story" in kept
+
+
+def test_voice_post_fix_and_unquoted_first_person():
+    from lib.story_validation import normalize_mid_sentence_capitals
+
+    assert normalize_mid_sentence_capitals("that's when You stopped.") == "that's when you stopped."
+    assert normalize_mid_sentence_capitals('It buys Living in the room.') == 'It buys living in the room.'
+    fixed = reject_craft_violations("That's when You stopped the turn.", speaker_label='A')
+    assert 'you stopped' in fixed
+    with pytest.raises(OutputParserException):
+        reject_craft_violations('The individual opened the plan today.', speaker_label='A')
+    with pytest.raises(OutputParserException):
+        reject_craft_violations('I will draft the timeline tomorrow.', speaker_label='A')
+    quoted = reject_craft_violations('You said "I will draft the timeline."', speaker_label='A')
+    assert 'I will' in quoted
+
+
+def test_group_headline_and_halfway_target_are_about_the_room():
+    from lib.story_render import group_halfway_target, render_group_section
+
+    with pytest.raises(OutputParserException):
+        render_group_section(
+            'character',
+            {'headline': 'A determined creative professional'},
+            transcript=synthetic_transcript(),
+            facts={
+                'interaction': {'value': 20, 'unit': 'percent', 'line': '20% interaction'},
+                'participation': {'value': 80, 'unit': 'percent', 'line': '80% participation'},
+                '_portrait': {
+                    'pair': ('Alex Rivera', 'Blake Chen'),
+                    'least': 'Leslie',
+                    'low_share': 6,
+                    'high_share': 40,
+                },
+            },
+            cast='Who talks to whom.',
+        )
+    target, norm, name = group_halfway_target(20, 80, 40)
+    assert target == 50
+    assert norm == 80
+    assert name == 'participation'
+    rendered = render_group_section(
+        'character',
+        {'headline': 'A working session', 'number_keys': ['interaction']},
+        transcript=synthetic_transcript(),
+        facts={
+            'interaction': {'value': 20, 'unit': 'percent', 'line': '20% interaction'},
+            'participation': {'value': 80, 'unit': 'percent', 'line': '80% participation'},
+            '_portrait': {
+                'pair': ('Alex Rivera', 'Blake Chen'),
+                'least': 'Leslie',
+                'low_share': 6,
+                'high_share': 40,
+            },
+        },
+        cast='Who talks to whom.',
+    )
+    sentences = [part for part in rendered['character'].split('.') if part.strip()]
+    assert 2 <= len(sentences) <= 3
+    assert '20% interaction' in rendered['character']
+    assert 'Leslie' in rendered['character']
+
+
+def test_fill_metric_ignores_the_footer(tmp_path):
+    from lib.pdf_functions import MM_PDF
+
+    pdf = MM_PDF(path_report_assets=__import__('pathlib').Path('report_assets'))
+    pdf.add_page()
+    pdf.set_font('Poppins', '', 11)
+    pdf.multi_cell(w=0, text='One short line so the last page is not full.', align='L')
+    pdf.output(tmp_path / 'short.pdf')
+    pdf.set_y(-15)
+    ratios = pdf.page_fill_ratios()
+    assert ratios
+    assert ratios[-1] < 0.5
+    assert all(ratio <= 1 for ratio in ratios)
