@@ -1352,6 +1352,51 @@ def test_jrick_headline_cannot_use_someone_elses_dating_coach_line():
         )
 
 
+def test_common_noun_headline_stays_when_the_speaker_says_it():
+    transcript = {
+        'utterances': [
+            {
+                'speaker': 'E',
+                'text': 'Knowledge management is how I keep the work findable for the next person.',
+                'start': 0,
+                'end': 4000,
+            },
+            {
+                'speaker': 'S',
+                'text': 'Human connection is the part I keep coming back to in this room.',
+                'start': 4000,
+                'end': 8000,
+            },
+            {
+                'speaker': 'B',
+                'text': 'I also care about knowledge management and human connection in the product.',
+                'start': 8000,
+                'end': 12000,
+            },
+        ]
+    }
+    eden = render_personal_section(
+        'character',
+        {'headline': 'Knowledge management is the point you set down', 'number_keys': ['talk_share']},
+        transcript=transcript,
+        label='E',
+        facts=FACTS,
+        forbidden=[],
+    )
+    stephanie = render_personal_section(
+        'character',
+        {'headline': 'Human connection is the point you set down', 'number_keys': ['talk_share']},
+        transcript=transcript,
+        label='S',
+        facts=FACTS,
+        forbidden=[],
+    )
+    assert eden['headline'].startswith('Knowledge management')
+    assert stephanie['headline'].startswith('Human connection')
+    assert 'You came in and set a point down' not in eden['headline']
+    assert 'You came in and set a point down' not in stephanie['headline']
+
+
 def test_goal_prefixes_and_gerunds_become_a_base_verb():
     from lib.story_render import goal_line
 

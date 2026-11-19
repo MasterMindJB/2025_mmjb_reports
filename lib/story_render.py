@@ -1154,8 +1154,28 @@ def _normalize_quote(text: str) -> str:
     return re.sub(r'[^a-z0-9]+', '', (text or '').lower())
 
 
+_ROLE_WORDS = {
+    'adviser', 'advisor', 'analyst', 'architect', 'attorney', 'author', 'coach',
+    'consultant', 'counselor', 'counsellor', 'designer', 'developer', 'director',
+    'doctor', 'engineer', 'entrepreneur', 'executive', 'facilitator', 'founder',
+    'lawyer', 'manager', 'mentor', 'moderator', 'officer', 'president',
+    'professor', 'psychologist', 'researcher', 'scientist', 'specialist',
+    'teacher', 'therapist', 'trainer',
+}
+
+
+def _role_identity(phrase: str) -> bool:
+    """Role phrases such as 'research engineer'. 'knowledge management' is not one."""
+    return any(word in _ROLE_WORDS for word in phrase.lower().split())
+
+
 def foreign_phrase(text: str, transcript, label: str) -> str | None:
-    """A headline phrase that belongs to someone else's turn, not this speaker's."""
+    """A role or identity phrase this speaker never said.
+
+    A common noun phrase such as 'knowledge management' is fine when this speaker
+    says it, even if someone else says it too. Only a multi-word role the speaker
+    never used is a leak.
+    """
     own = ' '.join(
         str(row.get('text') or '')
         for row in (transcript or {}).get('utterances') or []
@@ -1166,12 +1186,18 @@ def foreign_phrase(text: str, transcript, label: str) -> str | None:
         for row in (transcript or {}).get('utterances') or []
         if row.get('speaker') != label
     ]
+
+    def leaked(phrase: str) -> bool:
+        if not _role_identity(phrase):
+            return False
+        if phrase in own:
+            return False
+        return any(phrase in other for other in others)
+
     content = [word for word in re.findall(r"[A-Za-z']+", text or '') if len(word) >= 4]
     for index in range(len(content) - 1):
         pair = f'{content[index]} {content[index + 1]}'.lower()
-        if pair in own:
-            continue
-        if any(pair in other for other in others):
+        if leaked(pair):
             return pair
     words = re.findall(r"[A-Za-z']+", text or '')
     for size in (6, 5, 4):
@@ -1182,9 +1208,7 @@ def foreign_phrase(text: str, transcript, label: str) -> str | None:
             if not any(len(word) >= 4 for word in window):
                 continue
             phrase = ' '.join(window).lower()
-            if phrase in own:
-                continue
-            if any(phrase in other for other in others):
+            if leaked(phrase):
                 return phrase
     return None
 
