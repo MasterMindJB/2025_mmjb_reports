@@ -1914,10 +1914,11 @@ def _build_personal_story(llm, transcript, label: str, info: dict, stats: dict, 
     if enough_speech(rows) and not _has_merged_bullet(page) and upgrade_calls(llm) < 2:
         logging.warning('merged bullet rescue for %s on 3.6: %s', label, '; '.join(failures))
         note_upgrade(llm)
-        _rescue_merged_bullet(llm, quotes, speech, failures, pool)
+        piece_logs = _rescue_merged_bullet(llm, quotes, speech, failures, pool)
         page = assemble_personal_bullets(pool, quotes, speech)
         if not _has_merged_bullet(page):
-            logging.warning('merged bullet needs review for %s: %s', label, '; '.join(failures) or 'no merged bullet')
+            logged = '; '.join([*failures, *piece_logs]) or 'no merged bullet'
+            logging.warning('merged bullet needs review for %s: %s', label, logged)
     if page['bullets'] or (pool and page['needs_review']):
         logging.warning('personal narrative assembled from the candidate pool: %s', failures)
         payload = dict(best_payload or {})
@@ -1964,36 +1965,163 @@ def _has_merged_bullet(page: dict) -> bool:
     return bool(bullets) and str(bullets[0]).lower().startswith('you seem to care')
 
 
-def _rescue_merged_bullet(llm, quotes: list[str], speech: str, reasons: list[str], pool: list) -> None:
-    """One 3.6 call with the failing reasons and the full speech. This is the second try."""
+def _merged_behavior(care: str, goal: str) -> str:
+    return f'You seem to care about {care.strip()}, and it seemed like you were trying to {goal.strip().rstrip(".")}.'
+
+
+def care_piece_problem(care: str, speech: str, quote: str) -> str:
+    """A care phrase on its own: 2–4 words, grounded, and not a leaked example."""
+    phrase = str(care or '').strip().rstrip('.')
+    if not phrase:
+        return 'care is missing'
+    behavior = _merged_behavior(phrase, 'show the point')
+    problem = care_phrase_problem(behavior, quote)
+    if problem:
+        return problem
+    if not care_grounded(behavior, speech, quote):
+        return f'care object is not in this person\'s speech: {_care_head(behavior)}'
+    leaked = prompt_example_problem(behavior, speech)
+    if leaked.startswith('care'):
+        return leaked
+    return voice_problem(phrase, speech)
+
+
+def goal_piece_problem(goal: str, quote: str, speech: str) -> str:
+    """A goal phrase on its own: 3–6 words, and not only a restatement of the quote."""
+    phrase = str(goal or '').strip().rstrip('.')
+    if not phrase:
+        return 'goal is missing'
+    behavior = _merged_behavior('real work', phrase)
+    problem = goal_phrase_problem(behavior, quote)
+    if problem:
+        return problem
+    leaked = prompt_example_problem(behavior, speech)
+    if leaked.startswith('goal'):
+        return leaked
+    return voice_problem(phrase, speech)
+
+
+def merged_quote_choices(behavior: str, quotes: list[str], speech: str, avoid: set[str] | None = None) -> list[str]:
+    """Complete thoughts, fresh ones first. A used clause stays available as the last resort."""
+    blocked = set(avoid or [])
+    options: list[str] = []
+    seen: list[str] = []
+    sentences = _sentences(speech) or ([speech] if speech else [])
+    pieces: list[str] = []
+    for sentence in sentences:
+        pieces.append(sentence)
+        pieces.extend(_clause_spans(sentence))
+    for source in [*quotes, *pieces]:
+        text = str(source or '').strip().strip('"').strip('“”')
+        if not text or text in seen:
+            continue
+        seen.append(text)
+        count = len(_raw_words(text))
+        if not _clause_is_complete(text):
+            continue
+        if count >= 8 or (count >= 6 and text in set(sentences)):
+            options.append(text)
+    point = _point_words(behavior, '')
+    sharing = [item for item in options if _shares_point(item, point)] or options
+    fresh = [item for item in sharing if item not in blocked]
+    used = [item for item in sharing if item in blocked]
+    return fresh + used
+
+
+def pick_merged_quote(behavior: str, quotes: list[str], speech: str, avoid: set[str] | None = None) -> str:
+    """A verbatim complete thought. A later bullet's clause is allowed when nothing else qualifies."""
+    choices = merged_quote_choices(behavior, quotes, speech, avoid)
+    if choices:
+        return choices[0]
+    return quotes[0] if quotes else ''
+
+
+def mix_merged_triples(triples, quotes: list[str], speech: str) -> tuple[dict | None, list[str]]:
+    """Keep a passing care, a passing goal, and any passing why, even from different triples."""
+    logs: list[str] = []
+    cares: list[str] = []
+    goals: list[str] = []
+    whys: list[str] = []
+    sample = quotes[0] if quotes else speech
+    for index, triple in enumerate(list(triples or [])[:3]):
+        if not isinstance(triple, dict):
+            logs.append(f'triple {index + 1}: not an object')
+            continue
+        care = str(triple.get('care') or '').strip()
+        goal = str(triple.get('goal') or '').strip()
+        why = str(triple.get('why') or '').strip()
+        care_problem = care_piece_problem(care, speech, sample)
+        if care_problem:
+            logs.append(f'care {index + 1}: {care_problem}')
+        else:
+            cares.append(care)
+        goal_problem = goal_piece_problem(goal, sample, speech)
+        if goal_problem:
+            logs.append(f'goal {index + 1}: {goal_problem}')
+        else:
+            goals.append(goal)
+        if not why:
+            logs.append(f'why {index + 1}: why is missing')
+        else:
+            whys.append(why)
+    if logs:
+        logging.warning('merged piece failures: %s', '; '.join(logs))
+    if not cares or not goals or not whys:
+        return None, logs
+    for care in cares:
+        for goal in goals:
+            behavior = _merged_behavior(care, goal)
+            choices = merged_quote_choices(behavior, quotes, speech) or ['']
+            for quote in choices:
+                if not quote:
+                    logs.append('quote: no complete thought in the speech')
+                    continue
+                copied = goal_phrase_problem(behavior, quote)
+                joined = copied or behavior_word_problem(behavior, quote) or voice_problem(behavior, speech) or prompt_example_problem(behavior, speech)
+                if joined:
+                    logs.append(f'pair {care!r} / {goal!r}: {joined}')
+                    continue
+                if not care_grounded(behavior, speech, quote):
+                    logs.append(f'pair {care!r}: care object is not in this person\'s speech')
+                    continue
+                for why in whys:
+                    if merged_length_problem(behavior, why) or not _why_passes_gate(behavior, quote, why, quotes, speech):
+                        reason = merged_length_problem(behavior, why) or _why_problem(why, quote, behavior, quotes, speech) or 'why does not pass'
+                        logs.append(f'why for {care!r}: {reason}')
+                        continue
+                    logging.warning('merged bullet mixed care %r goal %r why %r', care, goal, why)
+                    return {'behavior': behavior, 'quote': quote, 'why': listener_why(why, behavior)}, logs
+    return None, logs
+
+
+def _rescue_merged_bullet(llm, quotes: list[str], speech: str, reasons: list[str], pool: list) -> list[str]:
+    """One 3.6 call. Three care/goal/why triples, mixed from whichever piece passes."""
     quote_block = '\n'.join(f'Q{index + 1}: {quote}' for index, quote in enumerate(quotes)) or 'None.'
     failed = '\n'.join(f'- {item}' for item in reasons) or '- the merged bullet did not pass'
     prompt = (
-        'Write one merged first bullet. It starts with "You seem to care" and includes '
-        '"it seemed like you were trying to". Care is 2 to 4 words. The goal is 3 to 6 words. '
-        'why is one sentence of 12 words or fewer. It starts with This or That and uses shows, helps, lets, or tells. '
-        'Do not repeat the care phrase. Do not write I, me, my, or we. No advice. '
-        'quote is an id such as Q1.\n'
+        'Write 3 merged triples. Each care is 2 to 4 words. Each goal is 3 to 6 words. '
+        'Each why is one sentence of 12 words or fewer. It starts with This or That and uses shows, helps, lets, or tells. '
+        'Do not repeat the care phrase. Do not write I, me, my, or we. No advice.\n'
         f'The earlier draft failed:\n{failed}\n'
         f'SPEECH\n{speech or "None."}\n'
         f'QUOTES\n{quote_block}\n'
-        'Return JSON only: {"behavior": "...", "quote": "Q1", "why": "..."}\n'
+        'Return JSON only: {"triples": [{"care": "...", "goal": "...", "why": "..."}, {"care": "...", "goal": "...", "why": "..."}, {"care": "...", "goal": "...", "why": "..."}]}\n'
     )
     try:
         raw = _raw_text(_invoke_personal(llm, prompt, upgrade_model_name()))
     except Exception as exc:
         logging.warning('merged bullet rescue failed: %s', exc)
-        return
+        return [f'rescue failed: {exc}']
     data = _parse(raw) or {}
-    if not isinstance(data, dict):
-        return
-    behavior = str(data.get('behavior') or '')
-    why = str(data.get('why') or '')
-    quote = _quote_by_id(str(data.get('quote') or 'Q1'), quotes, 0)
-    if not quote or not _is_merged_bullet(behavior):
-        logging.warning('merged bullet rescue did not return a merged bullet')
-        return
-    pool.append(_make_candidate(behavior, quote, why, '3.6-rescue', quotes, speech))
+    triples = data.get('triples') if isinstance(data, dict) else None
+    if not isinstance(triples, list):
+        logging.warning('merged piece failures: the rescue did not return triples')
+        return ['the rescue did not return triples']
+    mixed, logs = mix_merged_triples(triples, quotes, speech)
+    if not mixed:
+        return logs or ['no passing care, goal, and why']
+    pool.append(_make_candidate(mixed['behavior'], mixed['quote'], mixed['why'], '3.6-rescue', quotes, speech))
+    return logs
 
 
 def _why_failures(found: dict) -> bool:

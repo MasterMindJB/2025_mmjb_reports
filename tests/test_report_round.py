@@ -1521,19 +1521,18 @@ def test_enough_speech_gets_a_second_try_for_the_merged_bullet(monkeypatch, capl
     from lib.personal_narrative import build_personal_story
 
     seen = []
-    good = {
-        'behavior': 'You seem to care about real work, and it seemed like you were trying to show the point.',
-        'quote': 'Q1',
-        'why': 'This shows people the point.',
-    }
 
     def fake_rest(model, key, prompt, mode='budget', max_output=512):
         seen.append((model, prompt))
-        if prompt.startswith('Write one merged first bullet'):
+        if prompt.startswith('Write 3 merged triples'):
             assert 'SPEECH' in prompt
             assert 'The earlier draft failed' in prompt
             assert 'The budget can wait' in prompt
-            return type('Reply', (), {'content': __import__('json').dumps(good)})()
+            return type('Reply', (), {'content': __import__('json').dumps({'triples': [
+                {'care': 'life', 'goal': 'show the point', 'why': 'This shows people the point.'},
+                {'care': 'real work', 'goal': 'make them', 'why': 'This helps people see it.'},
+                {'care': 'the niche', 'goal': 'do it', 'why': 'This shows people the point.'},
+            ]})})()
         return type('Reply', (), {'content': __import__('json').dumps({
             'bullets': [{
                 'behavior': 'You brought up the budget.',
@@ -1585,3 +1584,76 @@ def test_enough_speech_gets_a_second_try_for_the_merged_bullet(monkeypatch, capl
     assert seen.count('gemini-3.6-flash') == 2
     assert missed['needs_review'] is True
     assert 'merged bullet needs review' in caplog.text
+
+
+def test_leslie_merged_bullet_mixes_across_five_runs(monkeypatch, caplog):
+    import logging
+
+    from lib.personal_narrative import build_personal_story, pick_merged_quote
+
+    speech = (
+        'And you make it hinge upon yourself when the work gets hard and the room is waiting. '
+        'Since I was a kid I told myself I would hold firm on the limits that matter most to the people here. '
+        'The client can wait until the work is honest and the point is clear enough to share. '
+        'I keep coming back to making the work real for the people who will use it later. '
+        'That is the part I will not give up when the meeting moves on too fast today indeed.'
+    )
+    assert len(speech.split()) == 91
+    later = 'The client can wait until the work is honest enough to share today.'
+    behavior = 'You seem to care about real work, and it seemed like you were trying to show the room now.'
+    assert pick_merged_quote(behavior, ['I told myself.', later], f'I told myself. {later}', avoid={later}) == later
+    good = ('real work', 'show the room now', 'This shows people the work.')
+    junk = [
+        ('life', 'make them', 'I think this shows the work.'),
+        ('the niche', 'do it', 'This sentence keeps going past twelve words for a why line today.'),
+        ('your movies', 'show your limits because you hold firm on what matters most', 'This tells me you care.'),
+    ]
+    runs = []
+    for slot in range(5):
+        triples = []
+        for index, bad in enumerate(junk):
+            care, goal, why = bad
+            if index == slot % 3:
+                care = good[0]
+            if index == (slot + 1) % 3:
+                goal = good[1]
+            if index == (slot + 2) % 3:
+                why = good[2]
+            triples.append({'care': care, 'goal': goal, 'why': why})
+        runs.append(triples)
+
+    class Client:
+        google_api_key = 'test-key'
+        model = 'gemini-3.1-flash-lite'
+
+        def invoke(self, prompt, **kwargs):
+            raise AssertionError('the entry point should call REST')
+
+    transcript = {'utterances': [{'speaker': 'L', 'text': speech, 'start': 0, 'end': 90000}]}
+    for triples in runs:
+        seen = []
+
+        def fake_rest(model, key, prompt, mode='budget', max_output=512, triples=triples, seen=seen):
+            seen.append(model)
+            if prompt.startswith('Write 3 merged triples'):
+                assert speech[:40] in prompt
+                return type('Reply', (), {'content': __import__('json').dumps({'triples': triples})})()
+            return type('Reply', (), {'content': __import__('json').dumps({
+                'bullets': [{
+                    'behavior': 'You brought up the budget.',
+                    'quote': 'Q1',
+                    'why': 'You brought up the budget.',
+                }],
+            })})()
+
+        monkeypatch.setattr('lib.personal_narrative._rest_generate', fake_rest)
+        with caplog.at_level(logging.WARNING):
+            story = build_personal_story(
+                Client(), transcript, 'L', {'name': 'Leslie'},
+                {'share': 18, 'turns': 4, 'questions': 0, 'speaker_count': 6, 'words': 91},
+            )
+        assert seen.count('gemini-3.6-flash') == 2
+        assert story['bullets'][0].lower().startswith('you seem to care')
+        assert 'real work' in story['bullets'][0]
+        assert 'show the room now' in story['bullets'][0]
+    assert 'merged piece failures' in caplog.text
