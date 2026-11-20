@@ -1,0 +1,154 @@
+:root {
+  --paper: #f4efe6;
+  --card: #fffdf8;
+  --ink: #1d2430;
+  --muted: #5e675f;
+  --line: #ddd4c6;
+  --accent: #1f6a56;
+  --accent-ink: #f7f4ee;
+  --danger: #8d3a32;
+  --warn: #8a5a12;
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(1200px 400px at 10% -10%, #efe4cf 0%, transparent 50%),
+    var(--paper);
+  color: var(--ink);
+  font: 17px/1.5 "Segoe UI", "Helvetica Neue", sans-serif;
+}
+
+h1, h2, h3 {
+  font-family: Palatino, "Palatino Linotype", "Iowan Old Style", Georgia, serif;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+}
+
+h1 { font-size: 2.1rem; margin: 0.2rem 0 0.6rem; }
+h2 { font-size: 1.45rem; margin: 0 0 0.4rem; }
+h3 { margin: 0; }
+
+a { color: var(--accent); }
+a:hover { text-decoration: none; }
+
+.site-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem 6vw;
+  border-bottom: 1px solid var(--line);
+}
+
+.brand {
+  color: var(--ink);
+  text-decoration: none;
+  font-family: Palatino, Georgia, serif;
+  font-size: 1.15rem;
+}
+
+nav { display: flex; gap: 1rem; align-items: center; }
+nav a { color: var(--ink); text-decoration: none; }
+nav form { margin: 0; }
+
+main { padding: 2rem 6vw 4rem; max-width: 1100px; }
+
+.panel, .speaker {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 1.25rem 1.4rem 1.4rem;
+  margin: 1rem 0;
+}
+
+.narrow { max-width: 34rem; }
+
+.eyebrow {
+  margin: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.lede { color: var(--muted); margin-top: 0; }
+
+label { display: block; font-size: 0.92rem; margin: 0.8rem 0 0.25rem; }
+input, select, button {
+  font: inherit;
+}
+input, select {
+  width: 100%;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: white;
+  color: var(--ink);
+}
+button, .button {
+  display: inline-block;
+  margin-top: 1rem;
+  background: var(--accent);
+  color: var(--accent-ink);
+  border: 0;
+  border-radius: 999px;
+  padding: 0.6rem 1.1rem;
+  text-decoration: none;
+  cursor: pointer;
+}
+button.secondary, button.linkish {
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid var(--line);
+}
+button.linkish { margin: 0; padding: 0.2rem 0.6rem; }
+
+.page-head, .actions { display: flex; justify-content: space-between; gap: 1rem; align-items: center; flex-wrap: wrap; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.8rem 1rem; }
+.check { display: flex; gap: 0.6rem; align-items: flex-start; margin-top: 1rem; }
+.check input { width: auto; margin-top: 0.3rem; }
+.optional, .muted, .note { color: var(--muted); }
+.note { font-size: 0.92rem; }
+.muted { display: block; font-size: 0.85rem; }
+
+.flash, .error {
+  background: #f8efe4;
+  border: 1px solid #e4c8a4;
+  padding: 0.7rem 0.9rem;
+  border-radius: 10px;
+}
+.error { border-color: #e3b4ae; background: #fbf1ef; color: var(--danger); }
+
+.status {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 0.1rem 0.65rem;
+  background: #ece7dc;
+  font-size: 0.85rem;
+  text-transform: capitalize;
+}
+.status-review, .status-sent { background: #e5f2ec; }
+.status-error { background: #f8e4e1; }
+
+table.sessions { width: 100%; border-collapse: collapse; background: var(--card); border-radius: 14px; overflow: hidden; }
+table.sessions th, table.sessions td { text-align: left; padding: 0.8rem 1rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+.samples { padding-left: 1.1rem; }
+.samples time { color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 0.4rem; }
+.merge { display: flex; gap: 0.6rem; align-items: end; flex-wrap: wrap; margin-bottom: 0.6rem; }
+.merge select, .merge label { margin: 0; }
+.merge select { width: 16rem; }
+.report-links { display: flex; gap: 0.8rem; flex-wrap: wrap; padding: 0; list-style: none; }
+iframe { width: 100%; height: 70vh; border: 1px solid var(--line); border-radius: 12px; background: white; }
+.recipients { padding-left: 1.1rem; }
+form.inline { display: inline; }
+
+@media (max-width: 700px) {
+  main, .site-header { padding-left: 1rem; padding-right: 1rem; }
+  iframe { height: 60vh; }
+  h1 { font-size: 1.7rem; }
+}

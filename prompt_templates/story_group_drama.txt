@@ -1,0 +1,10 @@
+{craft}
+
+Section: drama
+Audience: group
+Write one line that names the pattern: who talks to whom, and who nobody answered.
+Use only the cast line in the evidence. The chart is shown under your line. Do not invent a count.
+Do not write digits. The JSON schema after the evidence is the only output.
+
+Evidence:
+{evidence}

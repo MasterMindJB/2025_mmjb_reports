@@ -1,0 +1,4 @@
+# Optional. The original notebooks still run with these, plus requirements.txt.
+jupyterlab==4.3.4
+papermill==2.6.0
+plotapi==0.3.1

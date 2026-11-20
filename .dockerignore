@@ -1,0 +1,13 @@
+.git
+.github
+.venv
+venv
+data
+media
+output
+tests
+**/__pycache__
+.pytest_cache
+.env
+*.ipynb
+do_not_commit

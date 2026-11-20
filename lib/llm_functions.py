@@ -1,23 +1,76 @@
 import json
 import logging
+import re
+import os
 from pathlib import Path
 from typing import TypeAlias
 
 import pandas as pd
 from langchain_core.language_models.chat_models import BaseChatModel
 
-from langchain.globals import set_debug, set_llm_cache
+from langchain_core.globals import set_debug
 from langchain_core.output_parsers import JsonOutputParser, StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.runnables import RunnableLambda
 from langchain_google_genai import ChatGoogleGenerativeAI
 from google.api_core.exceptions import ResourceExhausted
 from langchain_core.exceptions import OutputParserException
-from langchain_core.caches import InMemoryCache
+
+from lib.llm_validation import validate_llm_output
+from lib.data_story import signature_card
 
 set_debug(False)  # Set to True to see communication information
-set_llm_cache(InMemoryCache())
+# LLM responses are not cached. A cache would replay an invalid completion and
+# the parser retry would never see a new answer.
 
 JSON: TypeAlias = dict[str, "JSON"] | list["JSON"] | str | int | float | bool | None
+
+
+def _signature_fields(analysis: str, speaker_text: str, bigram: str) -> dict[str, str]:
+    """Accept JSON or the What / So, what / Now, what headings.
+
+    Illustrative examples are allowed to be invented. They must be 6 to 25 words,
+    and the reading must mention this speaker's real bigram. Coaching is allowed here.
+    """
+    from lib.story_validation import word_count
+
+    cleaned = analysis.strip()
+    if cleaned.startswith('```'):
+        cleaned = re.sub(r'^```(?:json)?\s*', '', cleaned)
+        cleaned = re.sub(r'\s*```$', '', cleaned)
+    data = None
+    if cleaned.startswith('{'):
+        data = json.loads(cleaned)
+    if not isinstance(data, dict):
+        data = signature_card(cleaned)
+    fields = {}
+    for key in ('what', 'so_what', 'now_what'):
+        # Only the bigram is grounded. Length is clipped rather than rejected.
+        value = re.sub(r'\s+', ' ', str(data.get(key) or '')).strip()
+        from lib.story_validation import ban_hit
+
+        if word_count(value) < 6:
+            raise ValueError(f'signature {key} must be at least 6 words, not {word_count(value)}')
+        hit = ban_hit(value)
+        if hit:
+            raise ValueError(f'signature {key} contains {hit!r}')
+        words = re.findall(r"\S+", value)
+        if len(words) > 25:
+            value = ' '.join(words[:25]).rstrip(',;:')
+        fields[key] = value
+    if bigram and bigram.lower() not in ' '.join(fields.values()).lower():
+        raise ValueError(f'signature must discuss the real bigram {bigram!r}')
+    return fields
+
+
+def _signatures_present(speaker_analysis: dict) -> bool:
+    """A cached analysis is complete only when every speaker has a signature phrase."""
+    if not isinstance(speaker_analysis, dict) or not speaker_analysis:
+        return False
+    for value in speaker_analysis.values():
+        if not isinstance(value, dict) or not value.get('personal_signature_phrase'):
+            return False
+    return True
 
 
 class ConversationSummarizer:
@@ -35,6 +88,7 @@ class ConversationSummarizer:
         #
         'personal_super_power': parser_str,
         'personal_errors_and_corrections': parser_json,
+        'personal_signature_phrase': parser_str,
         'personal_framework_amase': parser_json,
         'personal_framework_enneagram': parser_json,
         'personal_framework_doshas': parser_json,
@@ -61,42 +115,51 @@ class ConversationSummarizer:
         with open(path_file, 'r', encoding='UTF-8') as file:
             return file.read()
 
-    def __init__(self, path_save_dir: Path, path_prompt_templates: Path):
+    def __init__(
+        self,
+        path_save_dir: Path,
+        path_prompt_templates: Path,
+        llm: BaseChatModel | None = None,
+        on_progress=None,
+    ):
         self.path_save_dir = path_save_dir
         self.path_prompt_templates = path_prompt_templates
+        self.on_progress = on_progress
 
         # self.llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro") # Free quota/day = 50
-        self.llm = ChatGoogleGenerativeAI(  # Free quota/day = 1500
-            # model="gemini-1.5-flash",
-            model="gemini-2.5-flash",
-            # model="gemini-2.0-flash-lite",
-            temperature=0,
-        )
+        if llm is None:
+            from app.config import parse_gemini_model, parse_gemini_timeout
 
-        # Create dictionary to store prompt templates for each type of conversation information generation
+            self.llm = ChatGoogleGenerativeAI(
+                model=parse_gemini_model(os.getenv('GEMINI_MODEL')),
+                temperature=0,
+                timeout=parse_gemini_timeout(os.getenv('GEMINI_TIMEOUT_SECONDS')),
+                max_retries=2,
+            )
+        else:
+            self.llm = llm
+
         self.prompt_templates = {}
         for partial_file_name, parser in self.file_parser_map.items():
-            # Create a ChatPromptTemplate for each type of conversation information generation using the corresponding template file
             self.prompt_templates[partial_file_name] = ChatPromptTemplate.from_template(
                 self.get_prompt_template(Path(partial_file_name).with_suffix('.txt'))
             )
 
-        # Create dictionary to store processing chains for each type of conversation information generation
         self.chains: dict[str, BaseChatModel] = {}
         for partial_file_name, parser in self.file_parser_map.items():
-            # Create a processing chain that combines:
-            # 1. The prompt template
-            # 2. The language model (LLM)
-            # 3. The appropriate parser (JSON or String)
             self.chains[partial_file_name] = (
-                self.prompt_templates[partial_file_name] | self.llm | parser
+                self.prompt_templates[partial_file_name]
+                | self.llm
+                | parser
+                | RunnableLambda(
+                    lambda value, output_name=partial_file_name: validate_llm_output(
+                        output_name, value
+                    )
+                )
             )
 
-        # Create dictionary to store retry-enabled chains for each type of conversation information generation
         self.chains_with_retry = {}
         for partial_file_name, parser in self.file_parser_map.items():
-            # Add retry capability to each chain to handle potential API rate limits
-            # Will retry up to stop_after_attempt times if ResourceExhausted error occurs
             self.chains_with_retry[partial_file_name] = self.chains[partial_file_name].with_retry(
                 retry_if_exception_type=[
                     ResourceExhausted,  # Google only
@@ -104,6 +167,88 @@ class ConversationSummarizer:
                 ],
                 stop_after_attempt=self.stop_after_attempt,
             )
+
+    def _progress(self, message: str) -> None:
+        if self.on_progress is not None:
+            self.on_progress(message)
+        else:
+            logging.info(message)
+
+    def signature_phrase(self, speaker_text: str) -> dict | None:
+        """Most frequent bigram for one speaker, plus the sociolinguist's reading of it.
+
+        Uses prompt_templates/personal_signature_phrase.txt verbatim, then adds this
+        person's own lines that contain the phrase. Returns None when the speaker
+        said fewer than two words.
+        """
+        from lib.data_story import signature_examples
+        from lib.gemini_retry import invoke_llm
+        from lib.report_stats import display_bigram, top_bigram
+        from lib.story_validation import ban_instruction
+
+        found = top_bigram(speaker_text)
+        if found is None:
+            return None
+        bigram, count = found
+        shown = display_bigram(bigram)
+        prompt = self.get_prompt_template(Path('personal_signature_phrase.txt')).format(bigram=shown)
+        examples = signature_examples(speaker_text, bigram)
+        message = prompt
+        if examples:
+            message += '\n\nLines this person actually said:\n' + examples
+        message += (
+            '\n\nReturn JSON only, with keys what, so_what, now_what. '
+            'Write in second person to the reader. '
+            'The examples under What?, So, what?, and Now, what? are illustrative and may be invented. '
+            'Each of those three answers must be 6 to 25 words. '
+            'Do not use the word coaching. '
+            f'{ban_instruction()} '
+            f'The phrase you discuss must be "{shown}". '
+            'Do not quote the transcript. '
+            'Example clips in the lines above already contain that phrase. '
+            'Each answer is 6 to 25 words.'
+        )
+        parsed = None
+        feedback = ''
+        last_error = None
+        for _attempt in range(2):
+            raw = invoke_llm(self.llm, message + feedback)
+            analysis = raw.content if hasattr(raw, 'content') else str(raw)
+            if isinstance(analysis, list):
+                analysis = ' '.join(str(part) for part in analysis)
+            try:
+                analysis = validate_llm_output('personal_signature_phrase', str(analysis))
+                parsed = _signature_fields(analysis, speaker_text, bigram)
+                break
+            except (OutputParserException, json.JSONDecodeError, ValueError, TypeError) as exc:
+                last_error = exc
+                logging.warning('signature reject: %s', exc)
+                feedback = (
+                    f'\n\nThe previous answer was rejected: {exc}. '
+                    'Fix that specific problem and answer again.\n'
+                )
+                parsed = None
+        if parsed is None:
+            logging.warning('signature kept the computed card because %s', last_error)
+            from lib.story_render import computed_signature
+
+            filled = computed_signature(bigram, int(count), [])
+            return {
+                'bigram': bigram,
+                'count': int(count),
+                'analysis': filled['what'],
+                'examples': examples,
+                'computed': True,
+                **filled,
+            }
+        return {
+            'bigram': bigram,
+            'count': int(count),
+            'analysis': parsed['what'],
+            'examples': examples,
+            'computed': False,
+            **parsed,
+        }
 
     def speaker_map_rename(self) -> JSON:
         """Shows some information from the speaker maps and asks for the names of the speakers so that the speaker map has real names.
@@ -280,6 +425,7 @@ class ConversationSummarizer:
         # Process all speakers
         for i in range(_df_utter_reduced.shape[0]):
             speaker = _df_utter_reduced.index[i]
+            self._progress(f'Summarizing speaker {speaker}')
             logging.debug('...processing speaker [%s].', speaker)
 
             _tmp_speaker = speaker_map.get(speaker, {})
@@ -293,14 +439,14 @@ class ConversationSummarizer:
                 _tmp_speaker['personal_summary'] = self.chains_with_retry[
                     'personal_summary'
                 ].invoke({'participation': _df_utter_reduced.iloc[i]['text']})
-                logging.info('personal_summary: %s', _tmp_speaker['personal_summary'])
+                logging.debug('personal_summary: %s', _tmp_speaker['personal_summary'])
 
             if generate_all or force_regen_personal_key_contributions:
                 logging.debug('......creating speaker contributions.')
                 _tmp_speaker['personal_key_contributions'] = self.chains_with_retry[
                     'personal_key_contributions'
                 ].invoke({'participation': _df_utter_reduced.iloc[i]['text']})
-                logging.info(
+                logging.debug(
                     'personal_key_contributions: %s', _tmp_speaker['personal_key_contributions']
                 )
 
@@ -309,7 +455,7 @@ class ConversationSummarizer:
                 _tmp_speaker['personal_action_items'] = self.chains_with_retry[
                     'personal_action_items'
                 ].invoke({'participation': _df_utter_reduced.iloc[i]['text']})
-                logging.info('personal_action_items: %s', _tmp_speaker['personal_action_items'])
+                logging.debug('personal_action_items: %s', _tmp_speaker['personal_action_items'])
 
             _speaker_sorted = {}
             _speaker_sorted['name'] = name
@@ -431,6 +577,7 @@ class ConversationSummarizer:
             if return_unchanged:
                 return summaries
 
+        self._progress('Writing the group summary')
         summaries['speaker_count'] = speakers_expected
 
         # Initialize missing fields to avoid KeyError when individual force flags are True
@@ -607,6 +754,7 @@ class ConversationSummarizer:
         # Process all speakers
         for speaker in df_speaker_stats.index:
             speaker_id = df_speaker_stats.loc[speaker]['speaker']
+            self._progress(f'Analyzing {speaker}')
 
             logging.debug('...processing speaker [%s].', speaker_id)
 
@@ -638,7 +786,7 @@ class ConversationSummarizer:
                         'conversation_script': conversation_script,
                     }
                 )
-                logging.info(
+                logging.debug(
                     'personal_super_power: %s',
                     _tmp_speaker['personal_super_power'],
                 )
@@ -654,7 +802,7 @@ class ConversationSummarizer:
                         'conversation_script': conversation_script,
                     }
                 )
-                logging.info(
+                logging.debug(
                     'personal_framework_amase: %s', _tmp_speaker['personal_framework_amase']
                 )
 
@@ -669,7 +817,7 @@ class ConversationSummarizer:
                         'conversation_script': conversation_script,
                     }
                 )
-                logging.info(
+                logging.debug(
                     'personal_framework_enneagram: %s',
                     _tmp_speaker['personal_framework_enneagram'],
                 )
@@ -685,7 +833,7 @@ class ConversationSummarizer:
                         'conversation_script': conversation_script,
                     }
                 )
-                logging.info(
+                logging.debug(
                     'personal_framework_doshas: %s', _tmp_speaker['personal_framework_doshas']
                 )
 
@@ -699,10 +847,13 @@ class ConversationSummarizer:
                         'conversation_script': conversation_script,
                     }
                 )
-                logging.info(
+                logging.debug(
                     'personal_errors_and_corrections: %s',
                     _tmp_speaker['personal_errors_and_corrections'],
                 )
+
+            # The signature card and its Gemini call are gone. A repeated phrase, if any,
+            # is passed into the one personal narrative call instead.
 
             # Created to keep the sorting order
             _speaker_sorted = {}
@@ -716,6 +867,9 @@ class ConversationSummarizer:
             _speaker_sorted['personal_errors_and_corrections'] = _tmp_speaker[
                 'personal_errors_and_corrections'
             ]
+            _speaker_sorted['personal_signature_phrase'] = _tmp_speaker.get(
+                'personal_signature_phrase'
+            )
 
             # Fusion _tmp_speaker with speaker_analysis[speaker]
             speaker_analysis[speaker_id] = _speaker_sorted

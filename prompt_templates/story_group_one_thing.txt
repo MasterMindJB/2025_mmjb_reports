@@ -1,0 +1,10 @@
+{craft}
+
+Section: one_thing
+Audience: group
+Write the ONE THING for the team in 25 words or fewer.
+Start with one allowed verb. Use the target number from the evidence. No also.
+Do not write digits in a string. Put the halfway number only in target_value. The JSON schema after the evidence is the only output.
+
+Evidence:
+{evidence}

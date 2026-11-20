@@ -1,13 +1,23 @@
-fpdf2  # To create PDFs
-jupyterlab  # To allow notebooks
-langchain
-langchain-google-genai
-matplotlib  # To create plots
-nltk
-pandas  # To handle data
-papermill  # To allow notebook automation
-Pillow  # Fork of PIL (Python Imaging Library)
-plotapi
-python-dotenv  # To load environment variables
-seaborn  # To create plots
-tabulate  # To create markdown tables
+# Pinned for a repeatable install. The web app and the report library import
+# these directly. Notebook-only tools live in requirements-notebook.txt.
+fastapi==0.115.6
+uvicorn==0.34.0
+itsdangerous==2.2.0
+python-multipart==0.0.20
+jinja2==3.1.5
+python-dotenv==1.0.1
+tzdata==2025.2
+requests==2.32.3
+pandas==2.2.3
+numpy==2.1.3
+matplotlib==3.9.4
+seaborn==0.13.2
+Pillow==11.0.0
+fpdf2==2.8.2
+nltk==3.9.1
+tabulate==0.9.0
+langchain==0.3.30
+langchain-core==0.3.86
+langchain-google-genai==2.1.12
+google-api-core==2.24.1
+pydantic==2.10.6

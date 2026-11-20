@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}Upload · Harkness Training Solutions{% endblock %}
+{% block content %}
+<section class="panel">
+  <p class="eyebrow">Step 1 of 4</p>
+  <h1>Upload a recording</h1>
+  <p class="lede">Add the session details, confirm consent, and upload the audio or video. Transcription starts as soon as the file is saved. Nothing is emailed from this screen.</p>
+  {% if error %}
+  <p class="error" role="alert">{{ error }}</p>
+  {% endif %}
+  <form method="post" action="/sessions?csrf_token={{ csrf_token }}" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="grid">
+      <div>
+        <label for="client">Client</label>
+        <input id="client" name="client" required maxlength="200" placeholder="Carson Group">
+      </div>
+      <div>
+        <label for="group_name">Group</label>
+        <input id="group_name" name="group_name" required maxlength="200" placeholder="Cohort A">
+      </div>
+      <div>
+        <label for="session_name">Session name or competency</label>
+        <input id="session_name" name="session_name" required maxlength="200" placeholder="Take a Position">
+      </div>
+      <div>
+        <label for="session_date">Session date</label>
+        <input id="session_date" name="session_date" type="date" required>
+      </div>
+      <div>
+        <label for="session_start">Session start <span class="optional">optional</span></label>
+        <input id="session_start" name="session_start" placeholder="0:00 or 1:05:00" maxlength="12">
+      </div>
+      <div>
+        <label for="session_end">Session end <span class="optional">optional</span></label>
+        <input id="session_end" name="session_end" placeholder="1:48:00, or leave blank to detect" maxlength="12">
+      </div>
+      <div>
+        <label for="speakers_expected">Expected speakers <span class="optional">optional</span></label>
+        <input id="speakers_expected" name="speakers_expected" inputmode="numeric" placeholder="Leave blank if unknown">
+      </div>
+      <div>
+        <label for="recording">Recording</label>
+        <input id="recording" name="recording" type="file" accept="audio/*,video/*,.mp3,.wav,.m4a,.mp4,.webm,.aac,.ogg,.flac,.mov" required>
+      </div>
+    </div>
+    <label class="check">
+      <input type="checkbox" name="include_personality" value="yes">
+      <span>Include Enneagram and Doshas. Leave this off unless the room asked for those lenses. AMASE stays either way.</span>
+    </label>
+    <label class="check">
+      <input type="checkbox" name="consent" value="yes" required>
+      <span>I confirm that the people in this recording have consented to transcription and to receiving their own report.</span>
+    </label>
+    <p class="note">Recordings and transcripts are deleted within {{ retention_days }} day{% if retention_days != 1 %}s{% endif %} after the reports are generated. Reports are kept. The window cannot be longer than 14 days.</p>
+    <button type="submit">Upload and transcribe</button>
+  </form>
+</section>
+{% endblock %}

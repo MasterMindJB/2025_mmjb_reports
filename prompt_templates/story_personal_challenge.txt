@@ -1,0 +1,11 @@
+{craft}
+
+Section: challenge
+Audience: personal
+Write the CHALLENGE. What made it hard, with one count or one quote and its timestamp.
+Use the before/after line only if it is in the evidence. Do not invent a segment rate.
+Do not name another participant.
+Do not write digits. The JSON schema after the evidence is the only output.
+
+Evidence:
+{evidence}
