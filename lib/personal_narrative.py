@@ -233,6 +233,11 @@ def _prompt(name: str, lines: list[str], quotes: list[str], failures: list[str],
         'It is not a bare noun copied from the quote, and not "the" plus one noun. '
         'The goal says what they were trying to show or do for the listener. '
         'It must not repeat the quote\'s own verb and object. Do not copy a placeholder.\n'
+        'Describe the person as they would recognize themselves. '
+        'Do not frame them with self-importance, main focus, ego, selfish, or about yourself '
+        'unless their own words use that framing.\n'
+        'Do not write I, me, my, or we outside a quote. '
+        '"That tells me" is wrong. "This tells others" is right.\n'
         'No later behavior contains "You seem" or starts with "It seemed like you were trying to".\n'
         'Never write a behavior that is only "You said."\n'
         'quote is only an id such as "Q1". Each bullet uses a different id. Do not retype the words.\n'
@@ -399,9 +404,27 @@ def _long_word_outside(why: str, quote: str) -> str:
     return ''
 
 
+def merged_grade_text(behavior: str) -> str:
+    """Grade the care phrase, the goal phrase, and the connective. Leave the fixed openers out."""
+    care = _care_phrase(behavior)
+    goal = _goal_phrase(behavior)
+    if care and goal:
+        return f'{care}, and {goal}.'
+    return f'{care or goal}.'
+
+
 def behavior_word_problem(behavior: str, quote: str) -> str:
-    """Each behavior sentence stays at grade 6 and uses no long word from outside the quote."""
-    for sentence in re.split(r'(?<=[.!?])\s+', str(behavior or '').strip()):
+    """Each behavior sentence stays at grade 6 and uses no long word from outside the quote.
+
+    A merged first bullet is graded on the care and goal phrases only. The fixed words
+    "You seem to care about" and "and it seemed like you were trying to" are not scored.
+    """
+    text = str(behavior or '').strip()
+    if _is_merged_bullet(text):
+        sentences = [merged_grade_text(text)]
+    else:
+        sentences = re.split(r'(?<=[.!?])\s+', text)
+    for sentence in sentences:
         sentence = sentence.strip()
         if not sentence:
             continue
@@ -432,6 +455,9 @@ def _why_problem(why: str, quote: str, behavior: str, quotes: list[str] | None =
     """A why-line failure, or '' when the line can stand."""
     if not str(why or '').strip():
         return 'why is missing'
+    voice = voice_problem(why, speech)
+    if voice:
+        return voice
     if not why_on_topic(why, quote, behavior, quotes, speech):
         return 'why drifts from this quote'
     if why_restates(why, quote):
@@ -514,8 +540,46 @@ _EVERYDAY = {
     'self', 'hard', 'good', 'real', 'true', 'kind', 'fair', 'open', 'clear',
     'trust', 'hope', 'worth', 'heart', 'mind', 'hand', 'need', 'want', 'feel',
     'keep', 'give', 'share', 'start', 'place', 'story', 'choice', 'point',
-    'room', 'people', 'word', 'sense',
+    'room', 'people', 'word', 'sense', 'hobby', 'hobbies',
 }
+
+
+_UNCHARITABLE = (
+    ('self-importance', re.compile(r'self[\s-]importance|\bown importance\b', re.I)),
+    ('main focus', re.compile(r'\bmain focus\b', re.I)),
+    ('ego', re.compile(r'\bego\b', re.I)),
+    ('selfish', re.compile(r'\bselfish\b', re.I)),
+    ('about yourself', re.compile(r'\babout yourself\b', re.I)),
+)
+_FIXED_WE = re.compile(r'\bwe came to that conclusion because of\b', re.I)
+_OUTSIDE_PERSON = re.compile(r'\b(me|i|my|we)\b', re.I)
+
+
+def charity_problem(text: str, speech: str = '') -> str:
+    """Ego or a negative framing, unless the speaker used that framing about themselves."""
+    body = _outside_quotes(text)
+    said = _outside_quotes(speech)
+    for label, pattern in _UNCHARITABLE:
+        if pattern.search(body) and not pattern.search(said):
+            return f'uncharitable framing: {label}'
+    return ''
+
+
+def first_person_problem(text: str) -> str:
+    """me, I, my, and we are rejected outside a quote. The fixed because-line is allowed."""
+    body = _FIXED_WE.sub(' ', _outside_quotes(text))
+    match = _OUTSIDE_PERSON.search(body)
+    if match:
+        return f'first person outside a quote: {match.group(1).lower()}'
+    return ''
+
+
+def voice_problem(text: str, speech: str = '') -> str:
+    """Charity first, then first person. A quoted script is left alone."""
+    person = first_person_problem(text)
+    if person:
+        return person
+    return charity_problem(text, speech)
 
 
 def _phrase_words(phrase: str) -> list[str]:
@@ -615,6 +679,9 @@ def _bullet_problems(items, quotes: list[str], speech: str = '') -> list[str]:
             leaked = prompt_example_problem(behavior, speech or ' '.join(usable))
             if leaked:
                 reasons.append(leaked)
+            rude = voice_problem(behavior, speech or ' '.join(usable))
+            if rude:
+                reasons.append(rude)
             problem = _why_problem(why, quote, behavior, usable, speech)
             if problem:
                 reasons.append(f'{problem}: {why.strip()}')
@@ -1746,6 +1813,7 @@ def _care_failures(found: dict) -> bool:
     reasons = [reason for items in found.values() for reason in items]
     return any(
         reason.startswith('care object') or reason.startswith('goal object') or reason.startswith('goal restates')
+        or reason.startswith('uncharitable') or reason.startswith('first person')
         for reason in reasons
     )
 
@@ -1772,6 +1840,9 @@ def _repair_sentence(llm, text: str, quote: str, behavior: str = '', model: str 
         'Rewrite this one sentence in short words, about a fifth-grade reading level. '
         'Say why it matters for this person or the listener. '
         'Keep the topic of the behavior and the quote. '
+        'Describe them as they would recognize themselves. '
+        'Do not use self-importance, main focus, ego, selfish, or about yourself unless the quote does. '
+        'Do not write I, me, my, or we. "That tells me" is wrong. "This tells others" is right. '
         'Do not restate the quote. No advice, no next time, no should. '
         'Good why: This helps people see that your love for art started early.\n'
         'Return only the new sentence.\n'
@@ -1793,8 +1864,11 @@ def _repair_behavior(llm, behavior: str, quote: str, model: str | None = None) -
     prompt = (
         'Rewrite this one sentence. Care is a phrase of 2 to 5 common words for what they value, not a bare noun from the quote. '
         'The goal says what they were trying to show or do for the listener, and does not copy the quote\'s verb and object. '
+        'Describe them as they would recognize themselves. '
+        'Do not use self-importance, main focus, ego, selfish, or about yourself unless the quote does. '
+        'Do not write I, me, my, or we. '
         'Do not copy a placeholder. '
-        'Use short, common words, about a fifth-grade reading level. '
+        'Use short, common words. The care and goal phrases, not the fixed openers, stay at a fifth-grade reading level. '
         'Keep the shape: it starts with "You seem to care" and includes "it seemed like you were trying to". '
         'No advice. Return only the sentence.\n'
         f'QUOTE\n{quote or "None."}\nTEXT\n{behavior}'
@@ -1814,6 +1888,8 @@ def _first_why_choice(llm, behavior: str, quote: str, quotes: list[str], speech:
     prompt = (
         'Write 3 different one-sentence whys. Each starts with This or That and uses shows, helps, lets, or tells. '
         'Use short, common words, about a fifth-grade reading level. One sentence each. No advice. '
+        'Describe them as they would recognize themselves. '
+        'Do not write I, me, my, or we. "That tells me" is wrong. "This tells others" is right. '
         'Do not restate the behavior. Return JSON only: {"whys": ["...", "...", "..."]}\n'
         f'BEHAVIOR\n{behavior}\nQUOTE\n{quote}'
     )
@@ -1858,12 +1934,21 @@ def _repair_whys(llm, payload: dict, quotes: list[str], model: str | None = None
             or behavior_word_problem(behavior, quote)
             or care_phrase_problem(behavior, quote)
             or goal_phrase_problem(behavior, quote)
+            or voice_problem(behavior, heard)
             or (index == 0 and not care_grounded(behavior, heard, quote))
         ):
             bullet['behavior'] = _repair_behavior(llm, behavior, quote, model)
             behavior = bullet['behavior']
         problem = _why_problem(why, quote, behavior, quotes, speech) if why else 'why is missing'
-        failing = problem.startswith('why ') or 'reading level' in problem or problem.startswith('a why line') or problem.startswith('a bullet is above') or problem == 'why is missing'
+        failing = (
+            problem.startswith('why ')
+            or 'reading level' in problem
+            or problem.startswith('a why line')
+            or problem.startswith('a bullet is above')
+            or problem.startswith('first person')
+            or problem.startswith('uncharitable')
+            or problem == 'why is missing'
+        )
         if index == 0 and _is_merged_bullet(behavior) and failing:
             new_why = _first_why_choice(llm, behavior, quote, quotes, speech, model, source)
             if pool is not None and quote and new_why:
@@ -1928,6 +2013,9 @@ def _make_candidate(behavior: str, quote: str, why: str, source: str, quotes: li
     leaked = prompt_example_problem(behavior, speech)
     if leaked:
         problems.append(leaked)
+    rude = voice_problem(behavior, speech)
+    if rude:
+        problems.append(rude)
     if _is_merged_bullet(behavior) and not care_grounded(behavior, speech, quote):
         problems.append(f'care object is not in this person\'s speech: {_care_head(behavior)}')
     if why:
@@ -1983,20 +2071,29 @@ def assemble_personal_bullets(pool: list, quotes: list[str], speech: str = '') -
     merged_rows = [item for item in pool if item.get('merged') and item.get('behavior') and item.get('quote')]
     first = None
     if merged_rows:
-        passing = [item for item in merged_rows if item.get('passes') and _why_passes_gate(item['behavior'], item['quote'], item['why'], quotes, speech)]
+        shippable = [
+            item for item in merged_rows
+            if not behavior_word_problem(item['behavior'], item['quote'])
+            and not voice_problem(item['behavior'], speech)
+        ]
+        passing = [
+            item for item in shippable
+            if item.get('passes') and _why_passes_gate(item['behavior'], item['quote'], item['why'], quotes, speech)
+        ]
         if passing:
             first = dict(passing[0])
-        else:
+        elif shippable:
             clean = [
-                item for item in merged_rows
+                item for item in shippable
                 if not any(
                     str(problem).startswith((
                         'care object', 'goal object', 'goal restates', 'behavior uses', 'behavior is above',
+                        'uncharitable', 'first person',
                     ))
                     for problem in item.get('problems') or []
                 )
             ]
-            base = (clean or merged_rows)[-1]
+            base = (clean or shippable)[-1]
             behavior = base['behavior']
             quote = base['quote']
             same_quote = [
@@ -2027,6 +2124,11 @@ def assemble_personal_bullets(pool: list, quotes: list[str], speech: str = '') -
     checked = []
     for item in chosen:
         why = str(item.get('why') or '')
+        if item.get('merged') and (
+            behavior_word_problem(item['behavior'], item['quote'])
+            or voice_problem(item['behavior'], speech)
+        ):
+            continue
         if why and not _why_passes_gate(item['behavior'], item['quote'], why, quotes, speech):
             if item.get('merged'):
                 item = dict(item)

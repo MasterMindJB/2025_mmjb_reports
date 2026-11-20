@@ -1227,3 +1227,104 @@ def test_care_is_a_value_phrase_and_the_goal_does_not_copy_the_quote():
         'You seem to care about owning your results, and it seemed like you were trying to name the work.',
         quote,
     )
+
+
+def test_leslie_is_not_read_as_self_importance():
+    from lib.personal_narrative import _prompt, care_grounded, charity_problem, voice_problem
+
+    hinge = 'And you make it hinge upon yourself.'
+    behavior = (
+        'You seem to care about your own importance in this, '
+        'and it seemed like you were trying to make yourself the main focus.'
+    )
+    why = 'That tells me you care most about your own role here.'
+    assert 'self-importance' in charity_problem(behavior, hinge)
+    assert 'main focus' in charity_problem('make yourself the main focus', hinge)
+    assert voice_problem(why, hinge)
+    kind = 'You seem to care about work you can trust, and it seemed like you were trying to show people the point.'
+    assert charity_problem(kind, hinge) == ''
+    assert voice_problem(kind, hinge) == ''
+    ric = 'I can be stubborn and selfish.'
+    reflected = 'You seem to care about hard work, and it seemed like you were trying to name a selfish streak.'
+    assert charity_problem(reflected, ric) == ''
+    assert charity_problem(reflected, hinge)
+    instructions = _prompt('Leslie', [], [hinge], [], '', '', None)
+    assert 'as they would recognize themselves' in instructions
+    assert care_grounded(
+        'You seem to care about daily hobbies, and it seemed like you were trying to show people the point.',
+        '',
+        hinge,
+    )
+
+
+def test_behavior_and_why_lines_reject_first_person():
+    from lib.personal_narrative import _first_why_choice, _why_problem, first_person_problem
+
+    assert first_person_problem('That tells me you care most about your own role here.')
+    assert first_person_problem('This tells others you own the result.') == ''
+    assert first_person_problem('We came to that conclusion because of "I hinge it on myself."') == ''
+    quote = 'And you make it hinge upon yourself.'
+    behavior = 'You seem to care about work you can trust, and it seemed like you were trying to show people the point.'
+    assert _why_problem('That tells me you care most about your own role here.', quote, behavior, [quote], quote)
+    assert _why_problem('This tells others you own the result.', quote, behavior, [quote], quote) == ''
+
+    class Chooser:
+        model = 'gemini-3.1-flash-lite'
+
+        def invoke(self, prompt, **kwargs):
+            return type('Reply', (), {'content': __import__('json').dumps({'whys': [
+                'That tells me you care most about your own role here.',
+                'This tells others you own the result.',
+                'This helps people see the work.',
+            ]})})()
+
+    chosen = _first_why_choice(Chooser(), behavior, quote, [quote], quote, None, 'flash-lite-repair')
+    assert chosen.startswith('This tells others')
+
+
+def test_the_merged_behavior_is_graded_without_the_scaffold():
+    from lib.personal_narrative import assemble_personal_bullets, behavior_word_problem, _repair_whys
+    from lib.readability import reading_grade
+
+    quote = 'The budget can wait until the client signs.'
+    easy = 'You seem to care about work you can trust, and it seemed like you were trying to show people the point.'
+    assert reading_grade(easy) > 6.05
+    assert behavior_word_problem(easy, quote) == ''
+    hard = (
+        'You seem to care about a steady creative drive across many years of practice, '
+        'and it seemed like you were trying to show people how that early start still shapes the work.'
+    )
+    assert behavior_word_problem(hard, quote)
+    why = 'This shows people the point.'
+    blocked = assemble_personal_bullets(
+        [{'behavior': hard, 'quote': quote, 'why': why, 'merged': True, 'passes': True, 'source': 'flash-lite'}],
+        [quote],
+        quote,
+    )
+    assert blocked['needs_review'] is True
+    assert all('creative drive' not in bullet for bullet in blocked['bullets'])
+    kept = assemble_personal_bullets(
+        [
+            {'behavior': hard, 'quote': quote, 'why': why, 'merged': True, 'passes': True, 'source': 'flash-lite'},
+            {'behavior': easy, 'quote': quote, 'why': why, 'merged': True, 'passes': True, 'source': 'repair'},
+        ],
+        [quote],
+        quote,
+    )
+    assert 'work you can trust' in kept['bullets'][0]
+    assert 'creative drive' not in kept['bullets'][0]
+
+    class Repair:
+        model = 'gemini-3.1-flash-lite'
+
+        def invoke(self, prompt, **kwargs):
+            assert prompt.startswith('Rewrite this one sentence. Care')
+            return type('Reply', (), {'content': easy})()
+
+    fixed = _repair_whys(
+        Repair(),
+        {'bullets': [{'behavior': hard, 'quote': 'Q1', 'why': why}]},
+        [quote],
+        speech=quote,
+    )
+    assert fixed['bullets'][0]['behavior'] == easy
