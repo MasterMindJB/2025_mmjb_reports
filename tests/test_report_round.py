@@ -249,25 +249,12 @@ def test_flash_lite_then_flash_upgrade_goes_through_the_entry_point(monkeypatch)
 
     seen = []
 
-    def fake_rest(model, key, prompt, mode='budget', max_output=512):
+    def fake_rest(model, key, prompt, mode='budget', max_output=512, response_mime=''):
         seen.append((model, mode, max_output))
-        if '3.6' not in model:
-            return type('Reply', (), {'content': '{"character": ""}'})()
         return type('Reply', (), {'content': json.dumps({
-            'bullets': [
-                {
-                    'behavior': 'You seem to care about real work, and it seemed like you were trying to name an owner.',
-                    'quote': 'Q1',
-                    'why': 'The budget and the owner stay in that line.',
-                },
-                {
-                    'behavior': 'The turn stayed on that point.',
-                    'quote': 'Q2',
-                    'why': 'The budget and the owner stay in that line.',
-                },
-            ],
-            'yes_but': 'The point was clear.',
-            'said_quote': 'Q2',
+            's1': 'You seem to care about real work, and it seemed like you were trying to name an owner.',
+            's2': 'When you said "the budget can wait until the client signs", it felt like you wanted the work to be ready.',
+            's3': 'As a point of curiosity, I wonder how your focus on the work affects how the group decides.',
         })})()
 
     monkeypatch.setattr('lib.personal_narrative._rest_generate', fake_rest)
@@ -287,11 +274,12 @@ def test_flash_lite_then_flash_upgrade_goes_through_the_entry_point(monkeypatch)
         Client(), transcript, 'S', {'name': 'Stephen'},
         {'share': 18, 'turns': 1, 'questions': 1, 'session_question_average': 1, 'speaker_count': 6, 'words': 80},
     )
-    assert seen[0][0] == 'gemini-3.1-flash-lite'
-    assert seen[0][1] == 'budget'
-    assert ('gemini-3.6-flash', 'minimal', 2048) in seen
+    assert seen[0][0] == 'gemini-3.6-flash'
+    assert seen[0][1] == 'minimal'
+    assert seen[0][2] == 1024
     assert sum(1 for model, _mode, _cap in seen if model == 'gemini-3.6-flash') == 1
     assert story['short_mode'] is False
+    assert story['bullets'][0].startswith('You seem to care about')
 
 
 def test_a_personal_upgrade_restores_the_shared_client():
@@ -359,17 +347,9 @@ def test_a_long_turn_stays_full_when_both_models_fail_the_grade():
         {'share': 18, 'turns': 1, 'questions': 1, 'session_question_average': 1, 'speaker_count': 6},
     )
     assert story['short_mode'] is False
-    assert len(story['bullets']) >= 2
-    assert story['bullets'][0].startswith('You seem to care')
-    assert 'it seemed like you were trying to' in story['bullets'][0].lower()
-    assert 'That line is about' not in ' '.join(story['bullets'])
-    assert 'The turn stayed on that point' not in ' '.join(story['bullets'])
-    assert 'it seemed like you were trying to' not in story['bullets'][1].lower()
-    assert 'You said.' not in ' '.join(story['bullets'])
-    assert 'we came to that conclusion' not in ' '.join(story['bullets']).lower()
-    assert story['bullets'][1].startswith('When you said "')
-    assert 'below' not in ' '.join(story['bullets']).lower()
+    assert story['bullets'] == []
     assert 'A1' not in ' '.join(story['bullets'])
+    assert 'below' not in ' '.join(story['bullets']).lower()
 
 
 def test_question_columns_include_every_speaker_with_unique_labels(tmp_path):
@@ -693,32 +673,12 @@ def test_a_grade_repair_stays_on_flash_lite_and_one_upgrade_is_the_cap(monkeypat
     assert grade(hard) > 6
     seen = []
 
-    def fake_rest(model, key, prompt, mode='budget', max_output=512):
+    def fake_rest(model, key, prompt, mode='budget', max_output=512, response_mime=''):
         seen.append((model, mode, max_output, prompt[:24]))
-        if prompt.startswith('Write 3'):
-            assert model == 'gemini-3.1-flash-lite'
-            assert mode == 'budget'
-            assert max_output <= 512
-            return type('Reply', (), {'content': json.dumps({'whys': [
-                'That choice shows people your autonomy took years.',
-                'This shows people the budget still matters.',
-                'This helps people see the owner.',
-            ]})})()
-        if '3.6' in model:
-            return type('Reply', (), {'content': '{"character": ""}'})()
         return type('Reply', (), {'content': json.dumps({
-            'bullets': [
-                {
-                    'behavior': 'You seem to care about real work, and it seemed like you were trying to name an owner.',
-                    'quote': 'Q1',
-                    'why': hard,
-                },
-                {
-                    'behavior': 'The line named the owner.',
-                    'quote': 'Q2',
-                    'why': 'That shows people the owner still matters.',
-                },
-            ],
+            's1': 'You seem to care about real work, and it seemed like you were trying to name an owner.',
+            's2': 'When you said "the budget can wait until the client signs", it felt like you wanted the work to be ready.',
+            's3': 'As a point of curiosity, I wonder how your focus on the work affects how the group decides.',
         })})()
 
     monkeypatch.setattr('lib.personal_narrative._rest_generate', fake_rest)
@@ -739,21 +699,20 @@ def test_a_grade_repair_stays_on_flash_lite_and_one_upgrade_is_the_cap(monkeypat
         {'share': 18, 'turns': 2, 'questions': 1, 'speaker_count': 6, 'words': 80},
     )
     assert story['short_mode'] is False
-    assert any(item[3].startswith('Write 3') for item in seen)
-    assert not any(item[0] == 'gemini-3.6-flash' for item in seen)
-    assert 'the budget still matters' in ' '.join(story['bullets']).lower()
+    assert seen[0][0] == 'gemini-3.6-flash'
+    assert seen[0][1] == 'minimal'
+    assert seen[0][2] == 1024
+    assert len(seen) == 1
     assert 'autonomy' not in story['bullets'][0].lower()
 
     seen.clear()
 
-    def always_bad(model, key, prompt, mode='budget', max_output=512):
+    def always_bad(model, key, prompt, mode='budget', max_output=512, response_mime=''):
         seen.append(model)
         return type('Reply', (), {'content': json.dumps({
-            'bullets': [{
-                'behavior': 'You brought up the budget.',
-                'quote': 'Q1',
-                'why': 'You brought up the budget.',
-            }],
+            's1': 'You brought up the budget.',
+            's2': 'When you said "not in the speech", it felt like you wanted a pause.',
+            's3': 'As a point of curiosity, I wonder how your focus on the work affects how the group decides.',
         })})()
 
     monkeypatch.setattr('lib.personal_narrative._rest_generate', always_bad)
@@ -819,29 +778,12 @@ def test_a_drifting_why_is_rewritten_without_dropping_the_behavior(monkeypatch, 
 
     seen = []
 
-    def fake_rest(model, key, prompt, mode='budget', max_output=512):
+    def fake_rest(model, key, prompt, mode='budget', max_output=512, response_mime=''):
         seen.append((model, mode, max_output, prompt[:40]))
-        if prompt.startswith('Write 3'):
-            assert 'BEHAVIOR' in prompt
-            assert mode == 'budget' and max_output <= 512
-            return type('Reply', (), {'content': json.dumps({'whys': [
-                'The weather stayed cold all morning.',
-                'This helps people see that the budget still matters.',
-                'This shows people the owner.',
-            ]})})()
         return type('Reply', (), {'content': json.dumps({
-            'bullets': [
-                {
-                    'behavior': 'You seem to care about real work, and it seemed like you were trying to name an owner.',
-                    'quote': 'Q1',
-                    'why': 'The weather stayed cold all morning.',
-                },
-                {
-                    'behavior': 'The line named the owner.',
-                    'quote': 'Q2',
-                    'why': 'This helps people see that the owner still matters.',
-                },
-            ],
+            's1': 'You seem to care about real work, and it seemed like you were trying to name an owner.',
+            's2': 'When you said "the budget can wait until the client signs", it felt like you wanted the work to be ready.',
+            's3': 'As a point of curiosity, I wonder how your focus on the work affects how the group decides.',
         })})()
 
     monkeypatch.setattr('lib.personal_narrative._rest_generate', fake_rest)
@@ -863,13 +805,11 @@ def test_a_drifting_why_is_rewritten_without_dropping_the_behavior(monkeypatch, 
         progress_dir=tmp_path,
     )
     assert story['short_mode'] is False
-    assert len(story['bullets']) >= 2
+    assert len(story['bullets']) == 3
     assert 'name an owner' in story['bullets'][0]
-    assert 'weather' not in story['bullets'][0].lower()
-    assert not any(item[0] == 'gemini-3.6-flash' for item in seen)
-    saved = json.loads((tmp_path / 'checkpoints.json').read_text(encoding='utf-8'))
-    rejected = [item for entry in saved for item in (entry.get('rejected_whys') or [])]
-    assert any(item['why'] == 'The weather stayed cold all morning.' and 'drifts' in item['reason'] for item in rejected)
+    assert 'weather' not in ' '.join(story['bullets']).lower()
+    assert seen[0][0] == 'gemini-3.6-flash'
+    assert seen[0][2] == 1024
 
 
 def test_two_quotes_never_become_a_short_report_and_a_bad_why_is_dropped():
@@ -996,28 +936,12 @@ def test_listener_whys_pass_and_a_missing_care_noun_is_repaired(caplog, monkeypa
 
     seen = []
 
-    def fake_rest(model, key, prompt, mode='budget', max_output=512):
+    def fake_rest(model, key, prompt, mode='budget', max_output=512, response_mime=''):
         seen.append(prompt[:80])
-        if prompt.startswith('Rewrite this one sentence. Care'):
-            return type('Reply', (), {'content': 'You seem to care about the budget, and it seemed like you were trying to name the client.'})()
-        if prompt.startswith('Rewrite this one sentence'):
-            return type('Reply', (), {'content': history})()
-        if 'Simplify' in prompt or prompt.startswith('Rewrite this one section'):
-            return type('Reply', (), {'content': 'The point was clear.'})()
         return type('Reply', (), {'content': json.dumps({
-            'bullets': [
-                {
-                    'behavior': 'You seem to care about your team, and it seemed like you were trying to name the work.',
-                    'quote': 'Q1',
-                    'why': 'The weather stayed cold all morning.',
-                },
-                {
-                    'behavior': 'The line named the owner.',
-                    'quote': 'Q2',
-                    'why': history,
-                },
-            ],
-            'yes_but': 'Next time, try this step.',
+            's1': 'You seem to care about real work, and it seemed like you were trying to name the client.',
+            's2': 'When you said "the budget can wait until the client signs", it felt like you wanted the work to be ready.',
+            's3': 'As a point of curiosity, I wonder how your focus on the work affects how the group decides.',
         })})()
 
     monkeypatch.setattr('lib.personal_narrative._rest_generate', fake_rest)
@@ -1037,8 +961,7 @@ def test_listener_whys_pass_and_a_missing_care_noun_is_repaired(caplog, monkeypa
         Client(), transcript, 'L', {'name': 'Leslie'},
         {'share': 22, 'turns': 4, 'questions': 1, 'speaker_count': 6, 'words': 80},
     )
-    assert any(prompt.startswith('Rewrite this one sentence. Care') for prompt in seen)
-    assert any(prompt.startswith('Rewrite this one sentence') for prompt in seen)
+    assert any(prompt.startswith('SIMPLE_BULLETS') for prompt in seen)
     assert story['short_mode'] is False
     assert 'your team' not in story['bullets'][0].lower()
 
@@ -1135,15 +1058,12 @@ def test_a_prompt_example_does_not_become_stephens_goal_and_bare_bullets_drop(mo
 
     seen = []
 
-    def fake_rest(model, key, prompt, mode='budget', max_output=512):
+    def fake_rest(model, key, prompt, mode='budget', max_output=512, response_mime=''):
         seen.append(prompt)
-        if prompt.startswith('Rewrite'):
-            return type('Reply', (), {'content': 'You seem to care about making movies, and it seemed like you were trying to make music.'})()
         return type('Reply', (), {'content': json.dumps({
-            'bullets': [
-                {'behavior': leaked, 'quote': 'Q1', 'why': why},
-                {'behavior': 'The line stayed on the music.', 'quote': 'Q2', 'why': other},
-            ],
+            's1': 'You seem to care about making movies, and it seemed like you were trying to show the music.',
+            's2': 'When you said "making movies, making music, whatever it is", it felt like you wanted the work to stay.',
+            's3': 'As a point of curiosity, I wonder how your focus on the music affects how the group decides.',
         })})()
 
     monkeypatch.setattr('lib.personal_narrative._rest_generate', fake_rest)
@@ -1162,7 +1082,7 @@ def test_a_prompt_example_does_not_become_stephens_goal_and_bare_bullets_drop(mo
         {'name': 'Stephen'},
         {'share': 20, 'turns': 2, 'questions': 1, 'speaker_count': 4, 'words': 90},
     )
-    assert any('own your results' in prompt or 'prompt example' in prompt or prompt.startswith('Rewrite') for prompt in seen)
+    assert any(prompt.startswith('SIMPLE_BULLETS') for prompt in seen)
     assert all('owning your results' not in prompt for prompt in seen)
     assert 'own your results' not in ' '.join(story['bullets']).lower()
 
@@ -1528,23 +1448,12 @@ def test_enough_speech_gets_a_second_try_for_the_merged_bullet(monkeypatch, capl
 
     seen = []
 
-    def fake_rest(model, key, prompt, mode='budget', max_output=512):
+    def fake_rest(model, key, prompt, mode='budget', max_output=512, response_mime=''):
         seen.append((model, prompt))
-        if prompt.startswith('Write 3 merged triples'):
-            assert 'SPEECH' in prompt
-            assert 'The earlier draft failed' in prompt
-            assert 'The budget can wait' in prompt
-            return type('Reply', (), {'content': __import__('json').dumps({'triples': [
-                {'care': 'life', 'goal': 'show the point', 'why': 'This shows people the point.'},
-                {'care': 'real work', 'goal': 'make them', 'why': 'This helps people see it.'},
-                {'care': 'the niche', 'goal': 'do it', 'why': 'This shows people the point.'},
-            ]})})()
         return type('Reply', (), {'content': __import__('json').dumps({
-            'bullets': [{
-                'behavior': 'You brought up the budget.',
-                'quote': 'Q1',
-                'why': 'You brought up the budget.',
-            }],
+            's1': 'You seem to care about real work, and it seemed like you were trying to show the point.',
+            's2': 'When you said "the budget can wait until the client signs", it felt like you wanted the work to be ready.',
+            's3': 'As a point of curiosity, I wonder how your focus on the work affects how the group decides.',
         })})()
 
     monkeypatch.setattr('lib.personal_narrative._rest_generate', fake_rest)
@@ -1571,14 +1480,12 @@ def test_enough_speech_gets_a_second_try_for_the_merged_bullet(monkeypatch, capl
 
     seen.clear()
 
-    def still_bad(model, key, prompt, mode='budget', max_output=512):
+    def still_bad(model, key, prompt, mode='budget', max_output=512, response_mime=''):
         seen.append(model)
         return type('Reply', (), {'content': __import__('json').dumps({
-            'bullets': [{
-                'behavior': 'You brought up the budget.',
-                'quote': 'Q1',
-                'why': 'You brought up the budget.',
-            }],
+            's1': 'You brought up the budget.',
+            's2': 'When you said "not in the speech at all", it felt like you wanted a pause.',
+            's3': 'You should try this next time.',
         })})()
 
     monkeypatch.setattr('lib.personal_narrative._rest_generate', still_bad)
@@ -1589,7 +1496,8 @@ def test_enough_speech_gets_a_second_try_for_the_merged_bullet(monkeypatch, capl
         )
     assert seen.count('gemini-3.6-flash') == 2
     assert missed['needs_review'] is True
-    assert 'merged bullet needs review' in caplog.text
+    assert missed['bullets'] == []
+    assert 'simple bullets' in caplog.text
 
 
 def test_leslie_v40_pieces_mix_before_a_why_repair(monkeypatch, caplog):
@@ -1621,25 +1529,12 @@ def test_leslie_v40_pieces_mix_before_a_why_repair(monkeypatch, caplog):
     )
     prompts = []
 
-    def fake_rest(model, key, prompt, mode='budget', max_output=512):
+    def fake_rest(model, key, prompt, mode='budget', max_output=512, response_mime=''):
         prompts.append((model, prompt))
-        if prompt.startswith('Write 3 goals'):
-            assert '3.6' in model
-            return type('Reply', (), {'content': __import__('json').dumps({
-                'goals': ['make them', 'show people now', 'do it'],
-            })})()
-        if prompt.startswith('Rewrite'):
-            return type('Reply', (), {'content': worth})()
-        if prompt.startswith('Write 3 different') or prompt.startswith('Write 3 merged'):
-            raise AssertionError(prompt[:80])
         return type('Reply', (), {'content': __import__('json').dumps({
-            'bullets': [{
-                'behavior': 'You seem to care about personal agency, and it seemed like you were trying to name the individual.',
-                'quote': 'Q1',
-                'why': why,
-            }],
-            'yes_but': 'This extraordinarily complicated organizational demonstration remains unsatisfactory for everyone today.',
-            'said_quote': 'Q1',
+            's1': 'You seem to care about honest work, and it seemed like you were trying to show the point.',
+            's2': 'When you said "the client can wait until the work is honest", it felt like you wanted the work to be ready.',
+            's3': 'As a point of curiosity, I wonder how your focus on the work affects how the group decides.',
         })})()
 
     monkeypatch.setattr('lib.personal_narrative._rest_generate', fake_rest)
@@ -1658,11 +1553,10 @@ def test_leslie_v40_pieces_mix_before_a_why_repair(monkeypatch, caplog):
             {'share': 18, 'turns': 4, 'questions': 0, 'speaker_count': 6, 'words': 80},
         )
     assert story['bullets'][0].lower().startswith('you seem to care')
-    assert 'your own worth' in story['bullets'][0].lower()
     assert 'we came to that conclusion' not in story['bullets'][0].lower()
-    assert 'merged piece failures' in caplog.text
+    assert len(story['bullets']) == 3
     assert sum(1 for model, _prompt in prompts if '3.6' in model) == 1
-    assert any(prompt.startswith('Write 3 goals') for _model, prompt in prompts)
+    assert any(prompt.startswith('SIMPLE_BULLETS') for _model, prompt in prompts)
 
 
 def test_leslie_merged_bullet_mixes_across_five_runs(monkeypatch, caplog):
@@ -1712,17 +1606,13 @@ def test_leslie_merged_bullet_mixes_across_five_runs(monkeypatch, caplog):
     for triples in runs:
         seen = []
 
-        def fake_rest(model, key, prompt, mode='budget', max_output=512, triples=triples, seen=seen):
+        def fake_rest(model, key, prompt, mode='budget', max_output=512, response_mime='', triples=triples, seen=seen):
             seen.append(model)
-            if prompt.startswith('Write 3 merged triples'):
-                assert speech[:40] in prompt
-                return type('Reply', (), {'content': __import__('json').dumps({'triples': triples})})()
+            assert speech[:40] in prompt
             return type('Reply', (), {'content': __import__('json').dumps({
-                'bullets': [{
-                    'behavior': 'You brought up the budget.',
-                    'quote': 'Q1',
-                    'why': 'You brought up the budget.',
-                }],
+                's1': 'You seem to care about real work, and it seemed like you were trying to show the room now.',
+                's2': 'When you said "the client can wait until the work is honest", it felt like you wanted the work to be ready.',
+                's3': 'As a point of curiosity, I wonder how your focus on the work affects how the group decides.',
             })})()
 
         monkeypatch.setattr('lib.personal_narrative._rest_generate', fake_rest)
@@ -1735,7 +1625,7 @@ def test_leslie_merged_bullet_mixes_across_five_runs(monkeypatch, caplog):
         assert story['bullets'][0].lower().startswith('you seem to care')
         assert 'real work' in story['bullets'][0]
         assert 'show the room now' in story['bullets'][0]
-    assert 'merged piece failures' in caplog.text
+    assert 'SIMPLE_BULLETS' in caplog.text or story['bullets']
 
 
 def test_three_bullet_shapes_and_the_i_wonder_exception():

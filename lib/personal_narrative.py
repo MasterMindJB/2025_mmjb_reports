@@ -1427,7 +1427,7 @@ def upgrade_output_fits(
     return int(max_output) >= int(thoughts) + int(expected_json)
 
 
-def personal_request(prompt: str, model: str = 'gemini-3.1-flash-lite', max_output: int = LITE_MAX_OUTPUT, mode: str = 'budget') -> dict:
+def personal_request(prompt: str, model: str = 'gemini-3.1-flash-lite', max_output: int = LITE_MAX_OUTPUT, mode: str = 'budget', response_mime: str = '') -> dict:
     """The JSON body generateContent accepts. One thinking field, never both."""
     return {
         'contents': [{'role': 'user', 'parts': [{'text': prompt}]}],
@@ -1435,6 +1435,7 @@ def personal_request(prompt: str, model: str = 'gemini-3.1-flash-lite', max_outp
             'temperature': 0,
             'maxOutputTokens': int(max_output),
             'thinkingConfig': thinking_config(model, mode),
+            **({'responseMimeType': 'application/json'} if response_mime else {}),
         },
     }
 
@@ -1555,7 +1556,7 @@ class _Reply:
         self.usage_metadata = {'thoughts_token_count': thoughts}
 
 
-def _rest_generate(model: str, key: str, prompt: str, mode: str = 'budget', max_output: int = LITE_MAX_OUTPUT):
+def _rest_generate(model: str, key: str, prompt: str, mode: str = 'budget', max_output: int = LITE_MAX_OUTPUT, response_mime: str = ''):
     """POST generateContent. One thinking field. A 400 on that field retries with the other."""
     import urllib.error
     import urllib.request
@@ -1563,7 +1564,7 @@ def _rest_generate(model: str, key: str, prompt: str, mode: str = 'budget', max_
     bare = _bare_model(model)
 
     def _post(thinking_mode: str):
-        body = personal_request(prompt, bare, max_output, thinking_mode)
+        body = personal_request(prompt, bare, max_output, thinking_mode, response_mime)
         url = f'https://generativelanguage.googleapis.com/v1beta/models/{bare}:generateContent?key={key}'
         request = urllib.request.Request(
             url,
@@ -1607,7 +1608,7 @@ def _call_plan(model: str, *, simplify: bool = False) -> tuple[str, int]:
     return 'budget', LITE_MAX_OUTPUT
 
 
-def _invoke_personal(llm, prompt, model: str | None = None, *, simplify: bool = False, max_output: int | None = None):
+def _invoke_personal(llm, prompt, model: str | None = None, *, simplify: bool = False, max_output: int | None = None, response_mime: str = ''):
     """One personal call. The shared client's model is restored before this returns."""
     wanted = model or personal_model_name()
     mode, planned = _call_plan(wanted, simplify=simplify)
@@ -1616,9 +1617,9 @@ def _invoke_personal(llm, prompt, model: str | None = None, *, simplify: bool = 
     with _scoped_model(llm, wanted) as bare:
         key = _api_key(llm)
         if key:
-            raw = _rest_generate(bare, key, prompt, mode=mode, max_output=max_output)
+            raw = _rest_generate(bare, key, prompt, mode=mode, max_output=max_output, response_mime=response_mime)
         else:
-            config = personal_request(prompt, bare, max_output, mode)['generationConfig']
+            config = personal_request(prompt, bare, max_output, mode, response_mime)['generationConfig']
             try:
                 raw = llm.invoke(prompt, generationConfig=config)
             except TypeError:
@@ -1953,13 +1954,12 @@ def build_personal_story(llm, transcript, label: str, info: dict, stats: dict, p
 def _build_personal_story(llm, transcript, label: str, info: dict, stats: dict, progress_dir=None) -> dict:
     original = llm
     llm = for_personal_narrative(original)
-    active = personal_model_name() if llm is original else _bare_model(getattr(llm, 'model', None) or personal_model_name())
-    upgraded = False
+    del original
     from lib.style_units import style_candidates
 
     rows = speaker_rows(transcript, label)
     quotes = candidate_quotes([str(row.get('text') or '') for row in rows])
-    lines, allowed = computed_numbers(transcript, label, stats)
+    lines, _allowed = computed_numbers(transcript, label, stats)
     name = info.get('name') or label
     moment = moment_word(quotes, rows)
     step = suggested_next_rep(rows, stats, moment)
@@ -1969,151 +1969,33 @@ def _build_personal_story(llm, transcript, label: str, info: dict, stats: dict, 
         if row.get('name')
     ]
     units = style_candidates(transcript, label, names)
-    style_note = {'style_candidates': units}
     if needs_short_report(rows):
         story = short_story(name, rows, lines, quotes, stats)
         story['character'] = beat_from_unit(units, 'character')
         story['goal'] = beat_from_unit(units, 'goal')
         story['why_it_matters'] = ''
-        story['bullets'] = _fallback_bullets(units, quotes)
+        story['bullets'] = []
+        story['challenge'] = ''
         _attach_style(story, units, units[0]['id'] if units else '')
         return _stamp(story, progress_dir)
-    failures: list[str] = []
-    best_payload = None
-    best_found: dict[str, list[str]] = {'one_big_thing': ['response was not JSON']}
-    attempts = 0
-    simplified = False
-    repaired = False
+    from lib.simple_bullets import generate_simple_bullets
+
     speech = ' '.join(str(row.get('text') or '') for row in rows)
-    pool: list = []
-    while attempts < 2:
-        raw_text = ''
-        try:
-            raw_text = _raw_text(_invoke_personal(
-                llm, _prompt(name, lines, quotes, failures, '', step, units), active,
-            ))
-            payload = _parse(raw_text)
-            if payload is not None:
-                payload = apply_quote_ids(payload, quotes)
-                payload = _scrub_own_name(payload, name)
-        except Exception as exc:
-            if llm is not original and _model_not_found(exc):
-                logging.warning(
-                    'personal model %s returned 404; falling back to %s',
-                    active,
-                    getattr(original, 'model', None) or 'gemini-3.1-flash-lite',
-                )
-                llm = original
-                active = personal_model_name()
-                continue
-            logging.warning('personal narrative call failed: %s', exc)
-            payload = None
-            raw_text = raw_text or str(exc)
-        attempts += 1
-        if payload is None:
-            found = {'one_big_thing': ['response was not JSON']}
-        else:
-            found = section_problems(payload, quotes, allowed, moment, int(stats.get('share') or 0), speech)
-        reasons = [reason for items in found.values() for reason in items]
-        pick = str((payload or {}).get('style_id') or '')
-        _note_rejected_whys(label, payload, quotes, progress_dir, raw_text, reasons, {**style_note, 'style_pick': pick, 'model': active}, speech)
-        _snapshot_candidates(pool, payload, active, quotes, speech)
-        if payload is not None and _new_shape(payload):
-            shaped = ensure_three_bullets(llm, payload, quotes, speech, reasons, rows)
-            if shaped:
-                if advice_problems(str(payload.get('yes_but') or '')):
-                    payload['yes_but'] = ''
-                story = _ship_assembled(
-                    {'bullets': shaped, 'needs_review': len(shaped) < 3},
-                    payload, lines, name, step, units, pick, len(shaped) < 3,
-                )
-                return _stamp(story, progress_dir)
-        if payload is not None and not simplified and any(found.get(section) for section in ('character', 'goal', 'why_it_matters', 'challenge', 'yes_but')):
-            payload = _grounded_simplify(llm, payload, units, quotes, found)
-            payload = apply_quote_ids(payload, quotes)
-            simplified = True
-            found = section_problems(payload, quotes, allowed, moment, int(stats.get('share') or 0), speech)
-            reasons = [reason for items in found.values() for reason in items]
-        if payload is not None and not repaired and not upgraded and (_why_failures(found) or _care_failures(found) or _behavior_failures(found)):
-            logging.warning('personal why repair for %s: %s', label, '; '.join(reasons))
-            payload = _repair_whys(llm, payload, quotes, speech=speech, pool=pool, source='flash-lite-repair')
-            payload = apply_quote_ids(payload, quotes)
-            repaired = True
-            found = section_problems(payload, quotes, allowed, moment, int(stats.get('share') or 0), speech)
-            reasons = [reason for items in found.values() for reason in items]
-            _note_rejected_whys(label, payload, quotes, progress_dir, json.dumps(payload), reasons, {**style_note, 'model': personal_model_name(), 'repair': True}, speech)
-        if payload is not None and repaired and not upgraded and (_why_failures(found) or _care_failures(found) or _behavior_failures(found)):
-            _fill_merged_from_attempts(pool, quotes, speech)
-            page = assemble_personal_bullets(pool, quotes, speech)
-            if _has_merged_bullet(page):
-                upgraded = True
-            elif enough_speech(rows) and upgrade_calls(llm) < 2:
-                logging.warning('merged bullet rescue for %s before why-repair: %s', label, '; '.join(reasons))
-                note_upgrade(llm)
-                _rescue_merged_bullet(llm, quotes, speech, reasons, pool)
-                upgraded = True
-            elif upgrade_calls(llm) < 2:
-                logging.warning('personal why repair uses %s for %s', upgrade_model_name(), label)
-                note_upgrade(llm)
-                payload = _repair_whys(llm, payload, quotes, upgrade_model_name(), speech, pool, '3.6-repair')
-                payload = apply_quote_ids(payload, quotes)
-                upgraded = True
-                found = section_problems(payload, quotes, allowed, moment, int(stats.get('share') or 0), speech)
-                reasons = [reason for items in found.values() for reason in items]
-                _note_rejected_whys(label, payload, quotes, progress_dir, json.dumps(payload), reasons, {**style_note, 'model': upgrade_model_name(), 'repair': True}, speech)
-        if reasons and not upgraded:
-            logging.warning('personal flash-lite rejected %s: %s', label, '; '.join(reasons))
-        page = assemble_personal_bullets(pool, quotes, speech)
-        if payload is not None and not reasons and _has_merged_bullet(page):
-            story = _ship_assembled(page, payload, lines, name, step, units, pick, page['needs_review'])
-            return _stamp(story, progress_dir)
-        if payload is not None and reasons and not upgraded and upgrade_calls(llm) < 2:
-            active = upgrade_model_name()
-            logging.warning('personal narrative retry uses %s', active)
-            note_upgrade(llm)
-            upgraded = True
-            failures = reasons
-            continue
-        if payload is not None and (best_payload is None or len(found) < len(best_found)):
-            best_payload = payload
-            best_found = found
-        failures = reasons
-        if upgraded:
-            break
-    page = assemble_personal_bullets(pool, quotes, speech)
-    if enough_speech(rows) and not _has_merged_bullet(page) and upgrade_calls(llm) < 2:
-        logging.warning('merged bullet rescue for %s on 3.6: %s', label, '; '.join(failures))
-        note_upgrade(llm)
-        piece_logs = _rescue_merged_bullet(llm, quotes, speech, failures, pool)
-        page = assemble_personal_bullets(pool, quotes, speech)
-        if not _has_merged_bullet(page):
-            logged = '; '.join([*failures, *piece_logs]) or 'no merged bullet'
-            logging.warning('merged bullet needs review for %s: %s', label, logged)
-    if page['bullets'] or (pool and page['needs_review']):
-        logging.warning('personal narrative assembled from the candidate pool: %s', failures)
-        payload = dict(best_payload or {})
-        story = _ship_assembled(page, payload, lines, name, step, units, str(payload.get('style_id') or ''), page['needs_review'])
-        if page['needs_review']:
-            _record_attempt(progress_dir, label, '', failures, {**style_note, 'needs_review': True, 'assembled': True})
-        return _stamp(story, progress_dir)
-    if best_payload is None or best_found.get('character') or best_found.get('goal') or best_found.get('bullets'):
-        logging.warning('personal narrative used the code template: %s', failures)
-        return _stamp(_templated_story(name, rows, lines, quotes, stats, step, units, best_payload, best_found), progress_dir)
-    patched = dict(best_payload)
-    replaced = []
-    for section, reasons in best_found.items():
-        if section in {'one_big_thing', 'character', 'goal'} or not reasons:
-            continue
-        patched[section] = _fallback_line(section, rows, lines, quotes, stats, moment)
-        replaced.append(section)
-    story = full_story(patched, lines, name)
-    story['fallback_sections'] = replaced
-    story['rejection_reasons'] = {section: '; '.join(best_found[section]) for section in replaced}
-    story['next_rep'] = step if personal_next_rep_enabled() else ''
-    story['one_thing'] = story['next_rep']
-    story['short_mode'] = False
-    _attach_style(story, units, str((best_payload or {}).get('style_id') or ''))
-    return _stamp(story, progress_dir)
+    bullets = generate_simple_bullets(llm, transcript, label, name, speech)
+    story = full_story(
+        {
+            'headline': speech_headline(rows),
+            'bullets_text': bullets,
+            'said_quote': quotes[0] if quotes else '',
+            'yes_but': '',
+        },
+        lines,
+        name,
+    )
+    story['needs_review'] = len(bullets) < 3
+    if len(bullets) < 3:
+        logging.warning('simple bullets left %s with %s sentence(s)', label, len(bullets))
+    return _stamp(_finish(story, step, units, ''), progress_dir)
 
 
 def upgrade_calls(llm) -> int:

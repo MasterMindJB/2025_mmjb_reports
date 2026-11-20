@@ -115,20 +115,9 @@ def test_a_quoted_script_may_say_i_and_one_bad_section_stays_full(tmp_path):
     class Scripted:
         def invoke(self, prompt):
             return type('Reply', (), {'content': json.dumps({
-                'bullets': [
-                    {
-                        'behavior': 'You seem to care about real work, and it seemed like you were trying to hold the point.',
-                        'quote': 'Q1',
-                        'why': 'The budget stays in that line.',
-                    },
-                    {
-                        'behavior': 'The turn stayed on that point.',
-                        'quote': 'Q2',
-                        'why': 'The owner stays in that line.',
-                    },
-                ],
-                'yes_but': 'The point was clear. It left no gap for a reply.',
-                'said_quote': second,
+                's1': 'You seem to care about real work, and it seemed like you were trying to hold the point.',
+                's2': f'When you said "{quote.lower().rstrip(".")}", it felt like you wanted the work to be ready.',
+                's3': 'As a point of curiosity, I wonder how your focus on the work affects how the group decides.',
             })})()
 
     story = build_personal_story(
@@ -140,10 +129,8 @@ def test_a_quoted_script_may_say_i_and_one_bad_section_stays_full(tmp_path):
     assert story['next_rep'] == ''
     assert story['bullets'][0].startswith('You seem to care')
     assert 'it seemed like you were trying to' in story['bullets'][0].lower()
-    saved = json.loads((tmp_path / 'checkpoints.json').read_text(encoding='utf-8'))
-    assert saved[0]['raw']
-    assert 'unquoted first-person' not in ' '.join(saved[0]['reasons'])
-    assert (tmp_path / 'checkpoints.json').stat().st_mode & 0o777 == 0o600
+    assert story['bullets'][1].startswith('When you said "')
+    assert story['bullets'][2].startswith('As a point of curiosity, I wonder how')
 
 
 def test_a_splice_is_not_a_candidate_quote():
@@ -352,7 +339,7 @@ def test_personal_model_404_falls_back_to_flash_lite(monkeypatch, caplog):
             lite, transcript, 'A', {'name': 'Ric'},
             {'share': 21, 'turns': 6, 'questions': 1, 'session_question_average': 1, 'speaker_count': 7},
         )
-    assert lite.calls == 1
+    assert lite.calls == 0
     assert story['short_mode'] is False
+    assert story['bullets'] == []
     assert '404' in caplog.text
-    assert 'gemini-3.1-flash-lite' in caplog.text

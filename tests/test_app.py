@@ -723,20 +723,11 @@ def test_generate_session_keeps_personal_bullets_in_the_pdf(tmp_path):
 
     class BulletLLM(FakeLLM):
         def _reply(self, text):
-            if 'PERSONAL_NARRATIVE' in text:
+            if 'SIMPLE_BULLETS' in text:
                 return json.dumps({
-                    'bullets': [
-                        {
-                            'behavior': 'You seem to care about real work, and it seemed like you were trying to name an owner.',
-                            'quote': 'Q1',
-                            'why': 'The budget stays in that line.',
-                        },
-                        {
-                            'behavior': 'The turn stayed on that point.',
-                            'quote': 'Q2',
-                            'why': 'The owner stays in that line.',
-                        },
-                    ],
+                    's1': 'You seem to care about real work, and it seemed like you were trying to name an owner.',
+                    's2': 'When you said "the budget can wait until the client signs", it felt like you wanted the work to be ready.',
+                    's3': 'As a point of curiosity, I wonder how your focus on the work affects how the group decides.',
                 })
             return super()._reply(text)
 
