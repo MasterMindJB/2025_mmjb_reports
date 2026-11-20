@@ -238,7 +238,8 @@ def test_passed_to_stays_at_grade_six_and_the_run_stays_under_two_cents():
     from lib.personal_narrative import personal_request
 
     body = personal_request('Count the turns.')
-    assert body['generationConfig']['thinkingConfig'] == {'thinkingLevel': 'low'}
+    assert body['generationConfig']['thinkingConfig']['thinkingLevel'] == 'minimal'
+    assert body['generationConfig']['maxOutputTokens'] == 512
 
 
 def test_flash_lite_then_flash_upgrade_goes_through_the_entry_point(monkeypatch):
@@ -246,9 +247,9 @@ def test_flash_lite_then_flash_upgrade_goes_through_the_entry_point(monkeypatch)
 
     seen = []
 
-    def fake_rest(model, key, prompt, level='low'):
-        seen.append((model, level))
-        if 'flash-lite' in model or prompt.startswith('Simplify'):
+    def fake_rest(model, key, prompt, level='minimal', max_output=512, thinking=True):
+        seen.append((model, level, thinking))
+        if 'flash-lite' in model or prompt.startswith('Rewrite') or prompt.startswith('Simplify'):
             return type('Reply', (), {'content': '{"one_big_thing": "A1", "why_it_matters": "Your aim: the layout below."}'})()
         quote = 'The budget can wait until the client signs.'
         return type('Reply', (), {'content': (
@@ -276,9 +277,52 @@ def test_flash_lite_then_flash_upgrade_goes_through_the_entry_point(monkeypatch)
         Client(), transcript, 'S', {'name': 'Stephen'},
         {'share': 18, 'turns': 1, 'questions': 1, 'session_question_average': 1, 'speaker_count': 6, 'words': 80},
     )
-    assert seen[0] == ('gemini-3.1-flash-lite', 'low')
-    assert ('gemini-3.6-flash', 'low') in seen
+    assert seen[0][0] == 'gemini-3.1-flash-lite'
+    assert seen[0][1] == 'minimal'
+    assert ('gemini-3.6-flash', 'low', True) in seen
+    assert any(item[1] == 'off' and item[2] is False for item in seen)
     assert story['short_mode'] is False
+
+
+def test_a_personal_upgrade_restores_the_shared_client():
+    from lib.personal_narrative import build_personal_story
+    from lib.proposals import classify_proposals
+
+    sentence = 'The budget can wait until the client signs. '
+
+    class Shared:
+        def __init__(self):
+            self.model = 'models/gemini-3.1-flash-lite'
+            self.seen = []
+
+        def invoke(self, prompt, **kwargs):
+            self.seen.append(self.model)
+            if 'PERSONAL_NARRATIVE' in str(prompt) and '3.6' not in str(self.model):
+                return type('Reply', (), {'content': '{"character": ""}'})()
+            if 'PERSONAL_NARRATIVE' in str(prompt):
+                return type('Reply', (), {'content': json.dumps({
+                    'character': 'You seem to care a lot about the budget.',
+                    'character_quote': 'Q1',
+                    'goal': 'It seemed like you were trying to hold the budget.',
+                    'challenge': 'The room waited.',
+                    'why_it_matters': 'The budget stayed open.',
+                    'yes_but': 'The point was clear.',
+                    'said_quote': 'Q1',
+                })})()
+            return type('Reply', (), {'content': '{"turns": []}'})()
+
+    client = Shared()
+    transcript = {'utterances': [
+        {'speaker': 'S', 'name': 'Stephen', 'text': sentence * 8, 'start': 0, 'end': 80000},
+    ]}
+    build_personal_story(
+        client, transcript, 'S', {'name': 'Stephen'},
+        {'share': 18, 'turns': 1, 'questions': 1, 'speaker_count': 6},
+    )
+    assert client.model == 'models/gemini-3.1-flash-lite'
+    assert any(str(model).startswith('models/gemini-3.6-flash') for model in client.seen)
+    classify_proposals(client, {'utterances': [{'speaker': 'S', 'name': 'Stephen', 'text': sentence, 'start': 0, 'end': 1000}]})
+    assert client.seen[-1] == 'models/gemini-3.1-flash-lite'
 
 
 def test_a_long_turn_stays_full_when_both_models_fail_the_grade():
@@ -336,7 +380,7 @@ def test_question_columns_include_every_speaker_with_unique_labels(tmp_path):
     assert 'Speaker' not in info['labels']
     assert any(label.replace('\n', ' ') == 'Speaker F' for label in info['labels'])
     assert any(label.replace('\n', ' ') == 'Speaker G' for label in info['labels'])
-    assert '0' not in info['value_labels']
+    assert info['value_labels'].count('0') == 2
 
 
 def test_group_page_uses_the_pattern_and_one_easy_action(tmp_path):
@@ -404,6 +448,15 @@ def test_personal_box_keeps_longest_turn_and_leads_with_surprise():
     assert surprises == sorted(surprises, reverse=True)
     assert metrics[0]['key'] == 'questions'
     assert 'ideas' not in {item['key'] for item in metrics}
+    same = dict(story)
+    same['word_counts'] = [('Ric', 200), ('Steve', 40), ('Leslie', 30), ('G', 50)]
+    same['longest_turns'] = [('Ric', 200), ('Steve', 40), ('Leslie', 30), ('G', 50)]
+    collapsed = personal_metrics(same)
+    assert 'words' not in {item['key'] for item in collapsed}
+    assert any(item['key'] == 'longest' for item in collapsed)
+    from lib.scorecard import round_half_up
+    assert round_half_up(16.5) == 17
+    assert round_half_up(5.5) == 6
 
 
 def test_personal_report_has_no_next_rep_when_the_flag_is_off(tmp_path, monkeypatch):

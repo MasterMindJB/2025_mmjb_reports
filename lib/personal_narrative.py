@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+from contextlib import contextmanager
 
 from lib.readability import reading_grade
 from lib.story_render import (
@@ -337,6 +338,19 @@ def _quote_is_verbatim(span: str, quotes: list[str]) -> bool:
     return any(cleaned == quote or cleaned in quote for quote in quotes)
 
 
+_GENERIC_LINES = (
+    'you seem to care about the work in front of you',
+    'it seemed like you were trying to make one point',
+    'the room can still hear',
+    'you held one turn and then stopped',
+)
+
+
+def _is_generic(text: str) -> bool:
+    lowered = _outside_quotes(text).lower()
+    return any(phrase in lowered for phrase in _GENERIC_LINES)
+
+
 def _content_words(text: str) -> list[str]:
     skip = {'about', 'their', 'there', 'which', 'would', 'could', 'should', 'while', 'still', 'being'}
     return [word.lower() for word in re.findall(r"[A-Za-z']{5,}", text or '') if word.lower() not in skip]
@@ -374,6 +388,8 @@ def section_problems(payload: dict, quotes: list[str], allowed: set[str], moment
         add('character', 'character is missing')
     elif re.search(r'\d|%|\b(times|words|turns|percent)\b', _outside_quotes(character), re.I):
         add('character', 'character has a count')
+    elif _is_generic(character):
+        add('character', 'character is a generic line')
     token = str(payload.get('character_quote') or '').strip()
     if quotes and not re.fullmatch(r'Q[1-3]', token, re.I):
         add('character', 'character must point at a quote id')
@@ -381,12 +397,14 @@ def section_problems(payload: dict, quotes: list[str], allowed: set[str], moment
         add('character', 'character quote id is out of range')
     if not fields['goal'].startswith('It seemed like you were trying to '):
         add('goal', 'goal must start with the set phrase')
+    elif _is_generic(fields['goal']):
+        add('goal', 'goal is a generic line')
     for reason in advice_problems(fields['challenge']):
         add('challenge', reason)
     for reason in advice_problems(fields['yes_but']):
         add('yes_but', reason)
     why = fields['why_it_matters'].lower()
-    if any(phrase in why for phrase in ('your voice brings', 'good ideas', 'brings good ideas', 'to the team', 'your aim')):
+    if any(phrase in why for phrase in ('your voice brings', 'good ideas', 'brings good ideas', 'to the team', 'your aim')) or _is_generic(why):
         add('why_it_matters', 'why_it_matters is generic praise')
     if re.search(r'\b(below|above|next page|step below)\b', why):
         add('why_it_matters', 'why_it_matters points at the page')
@@ -464,15 +482,15 @@ def short_story(name: str, rows: list[dict], lines: list[str], quotes: list[str]
         'short_mode': True,
         'headline': speech_headline(rows),
         'one_big_thing': '',
-        'character': character_template(),
-        'why_it_matters': why_template(rows, stats, quote),
+        'character': '',
+        'why_it_matters': '',
         'yes_but': 'The turn was short.',
         'next_rep': step if personal_next_rep_enabled() else '',
         'numbers': lines,
         'said_quote': quote,
         'big_quote': quote,
         'drama': quote,
-        'goal': goal_template(),
+        'goal': '',
         'challenge': challenge_template([quote] if quote else []),
         'one_thing': step,
         'why': '',
@@ -515,9 +533,9 @@ def _fallback_line(section: str, rows, lines, quotes, stats, moment: str) -> str
     if section == 'headline':
         return speech_headline(rows)
     if section == 'character':
-        return character_template()
+        return ''
     if section == 'goal':
-        return goal_template()
+        return ''
     if section == 'challenge':
         return challenge_template(quotes)
     if section == 'why_it_matters':
@@ -560,12 +578,14 @@ def _record_attempt(progress_dir, label: str, raw: str, reasons: list[str], extr
 THINKING_BUDGET = 256
 # Gemini 3.x ignores thinkingBudget. The live call uses thinkingLevel instead.
 # Flash-lite at 'low' spent 119–192 thought tokens. Charge that, not 256.
-THINKING_LEVEL = 'low'
-THOUGHT_TOKENS = 192
-# REST shape. The proto client has no thinkingLevel field and drops it.
+THINKING_LEVEL = 'minimal'
+THOUGHT_TOKENS = 64
+# REST shape. Flash-lite is asked for minimal thinking and a zero budget.
+# The simplify call sends only thinkingBudget 0, which is no-thinking.
 THINKING_REQUEST = {
     'generationConfig': {
-        'thinkingConfig': {'thinkingLevel': THINKING_LEVEL},
+        'maxOutputTokens': 512,
+        'thinkingConfig': {'thinkingLevel': THINKING_LEVEL, 'thinkingBudget': 0},
     },
 }
 INPUT_PER_MILLION = 0.30
@@ -582,14 +602,18 @@ def upgrade_model_name() -> str:
     return os.getenv('GEMINI_UPGRADE_MODEL', 'gemini-3.6-flash')
 
 
-def personal_request(prompt: str, level: str = THINKING_LEVEL) -> dict:
-    """The JSON body generateContent accepts. thinkingLevel, not thinkingBudget."""
+def personal_request(prompt: str, level: str = THINKING_LEVEL, max_output: int = 512, *, thinking: bool = True) -> dict:
+    """The JSON body generateContent accepts."""
+    config = {'temperature': 0, 'maxOutputTokens': int(max_output)}
+    if not thinking or level == 'off':
+        config['thinkingConfig'] = {'thinkingBudget': 0}
+    elif level == 'minimal':
+        config['thinkingConfig'] = {'thinkingLevel': 'minimal', 'thinkingBudget': 0}
+    else:
+        config['thinkingConfig'] = {'thinkingLevel': level, 'thinkingBudget': 0}
     return {
         'contents': [{'role': 'user', 'parts': [{'text': prompt}]}],
-        'generationConfig': {
-            'temperature': 0,
-            'thinkingConfig': {'thinkingLevel': level},
-        },
+        'generationConfig': config,
     }
 
 
@@ -601,6 +625,7 @@ def personal_client_settings(llm) -> dict:
         'timeout': getattr(llm, 'timeout', 120),
         'max_retries': 2,
         'thinking_level': THINKING_LEVEL,
+        'max_output_tokens': 512,
     }
 
 
@@ -665,12 +690,35 @@ def _api_key(llm) -> str:
     return ''
 
 
-def _use_model(llm, model: str) -> None:
-    """The next invoke on this client, and a wrapper that reads .model, uses this id."""
+def _bare_model(model: str) -> str:
+    return str(model or '').strip().removeprefix('models/')
+
+
+def _format_like(previous, wanted: str) -> str:
+    """Keep the client's own model-name shape. models/gemini-… stays prefixed."""
+    bare = _bare_model(wanted)
+    if isinstance(previous, str) and previous.startswith('models/'):
+        return f'models/{bare}'
+    return bare
+
+
+@contextmanager
+def _scoped_model(llm, wanted: str):
+    """Set the model for one call, then put the shared client back."""
+    previous = getattr(llm, 'model', None)
+    formatted = _format_like(previous, wanted)
     try:
-        llm.model = model
-    except Exception:
-        logging.warning('personal model stayed on the client; wanted %s', model)
+        try:
+            llm.model = formatted
+        except Exception:
+            logging.warning('personal model stayed on the client; wanted %s', formatted)
+        yield _bare_model(formatted)
+    finally:
+        if previous is not None:
+            try:
+                llm.model = previous
+            except Exception:
+                logging.warning('could not restore model %s', previous)
 
 
 class _Reply:
@@ -679,14 +727,16 @@ class _Reply:
         self.usage_metadata = {'thoughts_token_count': thoughts}
 
 
-def _rest_generate(model: str, key: str, prompt: str, level: str = THINKING_LEVEL):
-    """POST generateContent. Retries once with thinkingLevel minimal when low is refused."""
+def _rest_generate(model: str, key: str, prompt: str, level: str = THINKING_LEVEL, max_output: int = 512, thinking: bool = True):
+    """POST generateContent. A refused thinking level retries once with budget 0."""
     import urllib.error
     import urllib.request
 
-    def _post(thinking: str):
-        body = personal_request(prompt, thinking)
-        url = f'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}'
+    bare = _bare_model(model)
+
+    def _post(use_thinking: bool, thinking_level: str):
+        body = personal_request(prompt, thinking_level, max_output, thinking=use_thinking)
+        url = f'https://generativelanguage.googleapis.com/v1beta/models/{bare}:generateContent?key={key}'
         request = urllib.request.Request(
             url,
             data=json.dumps(body).encode(),
@@ -703,12 +753,12 @@ def _rest_generate(model: str, key: str, prompt: str, level: str = THINKING_LEVE
             raise error from exc
 
     try:
-        data = _post(level)
+        data = _post(thinking, level)
     except RuntimeError as exc:
         detail = str(getattr(exc, 'body', '') or exc).lower()
-        if level != 'minimal' and 'thinkinglevel' in detail:
-            logging.warning('thinkingLevel %s was refused; retrying minimal', level)
-            data = _post('minimal')
+        if thinking and ('thinkinglevel' in detail or 'thinkingbudget' in detail):
+            logging.warning('thinking config was refused; retrying with no thinking')
+            data = _post(False, 'off')
         else:
             raise
     parts = (((data.get('candidates') or [{}])[0].get('content') or {}).get('parts') or [])
@@ -719,43 +769,88 @@ def _rest_generate(model: str, key: str, prompt: str, level: str = THINKING_LEVE
     return _Reply(text, thoughts)
 
 
-def _invoke_personal(llm, prompt, model: str | None = None):
-    """REST thinkingLevel low when this client has a key. Otherwise pass that config to invoke."""
-    model = model or getattr(llm, 'model', None) or personal_model_name()
-    _use_model(llm, model)
-    key = _api_key(llm)
-    if key:
-        return _rest_generate(model, key, prompt)
-    config = THINKING_REQUEST['generationConfig']
-    try:
-        raw = llm.invoke(prompt, generationConfig=config)
-    except TypeError:
-        raw = llm.invoke(prompt)
-    meta = getattr(raw, 'usage_metadata', None) or {}
-    thoughts = meta.get('thoughts_token_count') if isinstance(meta, dict) else getattr(meta, 'thoughts_token_count', None)
-    logging.warning('personal call model=%s thinkingLevel=%s thought tokens=%s', model, THINKING_LEVEL, thoughts)
-    return raw
+def _invoke_personal(llm, prompt, model: str | None = None, *, thinking: str = 'minimal', max_output: int = 512):
+    """One personal call. The shared client's model is restored before this returns."""
+    wanted = model or personal_model_name()
+    use_thinking = thinking != 'off'
+    with _scoped_model(llm, wanted) as bare:
+        key = _api_key(llm)
+        if key:
+            raw = _rest_generate(bare, key, prompt, level=thinking, max_output=max_output, thinking=use_thinking)
+        else:
+            config = personal_request(prompt, thinking, max_output, thinking=use_thinking)['generationConfig']
+            try:
+                raw = llm.invoke(prompt, generationConfig=config)
+            except TypeError:
+                raw = llm.invoke(prompt)
+        meta = getattr(raw, 'usage_metadata', None) or {}
+        thoughts = meta.get('thoughts_token_count') if isinstance(meta, dict) else getattr(meta, 'thoughts_token_count', None)
+        logging.warning('personal call model=%s thinking=%s thought tokens=%s', bare, thinking, thoughts)
+        return raw
 
 
-def _simplify(llm, text: str) -> str:
-    prompt = (
-        'Simplify this to about a fifth-grade reading level. Short words. One or two short sentences. '
-        'Keep the meaning. Do not add Q1, A1, or any id. Return only the new text.\n'
-        f'{text}'
+def _simplify_prompt(section: str, text: str, units: list[dict] | None, quotes: list[str]) -> str:
+    return (
+        'Rewrite this one section in short words, about a fifth-grade reading level. '
+        'One sentence. No advice, no counts, no digits, no ids. '
+        'Use the repeated units and a quote. '
+        'character must say what the person cares about. '
+        'goal must start exactly "It seemed like you were trying to ". '
+        'why_it_matters must use a word from a quote and must not say below, above, or next page. '
+        'Return only the new sentence.\n'
+        f'SECTION {section}\n'
+        f'UNITS\n{_style_block(units)}\n'
+        f'QUOTES\n' + ('\n'.join(quotes) or 'None.') + f'\nTEXT\n{text}'
     )
+
+
+def _simplify(llm, text: str, section: str = 'why_it_matters', units: list[dict] | None = None, quotes: list[str] | None = None) -> str:
+    """A no-thinking rewrite on flash-lite. It does not leave the shared client on another model."""
+    prompt = _simplify_prompt(section, text, units, quotes or [])
     try:
-        return _raw_text(_invoke_personal(llm, prompt)).strip()
+        return _raw_text(_invoke_personal(
+            llm, prompt, personal_model_name(), thinking='off', max_output=256,
+        )).strip()
     except Exception as exc:
         logging.warning('simplify call failed: %s', exc)
         return text
 
 
-def character_template() -> str:
-    return 'You seem to care about the work in front of you.'
+def _top_content_unit(units: list[dict] | None) -> str:
+    """The strongest repeated unit that is not a hedge or a style marker."""
+    from lib.style_units import _STYLE_MARKERS, display_unit
+
+    for item in units or []:
+        text = str(item.get('text') or '').strip()
+        if text and text not in _STYLE_MARKERS:
+            return display_unit(text)
+    return ''
 
 
-def goal_template() -> str:
-    return 'It seemed like you were trying to make one point.'
+def _about(unit: str) -> str:
+    first = unit.split()[0].lower() if unit else ''
+    if first in {'a', 'an', 'the'}:
+        return unit
+    return f'the {unit}'
+
+
+def beat_from_unit(units: list[dict] | None, kind: str) -> str:
+    """A specific beat from this person's own repeated unit. No generic line."""
+    unit = _top_content_unit(units)
+    if not unit:
+        return ''
+    subject = _about(unit)
+    if kind == 'goal':
+        return f'It seemed like you were trying to talk about {subject}.'
+    return f'You seem to care a lot about {subject}.'
+
+
+def character_template(units: list[dict] | None = None) -> str:
+    return beat_from_unit(units, 'character')
+
+
+def goal_template(units: list[dict] | None = None) -> str:
+    return beat_from_unit(units, 'goal')
 
 
 def challenge_template(quotes: list[str]) -> str:
@@ -765,26 +860,29 @@ def challenge_template(quotes: list[str]) -> str:
     return 'You held one turn and then stopped.'
 
 
-def why_template(rows: list[dict], stats: dict, quote: str = '') -> str:
-    """A grade-5 line that does not point at the page."""
-    del rows, stats
-    words = _content_words(quote)
-    if words:
-        return f'The room can still hear you on {words[0]}.'
-    return 'The room can still hear that moment.'
+def why_template(rows: list[dict] | None = None, stats: dict | None = None, quote: str = '') -> str:
+    """Why it matters is dropped when a rewrite cannot pass. There is no canned line."""
+    del rows, stats, quote
+    return ''
 
 
 def _templated_story(name, rows, lines, quotes, stats, step, units, best_payload, best_found) -> dict:
-    """Full report from the observation templates. No next step."""
+    """Full report. Character and goal come from a repeated unit. Why is kept only if it still passes."""
     payload = dict(best_payload or {})
-    payload['character'] = character_template()
+    character = str(payload.get('character') or '')
+    goal = str(payload.get('goal') or '')
+    if (best_found or {}).get('character') or _is_generic(character) or not character.strip():
+        payload['character'] = beat_from_unit(units, 'character')
+    if (best_found or {}).get('goal') or _is_generic(goal) or not goal.startswith('It seemed like you were trying to '):
+        payload['goal'] = beat_from_unit(units, 'goal')
     payload['character_quote'] = 'Q1' if quotes else ''
-    payload['goal'] = goal_template()
-    payload['challenge'] = challenge_template(quotes)
+    if (best_found or {}).get('challenge') or not str(payload.get('challenge') or '').strip():
+        payload['challenge'] = challenge_template(quotes)
     payload['one_big_thing'] = ''
     why = _strip_ids(str(payload.get('why_it_matters') or ''))
-    if not why or advice_problems(why) or re.search(r'\b(below|above|next page|step below)\b', why, re.I):
-        why = why_template(rows, stats, quotes[0] if quotes else '')
+    why_failed = (best_found or {}).get('why_it_matters') or not why or _is_generic(why) or advice_problems(why)
+    if why_failed or reading_grade(why) > 6:
+        why = ''
     payload['why_it_matters'] = why
     yes_but = '' if (best_found or {}).get('yes_but') else str(payload.get('yes_but') or '')
     payload['yes_but'] = '' if advice_problems(yes_but) else yes_but
@@ -796,12 +894,34 @@ def _templated_story(name, rows, lines, quotes, stats, step, units, best_payload
     return story
 
 
+def _grounded_simplify(llm, payload: dict, units: list[dict], quotes: list[str], found: dict) -> dict:
+    """One no-thinking rewrite of the beats that failed, with this person's units and quotes."""
+    data = dict(payload)
+    for section in ('character', 'goal', 'challenge', 'why_it_matters', 'yes_but'):
+        if not found.get(section):
+            continue
+        data[section] = _simplify(llm, str(data.get(section) or ''), section, units, quotes)
+    return data
+
+
 def build_personal_story(llm, transcript, label: str, info: dict, stats: dict, progress_dir=None) -> dict:
     """Flash-lite first. One 3.6 upgrade if validators fail. SHORT is only under 60 words."""
     original = llm
+    saved_model = getattr(original, 'model', None)
+    try:
+        return _build_personal_story(llm, transcript, label, info, stats, progress_dir)
+    finally:
+        if saved_model is not None:
+            try:
+                original.model = saved_model
+            except Exception:
+                logging.warning('could not restore model %s', saved_model)
+
+
+def _build_personal_story(llm, transcript, label: str, info: dict, stats: dict, progress_dir=None) -> dict:
+    original = llm
     llm = for_personal_narrative(original)
-    active = personal_model_name() if llm is original else (getattr(llm, 'model', None) or personal_model_name())
-    _use_model(llm, active)
+    active = personal_model_name() if llm is original else _bare_model(getattr(llm, 'model', None) or personal_model_name())
     upgraded = False
     from lib.style_units import style_candidates
 
@@ -820,6 +940,9 @@ def build_personal_story(llm, transcript, label: str, info: dict, stats: dict, p
     style_note = {'style_candidates': units}
     if needs_short_report(rows):
         story = short_story(name, rows, lines, quotes, stats)
+        story['character'] = beat_from_unit(units, 'character')
+        story['goal'] = beat_from_unit(units, 'goal')
+        story['why_it_matters'] = ''
         _attach_style(story, units, units[0]['id'] if units else '')
         return _stamp(story, progress_dir)
     failures: list[str] = []
@@ -830,7 +953,11 @@ def build_personal_story(llm, transcript, label: str, info: dict, stats: dict, p
     while attempts < 2:
         raw_text = ''
         try:
-            raw_text = _raw_text(_invoke_personal(llm, _prompt(name, lines, quotes, failures, '', step, units), active))
+            level = 'low' if '3.6' in _bare_model(active) else 'minimal'
+            raw_text = _raw_text(_invoke_personal(
+                llm, _prompt(name, lines, quotes, failures, '', step, units), active,
+                thinking=level, max_output=512,
+            ))
             payload = _parse(raw_text)
             if payload is not None:
                 payload = apply_quote_ids(payload, quotes)
@@ -844,7 +971,6 @@ def build_personal_story(llm, transcript, label: str, info: dict, stats: dict, p
                 )
                 llm = original
                 active = personal_model_name()
-                _use_model(llm, active)
                 continue
             logging.warning('personal narrative call failed: %s', exc)
             payload = None
@@ -857,14 +983,14 @@ def build_personal_story(llm, transcript, label: str, info: dict, stats: dict, p
         reasons = [reason for items in found.values() for reason in items]
         pick = str((payload or {}).get('style_id') or '')
         _record_attempt(progress_dir, label, raw_text, reasons, {**style_note, 'style_pick': pick, 'model': active})
-        if payload is not None and _grade_failures(found) and not simplified:
-            payload = _rewrite_grade(llm, payload, found)
+        if payload is not None and not simplified and any(found.get(section) for section in ('character', 'goal', 'why_it_matters', 'challenge', 'yes_but')):
+            payload = _grounded_simplify(llm, payload, units, quotes, found)
+            payload = apply_quote_ids(payload, quotes)
             simplified = True
             found = section_problems(payload, quotes, allowed, moment, int(stats.get('share') or 0))
             reasons = [reason for items in found.values() for reason in items]
         if payload is not None and reasons and not upgraded:
             active = upgrade_model_name()
-            _use_model(llm, active)
             logging.warning('personal narrative retry uses %s', active)
             upgraded = True
             failures = reasons

@@ -13,6 +13,7 @@ matplotlib.use('Agg', force=False)
 import matplotlib.pyplot as plt
 
 from lib.chord_diagram import load_poppins
+from lib.scorecard import round_half_up
 
 NAVY = '#1C2C5B'
 INK = '#14214A'
@@ -284,7 +285,7 @@ def _talk_share(story: dict, folder: Path) -> Path:
     )
     axis.bar_label(
         bars,
-        labels=[f'{int(round(value))}%' for value in values],
+        labels=[f'{round_half_up(value)}%' for value in values],
         padding=3,
         color=INK,
         fontproperties=load_poppins('regular'),
@@ -297,7 +298,7 @@ def _talk_share(story: dict, folder: Path) -> Path:
         label.set_fontproperties(load_poppins('regular'))
     figure.tight_layout()
     _note_overlaps(figure, 'talk-share.png')
-    _remember(folder, 'talk', 'horizontal_bar', [int(round(value)) for value in values])
+    _remember(folder, 'talk', 'horizontal_bar', [round_half_up(value) for value in values])
     return _save_chart(figure, folder, 'talk-share.png')
 
 
@@ -468,6 +469,13 @@ def _vertical_bars(pairs, folder: Path, filename: str, title: str, highlight: st
         fontproperties=load_poppins('regular'),
         fontsize=8,
     )
+    for bar, value in zip(bars, values):
+        if int(value) == 0:
+            axis.text(
+                bar.get_x() + bar.get_width() / 2, 0, '0',
+                ha='center', va='bottom', color=INK,
+                fontproperties=load_poppins('regular'), fontsize=8,
+            )
     axis.set_ylim(0, (max(values) or 1) * 1.45)
     axis.get_yaxis().set_visible(False)
     for tick in axis.get_xticklabels():
@@ -477,7 +485,7 @@ def _vertical_bars(pairs, folder: Path, filename: str, title: str, highlight: st
     axis.set_title(_wrap_title(title, 42), color=INK, fontproperties=load_poppins('semibold'), fontsize=11, loc='left')
     figure.tight_layout()
     _note_overlaps(figure, filename)
-    _remember(folder, filename, 'vertical_bar', values, labels, [label for label in shown if label])
+    _remember(folder, filename, 'vertical_bar', values, labels, [label if label else '0' for label in shown])
     return _save_chart(figure, folder, filename)
 
 
@@ -770,7 +778,7 @@ def _personal_charts(pdf, story: dict, folder: Path) -> None:
     columns = None
     donut = None
     if questions:
-        askers = _join_names(_leaders(questions))
+        askers = _join_names(_subject_names(_leaders(questions), subject))
         columns = _vertical_bars(
             questions, folder, 'who-asked.png',
             f'{askers} asked the most questions.' if askers else 'No one asked a question.',
@@ -790,10 +798,11 @@ def _personal_charts(pdf, story: dict, folder: Path) -> None:
     turns = story.get('longest_turns') or story.get('word_counts') or []
     lollipop = None
     if turns:
-        leaders = _join_names(_leaders(turns))
+        leaders = _join_names(_subject_names(_leaders(turns), subject))
+        verb = 'had the longest turn.' if story.get('longest_turns') else 'used the most words.'
         lollipop = _lollipop(
             turns, folder, 'words.png',
-            f'{leaders} had the longest turn.' if story.get('longest_turns') else f'{leaders} used the most words.',
+            f'{leaders} {verb}' if leaders else 'No one spoke.',
             subject,
         )
     ideas = story.get('proposal_counts') or []
@@ -817,6 +826,17 @@ def _leaders(pairs) -> list[str]:
         return []
     top = ranked[0][1]
     return [name for name, value in ranked if value == top]
+
+
+def _subject_names(names: list[str], highlight: str = '') -> list[str]:
+    """The person this report is about is You, or you after another name."""
+    shown = []
+    for index, name in enumerate(names):
+        if highlight and (_same_person(name, highlight) or str(name) == 'You'):
+            shown.append('You' if index == 0 else 'you')
+        else:
+            shown.append(name)
+    return shown
 
 
 def _join_names(names: list[str]) -> str:
@@ -1036,8 +1056,8 @@ def _metric_box(pdf, metrics: list[dict]) -> None:
     if not metrics:
         return
     _flush_heading(pdf)
-    height = 34
-    if _remaining(pdf) < height + 4:
+    height = 24
+    if _remaining(pdf) < height + 2:
         pdf.add_page()
     y = pdf.get_y()
     pdf.set_draw_color(197, 205, 216)
@@ -1045,20 +1065,20 @@ def _metric_box(pdf, metrics: list[dict]) -> None:
     pdf.rect(pdf.l_margin, y, pdf.epw, height)
     width = pdf.epw / len(metrics)
     for index, metric in enumerate(metrics):
-        x = pdf.l_margin + 1.5 + index * width
-        pdf.set_xy(x, y + 2)
-        pdf.set_text_color(120, 128, 142)
-        pdf.set_font('Poppins', '', 8)
-        pdf.multi_cell(w=width - 3, h=3.2, text=str(metric.get('label') or ''), align='L')
-        pdf.set_xy(x, y + 12)
-        pdf.set_text_color(28, 44, 91)
-        pdf.set_font('Poppins', 'b', 16)
-        pdf.cell(w=width - 3, h=8, text=str(metric.get('number') or ''), align='L')
-        pdf.set_xy(x, y + 21)
+        x = pdf.l_margin + 1.2 + index * width
+        pdf.set_xy(x, y + 1.2)
         pdf.set_text_color(120, 128, 142)
         pdf.set_font('Poppins', '', 7)
-        pdf.multi_cell(w=width - 3, h=3.2, text=str(metric.get('grade') or ''), align='L')
-    pdf.set_y(y + height + 3)
+        pdf.multi_cell(w=width - 2, h=3, text=str(metric.get('label') or ''), align='L')
+        pdf.set_xy(x, y + 7.5)
+        pdf.set_text_color(28, 44, 91)
+        pdf.set_font('Poppins', 'b', 14)
+        pdf.cell(w=width - 2, h=6, text=str(metric.get('number') or ''), align='L')
+        pdf.set_xy(x, y + 14)
+        pdf.set_text_color(120, 128, 142)
+        pdf.set_font('Poppins', '', 7)
+        pdf.multi_cell(w=width - 2, h=3, text=str(metric.get('grade') or ''), align='L')
+    pdf.set_y(y + height + 1)
     pdf.set_text_color(20, 33, 74)
 
 

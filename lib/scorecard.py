@@ -18,6 +18,8 @@ shown most surprising first, with that same tie break.
 
 from __future__ import annotations
 
+from decimal import Decimal, ROUND_HALF_UP
+
 
 TIE_ORDER = ('share', 'words', 'questions', 'ideas', 'longest')
 LABELS = {
@@ -27,6 +29,15 @@ LABELS = {
     'longest': 'Longest turn',
     'ideas': 'Ideas',
 }
+
+
+def round_half_up(value) -> int:
+    """One rounding rule for the box and the charts. 16.5 becomes 17."""
+    try:
+        number = Decimal(str(value))
+    except Exception:
+        return 0
+    return int(number.quantize(Decimal('1'), rounding=ROUND_HALF_UP))
 
 
 def _median(values: list[int]) -> int:
@@ -55,7 +66,7 @@ def _column(rows, name: str) -> tuple[int, list[int]]:
     for person, value in rows or []:
         if str(person) == 'Average':
             continue
-        amount = int(value or 0)
+        amount = round_half_up(value or 0)
         room.append(amount)
         label = str(person).strip().casefold()
         if label == wanted or (first and label.split()[0] == first):
@@ -119,6 +130,8 @@ def personal_metrics(story: dict) -> list[dict]:
         'ideas': item('ideas', ideas, _median(idea_room), idea_room or [ideas], str(int(ideas))),
     }
     optional = ['share', 'words', 'questions', 'ideas']
+    if metrics['words']['value'] == metrics['longest']['value']:
+        optional = [key for key in optional if key != 'words']
     optional.sort(key=lambda key: (-metrics[key]['surprise'], TIE_ORDER.index(key)))
     chosen = ['longest'] + optional[:3]
     chosen.sort(key=lambda key: (-metrics[key]['surprise'], TIE_ORDER.index(key)))

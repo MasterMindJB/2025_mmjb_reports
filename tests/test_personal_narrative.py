@@ -69,7 +69,9 @@ def test_short_mode_skips_the_model_when_there_are_not_enough_words():
     assert story['headline'] == 'You spoke twice, for under a minute.'
     assert '1 big thing' not in story['one_big_thing']
     assert story['one_big_thing'] == ''
-    assert story['why_it_matters'].startswith('The room can still hear')
+    assert story['why_it_matters'] == ''
+    assert 'work in front of you' not in story['character']
+    assert 'make one point' not in story['goal']
     assert story['yes_but'] == 'The turn was short.'
     assert story['next_rep'] == ''
     assert 'budget can wait' in story['said_quote']
@@ -253,10 +255,11 @@ def test_personal_call_uses_a_low_thinking_level():
 
     settings = personal_client_settings(type('LLM', (), {'timeout': 30})())
     assert settings['model'] == 'gemini-3.1-flash-lite'
-    assert settings['thinking_level'] == 'low'
+    assert settings['thinking_level'] == 'minimal'
     body = personal_request('Hello')
-    assert body['generationConfig']['thinkingConfig']['thinkingLevel'] == 'low'
-    assert THINKING_REQUEST['generationConfig']['thinkingConfig']['thinkingLevel'] == 'low'
+    assert body['generationConfig']['thinkingConfig']['thinkingLevel'] == 'minimal'
+    assert body['generationConfig']['thinkingConfig']['thinkingBudget'] == 0
+    assert THINKING_REQUEST['generationConfig']['thinkingConfig']['thinkingLevel'] == 'minimal'
     assert 'thinking_budget' not in json.dumps(body)
 
 
