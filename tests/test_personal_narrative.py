@@ -115,11 +115,18 @@ def test_a_quoted_script_may_say_i_and_one_bad_section_stays_full(tmp_path):
     class Scripted:
         def invoke(self, prompt):
             return type('Reply', (), {'content': json.dumps({
-                'character': 'You seem to care about the budget.',
-                'character_quote': 'Q1',
-                'goal': 'It seemed like you were trying to hold the budget point.',
-                'challenge': 'The room waited while you kept going.',
-                'why_it_matters': 'The room could not move on while the budget was still open.',
+                'bullets': [
+                    {
+                        'behavior': 'You seem to care about the budget, and it seemed like you were trying to hold the point.',
+                        'quote': 'Q1',
+                        'why': 'The budget stays in that line.',
+                    },
+                    {
+                        'behavior': 'The turn stayed on that point.',
+                        'quote': 'Q2',
+                        'why': 'The owner stays in that line.',
+                    },
+                ],
                 'yes_but': 'The point was clear. It left no gap for a reply.',
                 'said_quote': second,
             })})()
@@ -131,7 +138,8 @@ def test_a_quoted_script_may_say_i_and_one_bad_section_stays_full(tmp_path):
     )
     assert story['short_mode'] is False
     assert story['next_rep'] == ''
-    assert story['goal'].startswith('It seemed like you were trying to ')
+    assert story['bullets'][0].startswith('You seem to care')
+    assert 'it seemed like you were trying to' in story['bullets'][0].lower()
     saved = json.loads((tmp_path / 'checkpoints.json').read_text(encoding='utf-8'))
     assert saved[0]['raw']
     assert 'unquoted first-person' not in ' '.join(saved[0]['reasons'])
@@ -255,11 +263,14 @@ def test_personal_call_uses_a_low_thinking_level():
 
     settings = personal_client_settings(type('LLM', (), {'timeout': 30})())
     assert settings['model'] == 'gemini-3.1-flash-lite'
-    assert settings['thinking_level'] == 'minimal'
+    assert settings['thinking_level'] == 'budget'
     body = personal_request('Hello')
-    assert body['generationConfig']['thinkingConfig']['thinkingLevel'] == 'minimal'
-    assert body['generationConfig']['thinkingConfig']['thinkingBudget'] == 0
-    assert THINKING_REQUEST['generationConfig']['thinkingConfig']['thinkingLevel'] == 'minimal'
+    assert list(body['generationConfig']['thinkingConfig']) == ['thinkingBudget']
+    upgrade = personal_request('Hello', 'gemini-3.6-flash', 2048, 'low')
+    assert list(upgrade['generationConfig']['thinkingConfig']) == ['thinkingLevel']
+    assert upgrade['generationConfig']['maxOutputTokens'] == 2048
+    from lib.personal_narrative import upgrade_output_fits
+    assert upgrade_output_fits()
     assert 'thinking_budget' not in json.dumps(body)
 
 
@@ -282,12 +293,30 @@ def test_personal_model_404_falls_back_to_flash_lite(monkeypatch, caplog):
     transcript = {'utterances': rows}
     quotes = candidate_quotes([row['text'] for row in rows])
     moment_word(quotes, rows)
+    from lib.personal_narrative import _content_words
+
+    def _why(quote: str) -> str:
+        word = (_content_words(quote) or ['point'])[0]
+        return f'That line is about {word}.'
+
     payload = {
-        'character': 'You seem to care about the budget.',
-        'character_quote': 'Q1',
-        'goal': 'It seemed like you were trying to hold the budget point.',
-        'challenge': 'The room waited while you kept going.',
-        'why_it_matters': 'The room could not move on while the budget was still open.',
+        'bullets': [
+            {
+                'behavior': 'You seem to care about the budget, and it seemed like you were trying to hold the point.',
+                'quote': 'Q1',
+                'why': _why(quotes[0]),
+            },
+            {
+                'behavior': 'The turn stayed on that point.',
+                'quote': 'Q2',
+                'why': _why(quotes[1]),
+            },
+            {
+                'behavior': 'One line named the next step.',
+                'quote': 'Q3',
+                'why': _why(quotes[2]),
+            },
+        ],
         'yes_but': 'The point was clear. It left no gap for a reply.',
         'said_quote': 'Q2',
     }

@@ -238,8 +238,10 @@ def test_passed_to_stays_at_grade_six_and_the_run_stays_under_two_cents():
     from lib.personal_narrative import personal_request
 
     body = personal_request('Count the turns.')
-    assert body['generationConfig']['thinkingConfig']['thinkingLevel'] == 'minimal'
+    assert list(body['generationConfig']['thinkingConfig']) == ['thinkingBudget']
     assert body['generationConfig']['maxOutputTokens'] == 512
+    from lib.personal_narrative import upgrade_output_fits
+    assert upgrade_output_fits()
 
 
 def test_flash_lite_then_flash_upgrade_goes_through_the_entry_point(monkeypatch):
@@ -247,23 +249,31 @@ def test_flash_lite_then_flash_upgrade_goes_through_the_entry_point(monkeypatch)
 
     seen = []
 
-    def fake_rest(model, key, prompt, level='minimal', max_output=512, thinking=True):
-        seen.append((model, level, thinking))
-        if 'flash-lite' in model or prompt.startswith('Rewrite') or prompt.startswith('Simplify'):
-            return type('Reply', (), {'content': '{"one_big_thing": "A1", "why_it_matters": "Your aim: the layout below."}'})()
-        quote = 'The budget can wait until the client signs.'
-        return type('Reply', (), {'content': (
-            '{"one_big_thing": "You kept one point. Will you ask?", '
-            '"one_big_thing_quote": "Q1", '
-            '"why_it_matters": "The room could not answer while you kept going.", '
-            '"yes_but": "The point was clear.", '
-            f'"said_quote": "Q2", "style_id": "U1"}}'
-        )})()
+    def fake_rest(model, key, prompt, mode='budget', max_output=512):
+        seen.append((model, mode, max_output))
+        if '3.6' not in model:
+            return type('Reply', (), {'content': '{"character": ""}'})()
+        return type('Reply', (), {'content': json.dumps({
+            'bullets': [
+                {
+                    'behavior': 'You seem to care about the budget, and it seemed like you were trying to name an owner.',
+                    'quote': 'Q1',
+                    'why': 'The budget and the owner stay in that line.',
+                },
+                {
+                    'behavior': 'The turn stayed on that point.',
+                    'quote': 'Q2',
+                    'why': 'The budget and the owner stay in that line.',
+                },
+            ],
+            'yes_but': 'The point was clear.',
+            'said_quote': 'Q2',
+        })})()
 
     monkeypatch.setattr('lib.personal_narrative._rest_generate', fake_rest)
-    sentence = 'The budget can wait until the client signs. '
     transcript = {'utterances': [
-        {'speaker': 'S', 'name': 'Stephen', 'text': sentence * 8, 'start': 0, 'end': 80000},
+        {'speaker': 'S', 'name': 'Stephen', 'text': 'The budget can wait until the client signs. ' * 4, 'start': 0, 'end': 40000},
+        {'speaker': 'S', 'name': 'Stephen', 'text': 'Name the owner before the next decision lands. ' * 4, 'start': 40000, 'end': 80000},
     ]}
 
     class Client:
@@ -278,9 +288,8 @@ def test_flash_lite_then_flash_upgrade_goes_through_the_entry_point(monkeypatch)
         {'share': 18, 'turns': 1, 'questions': 1, 'session_question_average': 1, 'speaker_count': 6, 'words': 80},
     )
     assert seen[0][0] == 'gemini-3.1-flash-lite'
-    assert seen[0][1] == 'minimal'
-    assert ('gemini-3.6-flash', 'low', True) in seen
-    assert any(item[1] == 'off' and item[2] is False for item in seen)
+    assert seen[0][1] == 'budget'
+    assert ('gemini-3.6-flash', 'low', 2048) in seen
     assert story['short_mode'] is False
 
 
@@ -328,9 +337,10 @@ def test_a_personal_upgrade_restores_the_shared_client():
 def test_a_long_turn_stays_full_when_both_models_fail_the_grade():
     from lib.personal_narrative import build_personal_story
 
-    sentence = 'The budget can wait until the client signs. '
+    first = 'The budget can wait until the client signs. '
+    second = 'Name the owner before the next decision lands. '
     transcript = {'utterances': [
-        {'speaker': 'S', 'name': 'Stephen', 'text': sentence * 12, 'start': 0, 'end': 90000},
+        {'speaker': 'S', 'name': 'Stephen', 'text': (first + second) * 6, 'start': 0, 'end': 90000},
     ]}
 
     class Bad:
@@ -348,13 +358,13 @@ def test_a_long_turn_stays_full_when_both_models_fail_the_grade():
         {'share': 18, 'turns': 1, 'questions': 1, 'session_question_average': 1, 'speaker_count': 6},
     )
     assert story['short_mode'] is False
-    assert story['goal'].startswith('It seemed like you were trying to ')
-    assert not any(character.isdigit() for character in story['character'])
-    assert 'Will you' not in story['challenge']
-    assert story['challenge'].count('"') == 2
-    assert 'below' not in story['why_it_matters'].lower()
-    assert 'A1' not in story['why_it_matters']
-    assert reading_grade(story['why_it_matters']) <= 6
+    assert len(story['bullets']) >= 2
+    assert story['bullets'][0].startswith('You seem to care') or story['bullets'][0].startswith('You kept coming back to "')
+    assert 'it seemed like you were trying to' not in story['bullets'][1].lower()
+    assert 'You said.' not in ' '.join(story['bullets'])
+    assert all('We came to that conclusion because of "' in bullet for bullet in story['bullets'])
+    assert 'below' not in ' '.join(story['bullets']).lower()
+    assert 'A1' not in ' '.join(story['bullets'])
 
 
 def test_question_columns_include_every_speaker_with_unique_labels(tmp_path):
@@ -558,3 +568,33 @@ def test_personal_report_has_no_next_rep_when_the_flag_is_off(tmp_path, monkeypa
     saved = json.loads((tmp_path / 'checkpoints.json').read_text(encoding='utf-8'))
     assert saved[-1]['lead_metric']
     assert 'surprise' in saved[-1]
+
+
+def test_bare_units_are_quoted_and_incomplete_bullets_are_dropped():
+    from lib.personal_narrative import _care_behavior, _fallback_bullets, render_personal_bullets
+
+    for name, unit in (('Ric', 'life'), ('Stephen', 'passion'), ('Leslie', 'hard'), ('Steve', 'speak')):
+        line = _care_behavior(unit)
+        assert line == f'You kept coming back to "{unit}"'
+        assert f'the {unit}' not in line
+    quotes = [
+        'The budget can wait until the client signs.',
+        'Name the owner before the next decision lands.',
+    ]
+    bullets = _fallback_bullets([{'text': 'life', 'count': 3}], quotes)
+    assert len(bullets) == 2
+    assert bullets[0].startswith('You kept coming back to "life".')
+    assert 'We came to that conclusion because of "' in bullets[0]
+    assert bullets[0].rstrip('.').count('.') >= 2
+    assert not bullets[1].lower().startswith('it seemed')
+    assert 'You said.' not in ' '.join(bullets)
+    assert _fallback_bullets([{'text': 'onboarding plan', 'count': 3}], quotes[:1]) == []
+    merged = _care_behavior('onboarding plan')
+    assert merged.startswith('You seem to care about onboarding plan, and it seemed like you were trying to')
+    dropped = render_personal_bullets({
+        'bullets': [
+            {'behavior': 'You said.', 'quote': 'Q1', 'why': 'The budget stays in that line.'},
+            {'behavior': 'You seem to care about the budget.', 'quote': 'Q2', 'why': ''},
+        ],
+    }, quotes)
+    assert dropped == []

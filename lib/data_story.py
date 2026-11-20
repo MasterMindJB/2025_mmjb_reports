@@ -480,6 +480,7 @@ def personal_story(
         'action': (draft or {}).get('action') or _personal_action(share_pct, speaker_count, question_count, int(words), turn_count),
         'opening': '',
         'character': (draft or {}).get('character') or '',
+        'bullets': list((draft or {}).get('bullets') or []),
         'appendix': _appendix(framework, name),
     }
     from lib.personal_narrative import log_scorecard

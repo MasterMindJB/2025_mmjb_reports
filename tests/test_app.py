@@ -710,3 +710,112 @@ def test_generate_session_stamps_the_host_before_the_closer(tmp_path):
     assert chosen['text'].startswith('The knowledge systems still hide the design')
     assert 'Thank you all for coming' not in chosen['text']
     assert 'et cetera' not in chosen['text']
+
+
+def test_generate_session_keeps_personal_bullets_in_the_pdf(tmp_path):
+    from app.analysis import GeminiAnalysis
+    from app.services import generate_session
+    from lib.data_story import personal_story
+    from lib.session_window import parse_clock_ms
+    from lib.pdf_functions import MM_PDF
+    from lib.story_pdf import write_personal_report
+    from tests.fakes import FakeLLM
+
+    class BulletLLM(FakeLLM):
+        def _reply(self, text):
+            if 'PERSONAL_NARRATIVE' in text:
+                return json.dumps({
+                    'bullets': [
+                        {
+                            'behavior': 'You seem to care about the budget, and it seemed like you were trying to name an owner.',
+                            'quote': 'Q1',
+                            'why': 'The budget stays in that line.',
+                        },
+                        {
+                            'behavior': 'The turn stayed on that point.',
+                            'quote': 'Q2',
+                            'why': 'The owner stays in that line.',
+                        },
+                    ],
+                })
+            return super()._reply(text)
+
+    captured = {}
+
+    class CaptureRenderer:
+        def render(self, **kwargs):
+            captured['bundle'] = kwargs['bundle']
+            captured['transcript'] = kwargs['transcript']
+            return []
+
+    rows = []
+    clock = 0
+    for _ in range(4):
+        rows.append({
+            'speaker': 'S',
+            'text': 'The budget can wait until the client signs.',
+            'start': clock,
+            'end': clock + 4000,
+        })
+        clock += 8000
+        rows.append({
+            'speaker': 'S',
+            'text': 'Name the owner before the next decision lands.',
+            'start': clock,
+            'end': clock + 4000,
+        })
+        clock += 8000
+    rows.append({
+        'speaker': 'H',
+        'text': 'Thank you all for coming to the session today.',
+        'start': clock,
+        'end': clock + 4000,
+    })
+    app, _transcription = build_client(tmp_path)
+    app.state.analysis = GeminiAnalysis(llm=BulletLLM())
+    app.state.renderer = CaptureRenderer()
+    db = app.state.db
+    transcript_path = tmp_path / 'transcript.json'
+    transcript_path.write_text(json.dumps({'utterances': rows}), encoding='utf-8')
+    session_id = db.create_session(
+        client='Northwind',
+        group_name='Full Sail',
+        session_name='Take a Position',
+        session_date='2026-11-18',
+        speakers_expected=2,
+        recording_path='',
+        recording_filename='',
+        created_at='2026-11-19T00:00:00+00:00',
+        window_end_ms=parse_clock_ms('1:00'),
+    )
+    db.update_session(session_id, transcript_path=str(transcript_path), status='naming')
+    db.replace_speakers(session_id, [{'label': 'S', 'samples': []}, {'label': 'H', 'samples': []}])
+    for speaker in db.list_speakers(session_id):
+        if speaker['label'] == 'S':
+            db.update_speaker(
+                speaker['id'], name='Stephen', email='stephen@example.com',
+                role='participant', name_status='confirmed',
+            )
+        else:
+            db.update_speaker(speaker['id'], name='Host', email='', role='host', name_status='confirmed')
+    generate_session(
+        db, app.state.analysis, app.state.renderer, app.state.transcription, app.state.settings, session_id,
+    )
+    draft = captured['bundle'].stories['personal']['S']
+    assert draft.get('bullets')
+    story = personal_story(
+        label='S',
+        info={'name': 'Stephen', 'role': 'participant'},
+        analysis={},
+        transcript=captured['transcript'],
+        stats_frame=None,
+        framework={},
+        draft=draft,
+    )
+    assert story['bullets']
+    assert any('We came to that conclusion because of' in bullet for bullet in story['bullets'])
+    pdf = MM_PDF(path_report_assets=__import__('pathlib').Path('report_assets'))
+    write_personal_report(pdf, story, tmp_path)
+    pdf.output(tmp_path / 'stephen.pdf')
+    text = '\n'.join(page.extract_text() or '' for page in PdfReader(tmp_path / 'stephen.pdf').pages)
+    assert 'We came to that conclusion because of' in text
