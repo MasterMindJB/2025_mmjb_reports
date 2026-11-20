@@ -938,7 +938,8 @@ def test_listener_whys_pass_and_a_missing_care_noun_is_repaired(caplog, monkeypa
             },
         ],
     }, quotes + ['The client signs when the budget is ready.'], quote)
-    assert 'weather' not in dropped[2].lower()
+    assert len(dropped) == 2
+    assert all('weather' not in line.lower() for line in dropped)
 
     seen = []
 
@@ -987,3 +988,74 @@ def test_listener_whys_pass_and_a_missing_care_noun_is_repaired(caplog, monkeypa
     assert any(prompt.startswith('Rewrite this one sentence') for prompt in seen)
     assert story['short_mode'] is False
     assert 'your team' not in story['bullets'][0].lower()
+
+
+def test_a_prompt_example_does_not_become_stephens_goal_and_bare_bullets_drop(monkeypatch):
+    from lib.personal_narrative import _prompt, _usable_model_bullets, build_personal_story, prompt_example_problem
+
+    quote = "I've always been into making movies, making music, whatever it is."
+    leaked = 'You seem to care about making movies, and it seemed like you were trying to own your results.'
+    assert prompt_example_problem(leaked, quote)
+    assert not prompt_example_problem(leaked, quote + ' The results took years.')
+    instructions = _prompt('Stephen', [], [quote], [], '', '', None)
+    assert 'owning your results' not in instructions
+    assert 'your team' not in instructions
+    assert '<what the quote shows they value>' in instructions
+
+    why = 'That story shows people that making movies started early.'
+    other = 'That moment lets others know the music still matters.'
+    merged_bare = 'You seem to care about making movies, and it seemed like you were trying to make music.'
+    quotes = [quote, 'Making music is the part he kept coming back to today.', 'The movies took years before anyone heard them.']
+    kept = _usable_model_bullets({
+        'bullets': [
+            {'behavior': merged_bare, 'quote': 'Q1', 'why': ''},
+            {'behavior': 'The line stayed on the music.', 'quote': 'Q2', 'why': other},
+            {'behavior': 'The turn named the movies.', 'quote': 'Q3', 'why': ''},
+        ],
+    }, quotes, quote)
+    assert kept[0].lower().startswith('you seem to care')
+    assert len(kept) == 2
+    assert 'we came to that conclusion because of' in kept[1].lower()
+
+    dropped = _usable_model_bullets({
+        'bullets': [
+            {'behavior': merged_bare, 'quote': 'Q1', 'why': ''},
+            {'behavior': 'The line stayed on the music.', 'quote': 'Q2', 'why': other},
+            {'behavior': 'The turn named the movies.', 'quote': 'Q3', 'why': why},
+        ],
+    }, quotes, quote)
+    assert len(dropped) == 2
+    assert not dropped[0].lower().startswith('you seem to care')
+
+    seen = []
+
+    def fake_rest(model, key, prompt, mode='budget', max_output=512):
+        seen.append(prompt)
+        if prompt.startswith('Rewrite'):
+            return type('Reply', (), {'content': 'You seem to care about making movies, and it seemed like you were trying to make music.'})()
+        return type('Reply', (), {'content': json.dumps({
+            'bullets': [
+                {'behavior': leaked, 'quote': 'Q1', 'why': why},
+                {'behavior': 'The line stayed on the music.', 'quote': 'Q2', 'why': other},
+            ],
+        })})()
+
+    monkeypatch.setattr('lib.personal_narrative._rest_generate', fake_rest)
+
+    class Client:
+        google_api_key = 'test-key'
+        model = 'gemini-3.1-flash-lite'
+
+        def invoke(self, prompt, **kwargs):
+            raise AssertionError('the entry point should call REST')
+
+    story = build_personal_story(
+        Client(),
+        {'utterances': [{'speaker': 'S', 'text': (quote + ' Making music stayed with him for years. ') * 6, 'start': 0, 'end': 80000}]},
+        'S',
+        {'name': 'Stephen'},
+        {'share': 20, 'turns': 2, 'questions': 1, 'speaker_count': 4, 'words': 90},
+    )
+    assert any('own your results' in prompt or 'prompt example' in prompt or prompt.startswith('Rewrite') for prompt in seen)
+    assert all('owning your results' not in prompt for prompt in seen)
+    assert 'own your results' not in ' '.join(story['bullets']).lower()

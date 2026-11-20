@@ -227,8 +227,8 @@ def _prompt(name: str, lines: list[str], quotes: list[str], failures: list[str],
         'bullets: 3 items when there are 3 quotes, otherwise 2. Each item has behavior, quote, and why.\n'
         'behavior is one observed sentence. No advice, no question, no counts, no digits.\n'
         'The first behavior merges care and goal. It starts with "You seem to care" and includes "it seemed like you were trying to".\n'
-        'Care is what the quote shows the person values. The head noun must be a word they said, or a direct paraphrase of that quote. '
-        'For "And you make it hinge upon yourself" the care is owning your results, not "your team".\n'
+        'Care is <what the quote shows they value>. The goal is <what the quote shows they were trying to do>. '
+        'Use nouns from the quote. Do not copy a placeholder.\n'
         'No later behavior contains "You seem" or starts with "It seemed like you were trying to".\n'
         'Never write a behavior that is only "You said."\n'
         'quote is only an id such as "Q1". Each bullet uses a different id. Do not retype the words.\n'
@@ -237,7 +237,6 @@ def _prompt(name: str, lines: list[str], quotes: list[str], failures: list[str],
         'No advice, no next time, and no should.\n'
         'Good why: That story shows people you know how long the climb takes.\n'
         'Bad why: You brought up making movies.\n'
-        'Good behavior: You seem to care about the work, and it seemed like you were trying to name it.\n'
         'Bad: You said "life" 5 times.\n'
         'yes_but: one observed caveat. No advice and no next step.\n'
         'said_quote: a quote id such as "Q2", or "" if there is no Q2.\n'
@@ -425,6 +424,60 @@ def _care_phrase(behavior: str) -> str:
     return match.group(1).strip() if match else ''
 
 
+_PROMPT_EXAMPLES = (
+    'owning your results',
+    'own your results',
+    'your team',
+    'the work',
+    'name it',
+    'name the work',
+)
+
+
+def _example_lemmas(text: str) -> list[str]:
+    found = []
+    for word in re.findall(r"[A-Za-z']+", text or ''):
+        token = word.lower().strip("'")
+        if token in _FUNCTION or token in _STOP or token in {'a', 'an', 'the', 'your', 'you'}:
+            continue
+        for suffix in ('ing', 'ed', 'es', 's'):
+            if token.endswith(suffix) and len(token) - len(suffix) >= 3:
+                token = token[:-len(suffix)]
+                break
+        if len(token) >= 3:
+            found.append(token)
+    return found
+
+
+def _goal_phrase(behavior: str) -> str:
+    match = re.search(r'it seemed like you were trying to (.+)', str(behavior or ''), re.I)
+    return match.group(1).strip().rstrip('.') if match else ''
+
+
+def _leaked_example(phrase: str, speech: str) -> bool:
+    """True when the object is a prompt example and its head noun was not said."""
+    got = _example_lemmas(phrase)
+    if not got:
+        return False
+    said = set(_example_lemmas(speech))
+    for example in _PROMPT_EXAMPLES:
+        if got != _example_lemmas(example):
+            continue
+        if got[-1] not in said:
+            return True
+    return False
+
+
+def prompt_example_problem(behavior: str, speech: str) -> str:
+    care = _care_phrase(behavior)
+    goal = _goal_phrase(behavior)
+    if _leaked_example(care, speech):
+        return f'care object repeats a prompt example: {care}'
+    if _leaked_example(goal, speech):
+        return f'goal object repeats a prompt example: {goal}'
+    return ''
+
+
 def _care_head(behavior: str) -> str:
     words = [
         word.lower() for word in re.findall(r"[A-Za-z']+", _care_phrase(behavior))
@@ -492,6 +545,9 @@ def _bullet_problems(items, quotes: list[str], speech: str = '') -> list[str]:
             quote = _quote_by_id(token, quotes, -1)
             if index == 0 and not care_grounded(behavior, speech or ' '.join(usable), quote):
                 reasons.append(f'care object is not in this person\'s speech: {_care_head(behavior)}')
+            leaked = prompt_example_problem(behavior, speech or ' '.join(usable))
+            if leaked:
+                reasons.append(leaked)
             problem = _why_problem(why, quote, behavior, usable, speech)
             if problem:
                 reasons.append(f'{problem}: {why.strip()}')
@@ -1579,7 +1635,7 @@ def _why_failures(found: dict) -> bool:
 
 def _care_failures(found: dict) -> bool:
     reasons = [reason for items in found.values() for reason in items]
-    return any(reason.startswith('care object') for reason in reasons)
+    return any(reason.startswith('care object') or reason.startswith('goal object') for reason in reasons)
 
 
 def _why_only(found: dict) -> bool:
@@ -1623,9 +1679,9 @@ def _repair_sentence(llm, text: str, quote: str, behavior: str = '', model: str 
 def _repair_behavior(llm, behavior: str, quote: str, model: str | None = None) -> str:
     """Rewrite a care sentence whose head noun is not in the speech."""
     prompt = (
-        'Rewrite this one sentence. Care is what the quote shows the person values. '
-        'The head noun must be a word from the quote, or a direct paraphrase of its topic. '
-        'For "And you make it hinge upon yourself" write owning your results, not "your team". '
+        'Rewrite this one sentence. Care is <what the quote shows they value>. '
+        'The goal is <what the quote shows they were trying to do>. '
+        'Use a noun that appears in the quote. Do not copy a placeholder. '
         'Keep the shape: it starts with "You seem to care" and includes "it seemed like you were trying to". '
         'No advice. Return only the sentence.\n'
         f'QUOTE\n{quote or "None."}\nTEXT\n{behavior}'
@@ -1651,7 +1707,8 @@ def _repair_whys(llm, payload: dict, quotes: list[str], model: str | None = None
         behavior = str(bullet.get('behavior') or '')
         why = str(bullet.get('why') or '')
         quote = _quote_by_id(str(bullet.get('quote') or ''), quotes, -1)
-        if index == 0 and not care_grounded(behavior, speech or ' '.join(quotes), quote):
+        heard = speech or ' '.join(quotes)
+        if prompt_example_problem(behavior, heard) or (index == 0 and not care_grounded(behavior, heard, quote)):
             bullet['behavior'] = _repair_behavior(llm, behavior, quote, model)
             behavior = bullet['behavior']
         problem = _why_problem(why, quote, behavior, quotes, speech)
@@ -1672,8 +1729,13 @@ def _fallback_why(why: str) -> bool:
     return reading_grade(text) <= 8.05
 
 
+def _is_merged_bullet(behavior: str) -> bool:
+    text = str(behavior or '').lower()
+    return text.startswith('you seem to care') and 'it seemed like you were trying to' in text
+
+
 def _usable_model_bullets(payload: dict | None, quotes: list[str], speech: str = '') -> list[str]:
-    """Keep complete bullets. A bare why ships only when two others are already complete."""
+    """Two or three complete bullets. A bare line ships only when that is how we reach two."""
     if not isinstance(payload, dict):
         return []
     rows = []
@@ -1693,21 +1755,29 @@ def _usable_model_bullets(payload: dict | None, quotes: list[str], speech: str =
         rejected = str(source.get('why_rejected') or why)
         problem = _why_problem(why, quote, behavior, quotes, speech)
         used.add(quote)
-        rows.append((behavior, quote, '' if problem else why, rejected if problem else ''))
-    complete = sum(1 for _behavior, _quote, why, _rejected in rows if why)
-    rendered = []
-    for behavior, quote, why, rejected in rows:
-        if why:
-            rendered.append(_render_bullet(behavior, quote, why))
-            continue
-        if complete >= 2:
-            rendered.append(_render_bullet(behavior, quote, ''))
-            continue
-        if _fallback_why(rejected):
-            logging.warning('kept a rejected why at grade %s: %s', round(reading_grade(rejected), 2), rejected)
-            rendered.append(_render_bullet(behavior, quote, rejected))
-            continue
-        rendered.append(_render_bullet(behavior, quote, ''))
+        rows.append({
+            'behavior': behavior,
+            'quote': quote,
+            'why': '' if problem else why,
+            'rejected': rejected if problem else '',
+            'merged': _is_merged_bullet(behavior),
+        })
+    strict = sum(1 for row in rows if row['why'])
+    if strict < 2:
+        for row in rows:
+            if row['why'] or not _fallback_why(row['rejected']):
+                continue
+            logging.warning('kept a rejected why at grade %s: %s', round(reading_grade(row['rejected']), 2), row['rejected'])
+            row['why'] = row['rejected']
+        strict = sum(1 for row in rows if row['why'])
+    chosen = [row for row in rows if row['why']]
+    if strict < 2:
+        needed = 2 - strict
+        bares = [row for row in rows if not row['why']]
+        bares.sort(key=lambda row: 0 if row['merged'] else 1)
+        chosen.extend(bares[:needed])
+    chosen.sort(key=lambda row: 0 if row['merged'] else 1)
+    rendered = [_render_bullet(row['behavior'], row['quote'], row['why']) for row in chosen]
     return rendered if len(rendered) >= 2 else []
 
 
