@@ -1765,6 +1765,7 @@ def test_three_bullet_shapes_and_the_i_wonder_exception():
     assert reading_problem(reading, quote, speech) == ''
     heard = render_reading_bullet(quote, reading)
     assert heard.startswith('When you said "')
+    assert not heard.split('",', 1)[0].endswith('.')
     assert 'it felt like the work stayed honest.' in heard
     assert reading_problem('this is an incredible and extraordinary result for everyone', quote, speech)
     assert curiosity_problem('your focus on hard work', 'how the group shares ideas', speech) == ''
@@ -1796,3 +1797,70 @@ def test_three_bullet_shapes_and_the_i_wonder_exception():
     assert lines[0] == care
     assert lines[1] == heard
     assert lines[2] == wonder
+
+
+def test_slot_fragments_are_cleaned_and_a_missing_slot_mixes_before_upgrade():
+    from lib.personal_narrative import (
+        _request_missing_slots,
+        curiosity_problem,
+        ensure_three_bullets,
+        reading_problem,
+        render_curiosity_bullet,
+        render_reading_bullet,
+    )
+
+    speech = 'I focus on hard work when the group is waiting for the next idea. ' * 12
+    quote = 'I focus on hard work when the group is waiting for the next idea.'
+    assert len(speech.split()) >= 60
+    cleaned = render_curiosity_bullet(
+        'I wonder how Your focus on hard work.',
+        'I wonder how the group shares ideas.',
+    )
+    assert cleaned == (
+        'As a point of curiosity, I wonder how your focus on hard work '
+        'affects the group shares ideas.'
+    )
+    assert curiosity_problem('I wonder how your focus on hard work', 'how I lead the group', speech)
+    assert reading_problem('he kept the work for himself', quote, speech)
+    assert reading_problem('you kept the hard work in view', quote, speech) == ''
+    heard = render_reading_bullet(quote + '.', 'You kept the hard work in view.')
+    assert '."' not in heard
+    assert 'it felt like you kept the hard work in view.' in heard
+
+    class Quiet:
+        model = 'gemini-3.1-flash-lite'
+
+        def invoke(self, prompt, **kwargs):
+            raise AssertionError(prompt[:80])
+
+    lines = ensure_three_bullets(
+        Quiet(),
+        {
+            'cares': ['real work'],
+            'goals': ['show the point'],
+            'readings': [{'quote': 'Q1', 'reading': 'he kept it'}],
+            'curiosities': [{'behavior': 'the work', 'dynamic': 'how I lead'}],
+        },
+        [quote],
+        speech,
+        ['reading uses third person'],
+        [{'text': speech}],
+    )
+    assert len(lines) == 3
+    assert lines[0].lower().startswith('you seem to care')
+    assert lines[1].lower().startswith('when you said')
+    assert lines[2].lower().startswith('as a point of curiosity')
+
+    class Goals:
+        model = 'gemini-3.1-flash-lite'
+
+        def invoke(self, prompt, **kwargs):
+            assert 'Write 3 goals' in prompt
+            return type('Reply', (), {'content': __import__('json').dumps({
+                'goals': ['show the point', 'hold the line', 'name the work'],
+            })})()
+
+    parsed = _request_missing_slots(
+        Goals(), {'goal'}, [quote], speech, ['goal is missing'],
+    )
+    assert parsed['goals'][0] == 'show the point'

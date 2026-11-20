@@ -213,6 +213,61 @@ def test_delete_transcript_accepts_404(monkeypatch):
     assert calls and calls[0].endswith('/trx-gone')
 
 
+def test_create_transcript_asks_only_for_speaker_labels(tmp_path, monkeypatch):
+    bodies = []
+
+    def post(url, **kwargs):
+        if url.endswith('/upload'):
+            return _Response(200, {'upload_url': 'https://cdn.example/audio'})
+        bodies.append(kwargs.get('json') or {})
+        return _Response(200, {'id': 'trx-ok', 'status': 'queued'})
+
+    def get(url, **kwargs):
+        return _Response(200, _completed(2))
+
+    monkeypatch.setenv('ASSEMBLYAI_API_KEY', 'test-key')
+    monkeypatch.setattr('lib.assemblyai_helper_functions.requests.post', post)
+    monkeypatch.setattr('lib.assemblyai_helper_functions.requests.get', get)
+    audio, upload, create, transcript = _paths(tmp_path)
+    get_audio_transcript(audio, upload, create, transcript, speakers_expected=2)
+    assert bodies
+    asked = bodies[0]
+    assert asked['speaker_labels'] is True
+    for unused in ('auto_chapters', 'iab_categories', 'entity_detection', 'auto_highlights', 'sentiment_analysis'):
+        assert unused not in asked
+
+
+def test_delete_transcript_confirms_the_text_is_gone(monkeypatch, caplog):
+    import logging
+
+    calls = []
+
+    def delete(url, **kwargs):
+        calls.append('delete')
+        return _Response(200, {'id': 'trx-1'})
+
+    def get(url, **kwargs):
+        calls.append('get')
+        return _Response(200, {'id': 'trx-1', 'status': 'completed', 'text': 'The budget can wait.'})
+
+    monkeypatch.setenv('ASSEMBLYAI_API_KEY', 'test-key')
+    monkeypatch.setattr('lib.assemblyai_helper_functions.requests.delete', delete)
+    monkeypatch.setattr('lib.assemblyai_helper_functions.requests.get', get)
+    with caplog.at_level(logging.WARNING):
+        delete_transcript('trx-1')
+    assert calls == ['delete', 'get']
+    assert 'not confirmed' in caplog.text
+
+    def get_redacted(url, **kwargs):
+        return _Response(200, {'id': 'trx-1', 'status': 'completed', 'text': '[Redacted]'})
+
+    monkeypatch.setattr('lib.assemblyai_helper_functions.requests.get', get_redacted)
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        delete_transcript('trx-1')
+    assert 'not confirmed' not in caplog.text
+
+
 def test_delete_transcript_raises_on_server_error(monkeypatch):
     def delete(url, **kwargs):
         return _Response(503, {'error': 'unavailable'})

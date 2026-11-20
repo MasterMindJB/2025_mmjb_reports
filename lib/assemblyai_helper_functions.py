@@ -142,11 +142,6 @@ def _create_transcript(
     logging.info('...transcript not generated, asking to generate.')
     json_payload = {
         'audio_url': f'{url_upload}',
-        'iab_categories': True,
-        'auto_chapters': True,
-        'sentiment_analysis': True,
-        'entity_detection': True,
-        'auto_highlights': True,
         'speaker_labels': True,
     }
     if speakers_expected is not None:
@@ -311,9 +306,39 @@ def delete_transcript(transcript_id: str) -> None:
         headers={'authorization': _api_key()},
         timeout=_JSON_TIMEOUT,
     )
-    if response.status_code in (200, 202, 204, 404):
+    if response.status_code == 404:
         return
-    excerpt = (response.text or '')[:300]
-    raise RuntimeError(
-        f'AssemblyAI transcript delete failed with HTTP {response.status_code}: {excerpt}'
+    if response.status_code not in (200, 202, 204):
+        excerpt = (response.text or '')[:300]
+        raise RuntimeError(
+            f'AssemblyAI transcript delete failed with HTTP {response.status_code}: {excerpt}'
+        )
+    check = requests.get(
+        f'https://api.assemblyai.com/v2/transcript/{transcript_id}',
+        headers={'authorization': _api_key()},
+        timeout=_JSON_TIMEOUT,
     )
+    if check.status_code == 404:
+        return
+    payload = {}
+    try:
+        payload = check.json()
+    except ValueError:
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    text = str(payload.get('text') or '')
+    status = str(payload.get('status') or '').lower()
+    confirmed = (
+        status in {'deleted', 'redacted'}
+        or payload.get('deleted') is True
+        or 'redacted' in text.lower()
+        or text.strip() in {'', 'redacted'}
+    )
+    if not confirmed:
+        logging.warning(
+            'AssemblyAI delete was not confirmed for %s: HTTP %s text=%s',
+            transcript_id,
+            check.status_code,
+            text[:120],
+        )

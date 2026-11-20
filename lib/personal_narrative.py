@@ -233,12 +233,14 @@ def _prompt(name: str, lines: list[str], quotes: list[str], failures: list[str],
         'cares: 3 phrases of 2 to 4 words for what they value. Not a bare noun.\n'
         'goals: 3 phrases of 3 to 6 words for what they were trying to show the listener. Do not copy the quote.\n'
         'readings: 3 items with quote (an id such as Q1) and reading. '
-        'The reading is a charitable interpretation the quote supports, 15 words or fewer, '
-        'with overlap with their speech. Do not flatter past the evidence. No ego or negative framing.\n'
+        'The reading is one short clause of 15 words or fewer, at an eighth-grade level or easier. '
+        'It starts with "you" or "a", such as "you made a promise early and kept it". '
+        'Do not use he, she, or they. Do not flatter past the evidence.\n'
         'curiosities: 3 items with behavior and dynamic. '
-        'behavior is 3 to 8 words, starts with your, and is something they did. '
-        'dynamic is 2 to 6 words for a plain group effect, such as how the group shares ideas. '
-        'No advice and no judgment. The only first person is the fixed "I wonder".\n'
+        'behavior is 3 to 8 words and starts with "your", such as "your focus on hard work". '
+        'Do not start the behavior with "I wonder". '
+        'dynamic is 2 to 6 words, a plain group effect such as "how the group shares ideas", and it contains no "I". '
+        'No advice and no judgment.\n'
         'Describe them as they would recognize themselves. '
         'Do not frame them with self-importance, main focus, ego, selfish, or about yourself '
         'unless their own words use that framing.\n'
@@ -887,19 +889,42 @@ def render_care_bullet(care: str, goal: str) -> str:
     )
 
 
+def _tidy_fragment(text: str, speech: str = '') -> str:
+    """A slot is a fragment. Drop a leading 'I wonder', a trailing period, and sentence case."""
+    phrase = str(text or '').strip()
+    phrase = re.sub(
+        r'^(?:i\s+wonder(?:\s+(?:how|what|about))?)\s+',
+        '',
+        phrase,
+        count=1,
+        flags=re.I,
+    )
+    phrase = re.sub(r'^(?:it\s+felt\s+like)\s+', '', phrase, count=1, flags=re.I)
+    phrase = phrase.strip().rstrip('.').strip()
+    match = re.match(r'^((?:["“][^"”]*["”]\s*)*)([A-Za-z]+)', phrase)
+    if not match:
+        return phrase
+    prefix, word = match.group(1), match.group(2)
+    if word == 'I':
+        return phrase
+    if word[0].isupper() and re.search(rf'\b{re.escape(word)}\b', speech or ''):
+        return phrase
+    if word[0].isupper():
+        phrase = prefix + word[0].lower() + word[1:] + phrase[match.end():]
+    return phrase
+
+
 def render_reading_bullet(quote: str, reading: str) -> str:
-    """Bullet 2. The quote is verbatim. The reading is the interpretation."""
-    spoken = str(quote or '').strip().strip('"').strip('“”')
-    if spoken and spoken[-1] not in '.!?':
-        spoken += '.'
-    felt = str(reading or '').strip().rstrip('.')
+    """Bullet 2. The quote stays verbatim, without a period, because the sentence continues."""
+    spoken = str(quote or '').strip().strip('"').strip('“”').rstrip('.')
+    felt = _tidy_fragment(reading).rstrip('.')
     return f'When you said "{spoken}", it felt like {felt}.'
 
 
 def render_curiosity_bullet(behavior: str, dynamic: str) -> str:
     """Bullet 3. The only first person is the fixed 'I wonder'."""
-    act = str(behavior or '').strip().rstrip('.')
-    effect = str(dynamic or '').strip().rstrip('.')
+    act = _tidy_fragment(behavior).rstrip('.')
+    effect = _tidy_fragment(dynamic).rstrip('.')
     return f'As a point of curiosity, I wonder how {act} affects {effect}.'
 
 
@@ -932,12 +957,39 @@ def care_bullet_problem(care: str, goal: str, speech: str, quote: str) -> str:
     )
 
 
-def reading_problem(reading: str, quote: str, speech: str) -> str:
-    """A charitable reading the quote can support. Fifteen words, no flattery, no long words."""
+def _legacy_reading_problem(reading: str, quote: str, speech: str) -> str:
+    """Older why lines can still sit in the reading slot when they already passed the why gate."""
     phrase = str(reading or '').strip().rstrip('.')
     words = _raw_words(phrase)
     if not words or len(words) > 15:
         return 'reading is the wrong length'
+    rude = voice_problem(phrase, speech)
+    if rude:
+        return rude
+    if advice_problems(phrase):
+        return 'reading gives advice'
+    long = _long_word_outside(phrase, quote)
+    if long:
+        return f'reading uses a long word not in the quote: {long}'
+    if why_restates(phrase, quote):
+        return 'reading restates the quote'
+    if not why_on_topic(phrase, quote, '', [quote], speech):
+        return 'reading does not overlap this person\'s speech'
+    return ''
+
+
+def reading_problem(reading: str, quote: str, speech: str) -> str:
+    """A short second-person or impersonal clause. Fifteen words, grade 8, no third person."""
+    phrase = _tidy_fragment(reading, speech).rstrip('.')
+    words = _raw_words(phrase)
+    if not words or len(words) > 15:
+        return 'reading is the wrong length'
+    if re.search(r'\b(he|him|his|she|her|hers|they|them|their|theirs)\b', phrase, re.I):
+        return 'reading uses third person'
+    if not re.match(r'^(you|a|an|the)\b', phrase, re.I):
+        return 'reading must be second person or impersonal'
+    if reading_grade(phrase) > 8.05:
+        return 'reading is above an eighth-grade level'
     rude = voice_problem(phrase, speech)
     if rude:
         return rude
@@ -958,11 +1010,13 @@ def reading_problem(reading: str, quote: str, speech: str) -> str:
 
 
 def curiosity_problem(behavior: str, dynamic: str, speech: str) -> str:
-    """A curious question. 'I wonder' is allowed. Nothing else in the first person, and no judgment."""
-    act = str(behavior or '').strip().rstrip('.')
-    effect = str(dynamic or '').strip().rstrip('.')
-    if not re.search(r'\byour\b', act, re.I):
-        return 'behavior must use your'
+    """A curious question. 'I wonder' is allowed. The dynamic itself cannot contain I."""
+    act = _tidy_fragment(behavior, speech).rstrip('.')
+    effect = _tidy_fragment(dynamic, speech).rstrip('.')
+    if re.search(r'\bI\b', effect):
+        return 'team dynamic contains I'
+    if not re.match(r'^your\b', act, re.I):
+        return 'behavior must start with your'
     if not 3 <= len(_raw_words(act)) <= 8:
         return 'behavior is the wrong length'
     if not 2 <= len(_raw_words(effect)) <= 6:
@@ -2327,6 +2381,20 @@ def _payload_slots(payload: dict) -> tuple[list, list, list, list]:
 def compose_three_bullets(payload: dict, quotes: list[str], speech: str) -> tuple[list[str], set[str]]:
     """Three fixed shapes. Each slot is mixed from its own candidates."""
     cares, goals, readings, curiosities = _payload_slots(payload)
+    cares = [_tidy_fragment(item, speech) for item in cares]
+    goals = [_tidy_fragment(item, speech) for item in goals]
+    readings = [
+        {**item, 'reading': _tidy_fragment(str(item.get('reading') or ''), speech)}
+        for item in readings
+    ]
+    curiosities = [
+        {
+            **item,
+            'behavior': _tidy_fragment(str(item.get('behavior') or ''), speech),
+            'dynamic': _tidy_fragment(str(item.get('dynamic') or ''), speech),
+        }
+        for item in curiosities
+    ]
     lines: list[str] = []
     missing: set[str] = set()
     logs: list[str] = []
@@ -2399,12 +2467,13 @@ def _request_missing_slots(llm, missing: set[str], quotes: list[str], speech: st
     if 'reading' in missing:
         parts.append(
             'Write 3 readings under "readings", each {"quote": "Q1", "reading": ""}. '
-            'A reading is 15 words or fewer.'
+            'A reading starts with "you" or "a", is 15 words or fewer, and does not use he, she, or they.'
         )
     if 'curiosity' in missing:
         parts.append(
             'Write 3 curiosities under "curiosities", each {"behavior": "your ...", "dynamic": ""}. '
-            'behavior is 3 to 8 words. dynamic is 2 to 6 words.'
+            'behavior starts with "your" and is 3 to 8 words. '
+            'dynamic is 2 to 6 words and must not contain I.'
         )
     if not parts:
         return {}
@@ -2415,16 +2484,65 @@ def _request_missing_slots(llm, missing: set[str], quotes: list[str], speech: st
         + ('Failures:\n' + '\n'.join(reasons) + '\n' if reasons else '')
         + f'SPEECH\n{speech}\nQUOTES\n{quote_block}\nReturn JSON only.\n'
     )
-    raw = _invoke_personal(llm, prompt, upgrade_model_name(), 'minimal', 2048)
-    return _parse_json(raw) or {}
+    raw = _invoke_personal(llm, prompt, upgrade_model_name(), max_output=2048)
+    return _parse(raw) or {}
+
+
+def _speech_fill(quotes: list[str], speech: str) -> dict:
+    """Passing slot pieces taken from this person's own words, before any upgrade call."""
+    sample = quotes[0] if quotes else speech
+    topic = _topic_phrase(sample) or 'the work'
+    head = _phrase_head(topic) or 'work'
+    cares: list[str] = []
+    goals: list[str] = []
+    for care in ('real work', 'hard work'):
+        for goal in ('show the point', 'hold the line', 'name the work'):
+            if not care_bullet_problem(care, goal, speech, sample):
+                cares.append(care)
+                goals.append(goal)
+                break
+        if cares:
+            break
+    readings = []
+    for reading in (
+        f'you kept {topic} in view',
+        f'you stayed with the {head}',
+        'you kept the point in view',
+    ):
+        spoken = shorten_quote(sample, reading) if sample else ''
+        if spoken and not reading_problem(reading, spoken, speech):
+            readings.append({'quote': 'Q1', 'reading': reading})
+            break
+    curiosities = []
+    dynamic = 'how the group shares ideas'
+    options = [f'your focus on {head}', 'your focus on the work']
+    options.extend(f'your focus on {word}' for word in _content_words(speech)[:6])
+    for behavior in options:
+        if 3 <= len(_raw_words(behavior)) <= 8 and not curiosity_problem(behavior, dynamic, speech):
+            curiosities.append({'behavior': behavior, 'dynamic': dynamic})
+            break
+    return {'cares': cares, 'goals': goals, 'readings': readings, 'curiosities': curiosities}
+
+
+def _mix_in(data: dict, extra: dict) -> dict:
+    mixed = dict(data)
+    for key in ('cares', 'goals', 'readings', 'curiosities'):
+        if extra.get(key):
+            mixed[key] = list(mixed.get(key) or []) + list(extra[key])
+    return mixed
 
 
 def ensure_three_bullets(llm, payload: dict, quotes: list[str], speech: str, reasons: list[str], rows) -> list[str]:
-    """Mix the three slots. Spend at most two 3.6 calls, and only on slots that failed."""
+    """Mix the three slots. A missing slot is filled from the speech before any 3.6 call."""
     if not _new_shape(payload) or needs_short_report(rows):
         return []
     data = dict(payload)
     lines, missing = compose_three_bullets(data, quotes, speech)
+    if missing:
+        data = _mix_in(data, _speech_fill(quotes, speech))
+        lines, missing = compose_three_bullets(data, quotes, speech)
+        if not missing:
+            logging.warning('bullet slots filled from the mixer before 3.6')
     while missing and upgrade_calls(llm) < 2 and enough_speech(rows):
         logging.warning('bullet slot rescue: %s', ', '.join(sorted(missing)))
         note_upgrade(llm)
@@ -2830,7 +2948,7 @@ def _three_lines(checked: list[dict], speech: str) -> list[str]:
     for item in checked:
         quote = str(item.get('quote') or '')
         why = str(item.get('why') or '')
-        if why and not reading_problem(why, quote, speech):
+        if why and not _legacy_reading_problem(why, quote, speech):
             lines.append(render_reading_bullet(shorten_quote(quote, why), why))
             break
     for item in checked[1:]:
