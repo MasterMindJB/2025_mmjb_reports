@@ -256,7 +256,7 @@ def test_flash_lite_then_flash_upgrade_goes_through_the_entry_point(monkeypatch)
         return type('Reply', (), {'content': json.dumps({
             'bullets': [
                 {
-                    'behavior': 'You seem to care about the budget, and it seemed like you were trying to name an owner.',
+                    'behavior': 'You seem to care about real work, and it seemed like you were trying to name an owner.',
                     'quote': 'Q1',
                     'why': 'The budget and the owner stay in that line.',
                 },
@@ -677,7 +677,7 @@ def test_a_grade_repair_stays_on_flash_lite_and_one_upgrade_is_the_cap(monkeypat
         return type('Reply', (), {'content': json.dumps({
             'bullets': [
                 {
-                    'behavior': 'You seem to care about the budget, and it seemed like you were trying to name an owner.',
+                    'behavior': 'You seem to care about real work, and it seemed like you were trying to name an owner.',
                     'quote': 'Q1',
                     'why': hard,
                 },
@@ -787,7 +787,7 @@ def test_a_drifting_why_is_rewritten_without_dropping_the_behavior(monkeypatch, 
         return type('Reply', (), {'content': json.dumps({
             'bullets': [
                 {
-                    'behavior': 'You seem to care about the budget, and it seemed like you were trying to name an owner.',
+                    'behavior': 'You seem to care about real work, and it seemed like you were trying to name an owner.',
                     'quote': 'Q1',
                     'why': 'The weather stayed cold all morning.',
                 },
@@ -846,7 +846,7 @@ def test_two_quotes_never_become_a_short_report_and_a_bad_why_is_dropped():
             return type('Reply', (), {'content': json.dumps({
                 'bullets': [
                     {
-                        'behavior': 'You seem to care about the budget, and it seemed like you were trying to name an owner.',
+                        'behavior': 'You seem to care about real work, and it seemed like you were trying to name an owner.',
                         'quote': 'Q1',
                         'why': 'The weather stayed cold all morning.',
                     },
@@ -916,7 +916,7 @@ def test_listener_whys_pass_and_a_missing_care_noun_is_repaired(caplog, monkeypa
         hinge,
     )
     assert care_grounded(
-        'You seem to care about owning your results, and it seemed like you were trying to name the work.',
+        'You seem to care about work you can trust, and it seemed like you were trying to show people the point.',
         hinge,
         hinge,
     )
@@ -1058,7 +1058,7 @@ def test_a_prompt_example_does_not_become_stephens_goal_and_bare_bullets_drop(mo
     instructions = _prompt('Stephen', [], [quote], [], '', '', None)
     assert 'owning your results' not in instructions
     assert 'your team' not in instructions
-    assert '<what the quote shows they value>' in instructions
+    assert '2 to 5 common words' in instructions
 
     why = 'That story shows people that making movies started early.'
     other = 'That moment lets others know the music still matters.'
@@ -1192,3 +1192,38 @@ def test_quote_periods_listener_whys_and_short_behavior_words():
     # The warning is emitted by the repair when the 3.6 round finds no passing why.
     _repair_whys(NonePass(), payload, [movies], 'gemini-3.6-flash', movies, None, '3.6-repair')
     assert payload['bullets'][0]['why'] == ''
+
+
+def test_care_is_a_value_phrase_and_the_goal_does_not_copy_the_quote():
+    from lib.personal_narrative import care_grounded, care_phrase_problem, goal_phrase_problem, prompt_example_problem
+
+    fixtures = [
+        (
+            'You seem to care about life, and it seemed like you were trying to make things work out.',
+            'I want life to make things work out.',
+        ),
+        (
+            'You seem to care about the self, and it seemed like you were trying to hinge the work on you.',
+            'You hinge the work on you and the self.',
+        ),
+        (
+            'You seem to care about your movies, and it seemed like you were trying to make them.',
+            "I've always been into making movies, making music, whatever it is.",
+        ),
+        (
+            'You seem to care about the niche, and it seemed like you were trying to find visual effects.',
+            'I want to find visual effects in the niche.',
+        ),
+    ]
+    for behavior, quote in fixtures:
+        assert care_phrase_problem(behavior, quote)
+        assert goal_phrase_problem(behavior, quote)
+    good = 'You seem to care about work you can trust, and it seemed like you were trying to show people the point.'
+    quote = 'The budget can wait until the client signs.'
+    assert care_phrase_problem(good, quote) == ''
+    assert goal_phrase_problem(good, quote) == ''
+    assert care_grounded(good, '', quote)
+    assert prompt_example_problem(
+        'You seem to care about owning your results, and it seemed like you were trying to name the work.',
+        quote,
+    )

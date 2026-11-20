@@ -229,8 +229,10 @@ def _prompt(name: str, lines: list[str], quotes: list[str], failures: list[str],
         'No advice, no question, no counts, no digits. '
         'Do not use a long word that is not in the quote.\n'
         'The first behavior merges care and goal. It starts with "You seem to care" and includes "it seemed like you were trying to".\n'
-        'Care is <what the quote shows they value>. The goal is <what the quote shows they were trying to do>. '
-        'Use nouns from the quote. Do not copy a placeholder.\n'
+        'Care is a short phrase of 2 to 5 common words for what the quote shows they value. '
+        'It is not a bare noun copied from the quote, and not "the" plus one noun. '
+        'The goal says what they were trying to show or do for the listener. '
+        'It must not repeat the quote\'s own verb and object. Do not copy a placeholder.\n'
         'No later behavior contains "You seem" or starts with "It seemed like you were trying to".\n'
         'Never write a behavior that is only "You said."\n'
         'quote is only an id such as "Q1". Each bullet uses a different id. Do not retype the words.\n'
@@ -459,7 +461,7 @@ def _example_lemmas(text: str) -> list[str]:
     found = []
     for word in re.findall(r"[A-Za-z']+", text or ''):
         token = word.lower().strip("'")
-        if token in _FUNCTION or token in _STOP or token in {'a', 'an', 'the', 'your', 'you'}:
+        if token in _FUNCTION or token in _STOP or token in {'a', 'an', 'the', 'your', 'you', 'them', 'they'}:
             continue
         for suffix in ('ing', 'ed', 'es', 's'):
             if token.endswith(suffix) and len(token) - len(suffix) >= 3:
@@ -507,17 +509,52 @@ def _care_head(behavior: str) -> str:
     return words[-1] if words else ''
 
 
+_EVERYDAY = {
+    'life', 'work', 'love', 'time', 'home', 'care', 'help', 'show', 'way', 'own',
+    'self', 'hard', 'good', 'real', 'true', 'kind', 'fair', 'open', 'clear',
+    'trust', 'hope', 'worth', 'heart', 'mind', 'hand', 'need', 'want', 'feel',
+    'keep', 'give', 'share', 'start', 'place', 'story', 'choice', 'point',
+    'room', 'people', 'word', 'sense',
+}
+
+
+def _phrase_words(phrase: str) -> list[str]:
+    skip = _FUNCTION | _STOP | {'a', 'an', 'the', 'your', 'you', 'my', 'our', 'them', 'they', 'their', 'this', 'that', 'it'}
+    return [word.lower() for word in re.findall(r"[A-Za-z']+", phrase or '') if word.lower() not in skip]
+
+
+def care_phrase_problem(behavior: str, quote: str = '') -> str:
+    """Care is a 2–5 word value phrase, not a bare noun from the quote."""
+    phrase = _care_phrase(behavior)
+    if not phrase:
+        return ''
+    words = _phrase_words(phrase)
+    if len(words) < 2 or len(words) > 5 or re.fullmatch(r'(?:the|a|an|your|my)\s+\w+', phrase.strip(), re.I):
+        return f'care object is a bare noun: {phrase}'
+    return ''
+
+
+def goal_phrase_problem(behavior: str, quote: str) -> str:
+    """A goal whose content words are all copied from the quote restates it."""
+    phrase = _goal_phrase(behavior)
+    words = _example_lemmas(phrase)
+    if not words:
+        return ''
+    quote_lemmas = _example_lemmas(quote)
+    if all(_lemma_hit(word, quote_lemmas) or word in str(quote or '').lower() for word in words):
+        return f'goal restates the quote: {phrase}'
+    return ''
+
+
 def care_grounded(behavior: str, speech: str, quote: str = '') -> bool:
-    """The care head is in the speech, or the phrase paraphrases the quote."""
+    """The care head is in the speech, or it is a common one- or two-syllable word."""
     head = _care_head(behavior)
     if not head:
         return True
     pool = _lemmas(f'{speech} {quote}')
     if _lemma_hit(_lemma(head), pool) or head in f'{speech} {quote}'.lower():
         return True
-    phrase = _care_phrase(behavior)
-    words = re.findall(r"[A-Za-z']+", phrase)
-    return any(word.lower().endswith('ing') and len(word) > 5 for word in words)
+    return _spoken_syllables(head) <= 2 and head in _EVERYDAY
 
 
 def rejected_why_lines(items, quotes: list[str], speech: str = '') -> list[dict]:
@@ -566,6 +603,12 @@ def _bullet_problems(items, quotes: list[str], speech: str = '') -> list[str]:
             quote = _quote_by_id(token, quotes, -1)
             if index == 0 and not care_grounded(behavior, speech or ' '.join(usable), quote):
                 reasons.append(f'care object is not in this person\'s speech: {_care_head(behavior)}')
+            bare_care = care_phrase_problem(behavior, quote)
+            if bare_care:
+                reasons.append(bare_care)
+            copied_goal = goal_phrase_problem(behavior, quote)
+            if copied_goal:
+                reasons.append(copied_goal)
             hard_behavior = behavior_word_problem(behavior, quote)
             if hard_behavior:
                 reasons.append(hard_behavior)
@@ -1701,7 +1744,10 @@ def _behavior_failures(found: dict) -> bool:
 
 def _care_failures(found: dict) -> bool:
     reasons = [reason for items in found.values() for reason in items]
-    return any(reason.startswith('care object') or reason.startswith('goal object') for reason in reasons)
+    return any(
+        reason.startswith('care object') or reason.startswith('goal object') or reason.startswith('goal restates')
+        for reason in reasons
+    )
 
 
 def _why_only(found: dict) -> bool:
@@ -1743,11 +1789,11 @@ def _repair_sentence(llm, text: str, quote: str, behavior: str = '', model: str 
 
 
 def _repair_behavior(llm, behavior: str, quote: str, model: str | None = None) -> str:
-    """Rewrite a care sentence whose head noun is not in the speech."""
+    """Rewrite a care sentence that is a bare noun, a copied goal, or ungrounded."""
     prompt = (
-        'Rewrite this one sentence. Care is <what the quote shows they value>. '
-        'The goal is <what the quote shows they were trying to do>. '
-        'Use a noun that appears in the quote. Do not copy a placeholder. '
+        'Rewrite this one sentence. Care is a phrase of 2 to 5 common words for what they value, not a bare noun from the quote. '
+        'The goal says what they were trying to show or do for the listener, and does not copy the quote\'s verb and object. '
+        'Do not copy a placeholder. '
         'Use short, common words, about a fifth-grade reading level. '
         'Keep the shape: it starts with "You seem to care" and includes "it seemed like you were trying to". '
         'No advice. Return only the sentence.\n'
@@ -1810,6 +1856,8 @@ def _repair_whys(llm, payload: dict, quotes: list[str], model: str | None = None
         if (
             prompt_example_problem(behavior, heard)
             or behavior_word_problem(behavior, quote)
+            or care_phrase_problem(behavior, quote)
+            or goal_phrase_problem(behavior, quote)
             or (index == 0 and not care_grounded(behavior, heard, quote))
         ):
             bullet['behavior'] = _repair_behavior(llm, behavior, quote, model)
@@ -1871,6 +1919,12 @@ def _make_candidate(behavior: str, quote: str, why: str, source: str, quotes: li
     hard_behavior = behavior_word_problem(behavior, quote)
     if hard_behavior:
         problems.append(hard_behavior)
+    bare_care = care_phrase_problem(behavior, quote)
+    if bare_care:
+        problems.append(bare_care)
+    copied_goal = goal_phrase_problem(behavior, quote)
+    if copied_goal:
+        problems.append(copied_goal)
     leaked = prompt_example_problem(behavior, speech)
     if leaked:
         problems.append(leaked)
@@ -1936,7 +1990,9 @@ def assemble_personal_bullets(pool: list, quotes: list[str], speech: str = '') -
             clean = [
                 item for item in merged_rows
                 if not any(
-                    str(problem).startswith(('care object', 'goal object', 'behavior uses', 'behavior is above'))
+                    str(problem).startswith((
+                        'care object', 'goal object', 'goal restates', 'behavior uses', 'behavior is above',
+                    ))
                     for problem in item.get('problems') or []
                 )
             ]

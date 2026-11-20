@@ -308,7 +308,7 @@ def test_personal_model_404_falls_back_to_flash_lite(monkeypatch, caplog):
     payload = {
         'bullets': [
             {
-                'behavior': 'You seem to care about the budget, and it seemed like you were trying to hold the point.',
+                'behavior': 'You seem to care about real work, and it seemed like you were trying to show people the point.',
                 'quote': 'Q1',
                 'why': _why(quotes[0]),
             },
