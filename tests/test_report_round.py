@@ -289,7 +289,8 @@ def test_flash_lite_then_flash_upgrade_goes_through_the_entry_point(monkeypatch)
     )
     assert seen[0][0] == 'gemini-3.1-flash-lite'
     assert seen[0][1] == 'budget'
-    assert ('gemini-3.6-flash', 'low', 2048) in seen
+    assert ('gemini-3.6-flash', 'minimal', 2048) in seen
+    assert sum(1 for model, _mode, _cap in seen if model == 'gemini-3.6-flash') == 1
     assert story['short_mode'] is False
 
 
@@ -359,7 +360,10 @@ def test_a_long_turn_stays_full_when_both_models_fail_the_grade():
     )
     assert story['short_mode'] is False
     assert len(story['bullets']) >= 2
-    assert story['bullets'][0].startswith('You seem to care') or story['bullets'][0].startswith('You kept coming back to "')
+    assert story['bullets'][0].startswith('You seem to care')
+    assert 'it seemed like you were trying to' in story['bullets'][0].lower()
+    assert 'That line is about' not in ' '.join(story['bullets'])
+    assert 'The turn stayed on that point' not in ' '.join(story['bullets'])
     assert 'it seemed like you were trying to' not in story['bullets'][1].lower()
     assert 'You said.' not in ' '.join(story['bullets'])
     assert all('We came to that conclusion because of "' in bullet for bullet in story['bullets'])
@@ -571,26 +575,26 @@ def test_personal_report_has_no_next_rep_when_the_flag_is_off(tmp_path, monkeypa
 
 
 def test_bare_units_are_quoted_and_incomplete_bullets_are_dropped():
-    from lib.personal_narrative import _care_behavior, _fallback_bullets, render_personal_bullets
+    from lib.personal_narrative import _fallback_bullets, later_return_line, merged_care_goal, render_personal_bullets
 
-    for name, unit in (('Ric', 'life'), ('Stephen', 'passion'), ('Leslie', 'hard'), ('Steve', 'speak')):
-        line = _care_behavior(unit)
-        assert line == f'You kept coming back to "{unit}"'
-        assert f'the {unit}' not in line
     quotes = [
         'The budget can wait until the client signs.',
         'Name the owner before the next decision lands.',
     ]
+    assert merged_care_goal(quotes).startswith('You seem to care about the budget, and it seemed like you were trying to name the owner')
+    for unit in ('life', 'passion', 'hard', 'speak'):
+        assert later_return_line(unit) == f'You kept coming back to "{unit}"'
+    assert later_return_line("that's") == ''
+    assert later_return_line("he's") == ''
     bullets = _fallback_bullets([{'text': 'life', 'count': 3}], quotes)
     assert len(bullets) == 2
-    assert bullets[0].startswith('You kept coming back to "life".')
-    assert 'We came to that conclusion because of "' in bullets[0]
-    assert bullets[0].rstrip('.').count('.') >= 2
+    assert bullets[0].startswith('You seem to care about the budget, and it seemed like you were trying to')
+    assert bullets[1].startswith('You kept coming back to "life".')
+    assert 'That line is about' not in ' '.join(bullets)
+    assert 'The turn stayed on that point' not in ' '.join(bullets)
+    assert all('We came to that conclusion because of "' in bullet for bullet in bullets)
     assert not bullets[1].lower().startswith('it seemed')
-    assert 'You said.' not in ' '.join(bullets)
-    assert _fallback_bullets([{'text': 'onboarding plan', 'count': 3}], quotes[:1]) == []
-    merged = _care_behavior('onboarding plan')
-    assert merged.startswith('You seem to care about onboarding plan, and it seemed like you were trying to')
+    assert _fallback_bullets([{'text': 'life', 'count': 3}], quotes[:1]) == []
     dropped = render_personal_bullets({
         'bullets': [
             {'behavior': 'You said.', 'quote': 'Q1', 'why': 'The budget stays in that line.'},
@@ -598,3 +602,145 @@ def test_bare_units_are_quoted_and_incomplete_bullets_are_dropped():
         ],
     }, quotes)
     assert dropped == []
+
+
+def test_a_why_can_share_the_behavior_and_a_restatement_is_rejected():
+    from lib.personal_narrative import _bullet_problems, why_on_topic, why_restates
+
+    quote = 'I have been making movies for most of my career.'
+    behavior = 'You seem to care about the movies, and it seemed like you were trying to name the work.'
+    assert why_restates('You brought up making movies.', quote)
+    assert why_restates('You spoke about your career.', 'Your career has been the passion of your life.')
+    assert why_restates('You stated that your passion is wide.', 'My passion is wide and it covers film.')
+    assert why_restates('You made coffee before you moved up.', 'I made coffee before I moved up the hill.')
+    assert not why_restates('That story shows people you know how long the climb takes.', 'The climb took years before the film opened.')
+    assert why_on_topic('The room can hear how long that climb takes.', 'The climb took years.', behavior)
+    assert why_on_topic('The movies still matter to people.', quote, 'You kept the point.')
+    problems = _bullet_problems([
+        {'behavior': behavior, 'quote': 'Q1', 'why': 'You brought up making movies.'},
+    ], [quote])
+    assert any('restates' in item for item in problems)
+    shared = _bullet_problems([
+        {
+            'behavior': behavior,
+            'quote': 'Q1',
+            'why': 'That shows people the movies still matter.',
+        },
+        {
+            'behavior': 'The turn named the work.',
+            'quote': 'Q2',
+            'why': 'That shows people the work still matters.',
+        },
+    ], [quote, 'Name the work before the next film opens.'])
+    assert not any('drifts' in item for item in shared)
+
+
+def test_a_grade_repair_stays_on_flash_lite_and_one_upgrade_is_the_cap(monkeypatch):
+    from lib.personal_narrative import build_personal_story, reading_grade
+    from lib.readability import reading_grade as grade
+
+    hard = 'This extraordinary organizational demonstration of the budget shows people an extraordinarily complicated circumstance.'
+    assert grade(hard) > 6
+    seen = []
+
+    def fake_rest(model, key, prompt, mode='budget', max_output=512):
+        seen.append((model, mode, max_output, prompt[:24]))
+        if prompt.startswith('Rewrite this one sentence'):
+            assert model == 'gemini-3.1-flash-lite'
+            assert mode == 'budget'
+            assert max_output <= 256
+            return type('Reply', (), {'content': 'That shows people the budget still matters.'})()
+        if '3.6' in model:
+            return type('Reply', (), {'content': '{"character": ""}'})()
+        return type('Reply', (), {'content': json.dumps({
+            'bullets': [
+                {
+                    'behavior': 'You seem to care about the budget, and it seemed like you were trying to name an owner.',
+                    'quote': 'Q1',
+                    'why': hard,
+                },
+                {
+                    'behavior': 'The line named the owner.',
+                    'quote': 'Q2',
+                    'why': 'That shows people the owner still matters.',
+                },
+            ],
+        })})()
+
+    monkeypatch.setattr('lib.personal_narrative._rest_generate', fake_rest)
+
+    class Client:
+        google_api_key = 'test-key'
+        model = 'gemini-3.1-flash-lite'
+
+        def invoke(self, prompt, **kwargs):
+            raise AssertionError('the entry point should call REST')
+
+    transcript = {'utterances': [
+        {'speaker': 'S', 'text': 'The budget can wait until the client signs. ' * 4, 'start': 0, 'end': 40000},
+        {'speaker': 'S', 'text': 'Name the owner before the next decision lands. ' * 4, 'start': 40000, 'end': 80000},
+    ]}
+    story = build_personal_story(
+        Client(), transcript, 'S', {'name': 'Stephen'},
+        {'share': 18, 'turns': 2, 'questions': 1, 'speaker_count': 6, 'words': 80},
+    )
+    assert story['short_mode'] is False
+    assert any(item[3].startswith('Rewrite') for item in seen)
+    assert not any(item[0] == 'gemini-3.6-flash' for item in seen)
+    assert reading_grade(story['bullets'][0].split('".')[-1]) <= 6
+
+    seen.clear()
+
+    def always_bad(model, key, prompt, mode='budget', max_output=512):
+        seen.append(model)
+        return type('Reply', (), {'content': json.dumps({
+            'bullets': [{
+                'behavior': 'You brought up the budget.',
+                'quote': 'Q1',
+                'why': 'You brought up the budget.',
+            }],
+        })})()
+
+    monkeypatch.setattr('lib.personal_narrative._rest_generate', always_bad)
+    build_personal_story(
+        Client(), transcript, 'S', {'name': 'Stephen'},
+        {'share': 18, 'turns': 2, 'questions': 1, 'speaker_count': 6, 'words': 80},
+    )
+    assert seen.count('gemini-3.6-flash') == 1
+
+
+def test_talk_and_question_charts_stay_with_the_box(tmp_path):
+    from pypdf import PdfReader
+
+    from lib.pdf_functions import MM_PDF
+    from lib.story_pdf import write_personal_report
+
+    story = {
+        'name': 'Stephen',
+        'header_name': 'Stephen',
+        'bullets': [
+            'You seem to care about the budget, and it seemed like you were trying to name the owner. We came to that conclusion because of "The budget can wait until the client signs."',
+            'You kept coming back to "owner". We came to that conclusion because of "Name the owner before the next decision lands."',
+            'You kept coming back to "client". We came to that conclusion because of "The client signs when the budget is ready."',
+        ],
+        'share': 40,
+        'roster_shares': [('Stephen', 40), ('Ric', 12), ('Leslie', 10), ('Steve', 9), ('Host', 8), ('Casey', 7)],
+        'question_counts': [('Stephen', 1), ('Ric', 4), ('Leslie', 2), ('Steve', 0), ('Host', 1), ('Casey', 1)],
+        'longest_turns': [('Stephen', 95), ('Ric', 20), ('Leslie', 11), ('Steve', 8), ('Host', 6), ('Casey', 4)],
+        'proposal_counts': [('Stephen', 2), ('Ric', 1), ('Leslie', 0), ('Steve', 1)],
+        'word_counts': [('Stephen', 400), ('Ric', 80)],
+        'said_quote': 'The budget can wait until the client signs.',
+        'yes_but': '',
+    }
+    pdf = MM_PDF(path_report_assets=__import__('pathlib').Path('report_assets'))
+    write_personal_report(pdf, story, tmp_path)
+    pdf.output(tmp_path / 'stephen.pdf')
+    pages = PdfReader(tmp_path / 'stephen.pdf').pages
+    first = pages[0].extract_text() or ''
+    assert "Stephen, here's your report" in first
+    assert 'By the numbers' in first
+    assert 'Your charts' in first
+    counts = [len(list(page.images)) for page in pages]
+    assert counts[0] >= 2
+    if len(counts) > 1:
+        assert counts[1] != 1

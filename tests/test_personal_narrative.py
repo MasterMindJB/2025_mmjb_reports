@@ -266,11 +266,17 @@ def test_personal_call_uses_a_low_thinking_level():
     assert settings['thinking_level'] == 'budget'
     body = personal_request('Hello')
     assert list(body['generationConfig']['thinkingConfig']) == ['thinkingBudget']
-    upgrade = personal_request('Hello', 'gemini-3.6-flash', 2048, 'low')
+    from lib.personal_narrative import _call_plan
+    mode, cap = _call_plan('gemini-3.6-flash')
+    assert mode == 'minimal' and cap == 2048
+    upgrade = personal_request('Hello', 'gemini-3.6-flash', 2048, 'minimal')
     assert list(upgrade['generationConfig']['thinkingConfig']) == ['thinkingLevel']
+    assert upgrade['generationConfig']['thinkingConfig']['thinkingLevel'] == 'minimal'
     assert upgrade['generationConfig']['maxOutputTokens'] == 2048
-    from lib.personal_narrative import upgrade_output_fits
+    from lib.personal_narrative import upgrade_output_fits, upgrade_thinking_fallback
     assert upgrade_output_fits()
+    assert upgrade_thinking_fallback('minimal') == 'low'
+    assert upgrade_thinking_fallback('budget') == ''
     assert 'thinking_budget' not in json.dumps(body)
 
 
@@ -297,7 +303,7 @@ def test_personal_model_404_falls_back_to_flash_lite(monkeypatch, caplog):
 
     def _why(quote: str) -> str:
         word = (_content_words(quote) or ['point'])[0]
-        return f'That line is about {word}.'
+        return f'That shows people why {word} still matters.'
 
     payload = {
         'bullets': [

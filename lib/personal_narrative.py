@@ -230,8 +230,11 @@ def _prompt(name: str, lines: list[str], quotes: list[str], failures: list[str],
         'No later behavior contains "You seem" or starts with "It seemed like you were trying to".\n'
         'Never write a behavior that is only "You said."\n'
         'quote is only an id such as "Q1". Each bullet uses a different id. Do not retype the words.\n'
-        'why is one short specific sentence about that quote. Use a word from it. '
-        'Do not say below, above, next page, or step below.\n'
+        'why is one short sentence about why this quote matters for this person or the listener. '
+        'Do not restate the quote. Do not say below, above, next page, or step below. '
+        'No advice, no next time, and no should.\n'
+        'Good why: That story shows people you know how long the climb takes.\n'
+        'Bad why: You brought up making movies.\n'
         'Good behavior: You seem to care about the work, and it seemed like you were trying to name it.\n'
         'Bad: You said "life" 5 times.\n'
         'yes_but: one observed caveat. No advice and no next step.\n'
@@ -286,6 +289,67 @@ def _place_quote(text: str, quote: str) -> str:
     return f'{sentences[0]} {spoken} ' + ' '.join(sentences[1:])
 
 
+def _lemma(word: str) -> str:
+    token = re.sub(r"'s$", '', str(word or '').lower().strip("'\""))
+    for suffix in ('ingly', 'ing', 'ied', 'ies', 'es', 'ed', 's'):
+        if len(token) - len(suffix) >= 4 and token.endswith(suffix):
+            return token[:-len(suffix)]
+    return token
+
+
+def _lemmas(text: str) -> list[str]:
+    skip = {
+        'about', 'their', 'there', 'which', 'would', 'could', 'should', 'while', 'still',
+        'being', 'people', 'shows', 'showed', 'matters', 'means', 'because', 'room',
+    }
+    found = []
+    for word in re.findall(r"[A-Za-z']+", text or ''):
+        if "'" in word or word.lower() in _FUNCTION or word.lower() in skip:
+            continue
+        lemma = _lemma(word)
+        if len(lemma) < 4 or lemma in skip:
+            continue
+        found.append(lemma)
+    return found
+
+
+def _lemma_hit(left: str, pool: list[str]) -> bool:
+    return any(left == item or left.startswith(item) or item.startswith(left) for item in pool if min(len(left), len(item)) >= 4)
+
+
+_RESTATE_OPEN = re.compile(
+    r"^you (brought up|spoke about|talked about|stated|said|mentioned|made|named)\b",
+    re.I,
+)
+_CONSEQUENCE = re.compile(
+    r"\b(people|room|listener|listeners|someone|shows|showed|matters|means|because|lets|leaves|gives|understand|hear|heard)\b",
+    re.I,
+)
+
+
+def why_on_topic(why: str, quote: str, behavior: str = '') -> bool:
+    """A why may share a content lemma with the quote or with the behavior."""
+    lemmas = _lemmas(why)
+    if not lemmas:
+        return False
+    pool = _lemmas(quote) + _lemmas(behavior)
+    return any(_lemma_hit(item, pool) for item in lemmas)
+
+
+def why_restates(why: str, quote: str) -> bool:
+    """A why that mostly repeats the quote and names no consequence."""
+    if _CONSEQUENCE.search(why or ''):
+        return False
+    if _RESTATE_OPEN.match(str(why or '').strip()):
+        return True
+    lemmas = _lemmas(why)
+    pool = _lemmas(quote)
+    if not lemmas or not pool:
+        return False
+    overlap = sum(1 for item in lemmas if _lemma_hit(item, pool))
+    return overlap / len(lemmas) >= 0.67
+
+
 def _bullet_problems(items, quotes: list[str]) -> list[str]:
     """Each bullet is one observation, one new quote id, and one specific why."""
     reasons = []
@@ -316,9 +380,14 @@ def _bullet_problems(items, quotes: list[str]) -> list[str]:
         else:
             seen.append(token.upper())
             quote = _quote_by_id(token, quotes, -1)
-            words = _content_words(quote)
-            if words and not any(word in why.lower() for word in words):
-                reasons.append('why does not use this quote')
+            if not why.strip():
+                reasons.append('why is missing')
+            elif not why_on_topic(why, quote, behavior):
+                reasons.append('why drifts from this quote')
+            elif why_restates(why, quote):
+                reasons.append('why restates the quote')
+            elif reading_grade(why) > 6:
+                reasons.append('a why line is above a sixth-grade reading level')
         for reason in advice_problems(behavior) + advice_problems(why):
             reasons.append(reason)
         if _is_generic(behavior) or _is_generic(why):
@@ -327,9 +396,6 @@ def _bullet_problems(items, quotes: list[str]) -> list[str]:
             reasons.append('a bullet points at the page')
         if re.search(r'\b[QAU]\d+\b', f'{behavior} {why}'):
             reasons.append('a bullet contains a control id')
-        rendered = _render_bullet(behavior, _quote_by_id(token, quotes, -1), why)
-        if reading_grade(rendered) > 6:
-            reasons.append('a bullet is above a sixth-grade reading level')
     return reasons
 
 
@@ -717,8 +783,16 @@ def upgrade_model_name() -> str:
     return os.getenv('GEMINI_UPGRADE_MODEL', 'gemini-3.6-flash')
 
 
+def upgrade_thinking_fallback(mode: str) -> str:
+    """3.6 tries minimal, then low if that field is rejected. Never a second field at once."""
+    return 'low' if mode == 'minimal' else ''
+
+
 def thinking_config(model: str, mode: str = 'budget') -> dict:
     """Exactly one thinking field. Lite honors a budget. 3.6 honors a level."""
+    del model
+    if mode == 'minimal':
+        return {'thinkingLevel': 'minimal'}
     if mode == 'low':
         return {'thinkingLevel': 'low'}
     return {'thinkingBudget': 0}
@@ -890,8 +964,8 @@ def _rest_generate(model: str, key: str, prompt: str, mode: str = 'budget', max_
         data = _post(mode)
     except RuntimeError as exc:
         detail = str(getattr(exc, 'body', '') or exc).lower()
-        alternate = 'low' if mode == 'budget' else 'budget'
-        if 'thinking' in detail and mode != alternate:
+        alternate = upgrade_thinking_fallback(mode) if '3.6' in bare else ''
+        if alternate and 'thinking' in detail:
             logging.warning('thinking field %s was refused; retrying with %s', mode, alternate)
             data = _post(alternate)
         else:
@@ -905,11 +979,11 @@ def _rest_generate(model: str, key: str, prompt: str, mode: str = 'budget', max_
 
 
 def _call_plan(model: str, *, simplify: bool = False) -> tuple[str, int]:
-    """Lite uses a budget of 0. The 3.6 upgrade uses thinkingLevel low and room for JSON."""
+    """Lite uses a budget of 0. The 3.6 upgrade tries thinkingLevel minimal."""
     if simplify:
-        return 'budget', 256
+        return 'budget', 128
     if '3.6' in _bare_model(model):
-        return 'low', UPGRADE_MAX_OUTPUT
+        return 'minimal', UPGRADE_MAX_OUTPUT
     return 'budget', LITE_MAX_OUTPUT
 
 
@@ -969,37 +1043,83 @@ def _top_content_unit(units: list[dict] | None) -> str:
     return ''
 
 
-_NOT_A_NOUN = {
-    'hard', 'speak', 'said', 'say', 'talk', 'talking', 'try', 'trying', 'make', 'made',
-    'do', 'did', 'go', 'going', 'come', 'coming', 'keep', 'kept', 'want', 'need',
-    'good', 'bad', 'new', 'old', 'big', 'long', 'short', 'just', 'really', 'very',
+_GOAL_VERBS = {
+    'name', 'make', 'find', 'keep', 'hold', 'show', 'tell', 'build', 'start',
+    'finish', 'decide', 'share', 'explain', 'describe', 'choose', 'write',
+    'draft', 'own', 'sign',
 }
 
 
-def _noun_phrase(unit: str) -> str:
-    """A multi-word noun phrase, with no article glued onto a bare word."""
-    parts = [part for part in str(unit or '').split() if part]
+def _real_content_word(word: str) -> bool:
+    """A content word. Function words and contractions are not quoted units."""
+    token = str(word or '').strip().strip('"').strip("'")
+    if not token or "'" in token:
+        return False
+    low = token.lower()
+    if low in _FUNCTION:
+        return False
+    return len(low) > 3
+
+
+def _phrases_in(quote: str) -> list[str]:
+    """Noun phrases copied out of one quote. Nothing is invented."""
+    tokens = re.findall(r"[A-Za-z']+", quote or '')
+    phrases = []
+    index = 0
+    while index < len(tokens):
+        low = tokens[index].lower()
+        if low in {'a', 'an', 'the'} and index + 1 < len(tokens) and _real_content_word(tokens[index + 1]):
+            words = [low]
+            cursor = index + 1
+            while cursor < len(tokens) and cursor < index + 4 and _real_content_word(tokens[cursor]):
+                words.append(tokens[cursor].lower())
+                cursor += 1
+            phrases.append(' '.join(words))
+            index = cursor
+            continue
+        index += 1
+    return phrases
+
+
+def merged_care_goal(quotes: list[str]) -> str:
+    """Bullet 1. Care and goal, using only phrases that appear in the quotes."""
+    phrases: list[str] = []
+    for quote in quotes or []:
+        for phrase in _phrases_in(quote):
+            if phrase not in phrases:
+                phrases.append(phrase)
+    if not phrases:
+        return ''
+    goal = ''
+    for quote in quotes or []:
+        tokens = re.findall(r"[A-Za-z']+", quote or '')
+        if not tokens or tokens[0].lower() not in _GOAL_VERBS:
+            continue
+        objects = _phrases_in(quote)
+        if objects:
+            goal = f'{tokens[0].lower()} {objects[0]}'
+            break
+    care = next((phrase for phrase in phrases if not goal or phrase not in goal), phrases[0])
+    if not goal:
+        other = next((phrase for phrase in phrases if phrase != care), care)
+        goal = f'talk about {other}'
+    return f'You seem to care about {care}, and it seemed like you were trying to {goal}'
+
+
+def later_return_line(unit: str) -> str:
+    """A later bullet. Only a real content word is quoted."""
+    shown = str(unit or '').strip().strip('"')
+    parts = [part for part in shown.split() if part]
     if parts and parts[0].lower() in {'a', 'an', 'the'}:
         parts = parts[1:]
-    if len(parts) < 2:
+    if not parts or not all(_real_content_word(part) for part in parts):
         return ''
-    phrase = ' '.join(parts)
-    if phrase.lower().startswith(('a ', 'an ', 'the ')):
-        return phrase
-    return phrase
+    return f'You kept coming back to "{" ".join(parts)}"'
 
 
 def _care_behavior(unit: str) -> str:
-    """Bullet 1 merges care and goal. A bare or non-noun unit is quoted, not 'the hard'."""
-    phrase = _noun_phrase(unit)
-    if phrase:
-        return (
-            f'You seem to care about {phrase}, and it seemed like you were trying to talk about {phrase}'
-        )
-    shown = str(unit or '').strip().strip('"')
-    if not shown:
-        return ''
-    return f'You kept coming back to "{shown}"'
+    """A repeated unit, quoted only when it is a real content word."""
+    return later_return_line(unit)
 
 
 def beat_from_unit(units: list[dict] | None, kind: str) -> str:
@@ -1026,40 +1146,37 @@ def challenge_template(quotes: list[str]) -> str:
     return 'You held one turn and then stopped.'
 
 
-def _why_for_quote(quote: str) -> str:
-    """One specific sentence. It names a word from this quote and stays at grade 6."""
-    word = next((item for item in _content_words(quote) if item not in _NOT_A_NOUN), '')
-    if not word:
-        return ''
-    line = f'That line is about {word}.'
-    if _is_generic(line) or advice_problems(line) or reading_grade(line) > 6:
-        return ''
-    return line
-
-
 def _fallback_bullets(units: list[dict] | None, quotes: list[str]) -> list[str]:
-    """Two complete bullets, or nothing. The second bullet is not another goal."""
+    """Two bullets from the quotes. No invented why, and no second goal."""
     usable = []
     for quote in quotes:
         if quote and quote not in usable:
             usable.append(quote)
     if len(usable) < 2:
         return []
-    care = _care_behavior(_top_content_unit(units))
-    if not care:
+    care = merged_care_goal(usable)
+    if not care.startswith('You seem to care') or 'it seemed like you were trying to' not in care.lower():
         return []
-    moment = 'The turn stayed on that point'
-    pair = [(care, usable[0]), (moment, usable[1])]
-    rendered = []
-    for behavior, quote in pair:
-        why = _why_for_quote(quote)
-        if not why:
-            return []
-        line = _render_bullet(behavior, quote, why)
-        if 'We came to that conclusion because of "' not in line or line.rstrip().endswith('"'):
-            return []
-        rendered.append(line)
-    if any(line.split('.')[0].lower().startswith('it seemed') for line in rendered[1:]):
+    later = ''
+    for item in units or []:
+        later = later_return_line(str(item.get('text') or ''))
+        if later:
+            break
+    if not later:
+        for quote in usable:
+            for word in _lemmas(quote):
+                later = later_return_line(word)
+                if later:
+                    break
+            if later:
+                break
+    if not later or later.lower().startswith('it seemed'):
+        return []
+    rendered = [
+        _render_bullet(care, usable[0], ''),
+        _render_bullet(later, usable[1], ''),
+    ]
+    if any('That line is about' in line or 'The turn stayed on that point' in line for line in rendered):
         return []
     return rendered
 
@@ -1117,15 +1234,6 @@ def _grounded_simplify(llm, payload: dict, units: list[dict], quotes: list[str],
         if not found.get(section):
             continue
         data[section] = _simplify(llm, str(data.get(section) or ''), section, units, quotes)
-    if found.get('bullets') and isinstance(data.get('bullets'), list):
-        rewritten = []
-        for item in data['bullets']:
-            if not isinstance(item, dict):
-                continue
-            bullet = dict(item)
-            bullet['why'] = _simplify(llm, str(bullet.get('why') or ''), 'why', units, quotes)
-            rewritten.append(bullet)
-        data['bullets'] = rewritten
     return data
 
 
@@ -1176,6 +1284,7 @@ def _build_personal_story(llm, transcript, label: str, info: dict, stats: dict, 
     best_found: dict[str, list[str]] = {'one_big_thing': ['response was not JSON']}
     attempts = 0
     simplified = False
+    repaired = False
     while attempts < 2:
         raw_text = ''
         try:
@@ -1213,18 +1322,26 @@ def _build_personal_story(llm, transcript, label: str, info: dict, stats: dict, 
             simplified = True
             found = section_problems(payload, quotes, allowed, moment, int(stats.get('share') or 0))
             reasons = [reason for items in found.values() for reason in items]
+        if payload is not None and reasons and not repaired and not upgraded and _fk_only(found):
+            logging.warning('personal why repair for %s: %s', label, '; '.join(reasons))
+            payload = _repair_fk(llm, payload, quotes, found)
+            payload = apply_quote_ids(payload, quotes)
+            repaired = True
+            found = section_problems(payload, quotes, allowed, moment, int(stats.get('share') or 0))
+            reasons = [reason for items in found.values() for reason in items]
+            _record_attempt(progress_dir, label, json.dumps(payload), reasons, {**style_note, 'model': personal_model_name(), 'repair': True})
         if reasons and not upgraded:
             logging.warning('personal flash-lite rejected %s: %s', label, '; '.join(reasons))
+        if payload is not None and not reasons:
+            story = _finish(full_story(payload, lines, name), step, units, pick)
+            story['fallback_sections'] = []
+            return _stamp(story, progress_dir)
         if payload is not None and reasons and not upgraded:
             active = upgrade_model_name()
             logging.warning('personal narrative retry uses %s', active)
             upgraded = True
             failures = reasons
             continue
-        if payload is not None and not reasons:
-            story = _finish(full_story(payload, lines, name), step, units, pick)
-            story['fallback_sections'] = []
-            return _stamp(story, progress_dir)
         if payload is not None and (best_payload is None or len(found) < len(best_found)):
             best_payload = payload
             best_found = found
@@ -1247,6 +1364,47 @@ def _build_personal_story(llm, transcript, label: str, info: dict, stats: dict, 
     story['short_mode'] = False
     _attach_style(story, units, str((best_payload or {}).get('style_id') or ''))
     return _stamp(story, progress_dir)
+
+
+def _fk_only(found: dict) -> bool:
+    reasons = [reason for items in found.values() for reason in items]
+    return bool(reasons) and all('reading level' in reason or 'grade' in reason for reason in reasons)
+
+
+def _repair_sentence(llm, text: str, quote: str) -> str:
+    """One flash-lite rewrite of a single sentence. thinkingBudget 0, small cap."""
+    prompt = (
+        'Rewrite this one sentence in short words, about a fifth-grade reading level. '
+        'Say why it matters for this person or the listener. '
+        'Do not restate the quote. No advice, no next time, no should. '
+        'Return only the new sentence.\n'
+        f'QUOTE\n{quote or "None."}\nTEXT\n{text}'
+    )
+    try:
+        return _raw_text(_invoke_personal(llm, prompt, personal_model_name(), simplify=True)).strip()
+    except Exception as exc:
+        logging.warning('why repair failed: %s', exc)
+        return text
+
+
+def _repair_fk(llm, payload: dict, quotes: list[str], found: dict) -> dict:
+    """Rewrite only the sentences that failed the reading grade."""
+    data = dict(payload)
+    if any(key != 'bullets' and found.get(key) for key in found):
+        data = _rewrite_grade(llm, data, found)
+    bullets = []
+    for item in data.get('bullets') or []:
+        if not isinstance(item, dict):
+            continue
+        bullet = dict(item)
+        why = str(bullet.get('why') or '')
+        if why and reading_grade(why) > 6:
+            quote = _quote_by_id(str(bullet.get('quote') or ''), quotes, -1)
+            bullet['why'] = _repair_sentence(llm, why, quote)
+        bullets.append(bullet)
+    if bullets:
+        data['bullets'] = bullets
+    return data
 
 
 def _grade_failures(found: dict) -> bool:
