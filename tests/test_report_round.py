@@ -859,11 +859,11 @@ def test_two_quotes_never_become_a_short_report_and_a_bad_why_is_dropped():
         {'share': 22, 'turns': 4, 'questions': 1, 'speaker_count': 6, 'words': 80},
     )
     assert story['short_mode'] is False
-    assert len(story['bullets']) >= 2
+    assert story['needs_review'] is True
+    assert story['bullets'][0].lower().startswith('you seem to care')
     assert 'name an owner' in story['bullets'][0]
+    assert 'weather' not in story['bullets'][0].lower()
     assert 'a loader' not in ' '.join(story['bullets']).lower()
-    assert 'talk about the world' not in ' '.join(story['bullets']).lower()
-    assert 'We came to that conclusion because of' in story['bullets'][0]
 
 
 def test_listener_whys_pass_and_a_missing_care_noun_is_repaired(caplog, monkeypatch):
@@ -886,7 +886,7 @@ def test_listener_whys_pass_and_a_missing_care_noun_is_repaired(caplog, monkeypa
         'That history helps others see where your creative drive started.',
         'That growth shows others how quickly your hard work paid off.',
     ]
-    behavior = 'You seem to care about the work, and it seemed like you were trying to name it.'
+    behavior = 'You seem to care about the budget, and it seemed like you were trying to name the client.'
     quote = 'The budget can wait until the client signs.'
     for line in lines:
         assert why_on_topic(line, '', '', [], speech='')
@@ -924,8 +924,8 @@ def test_listener_whys_pass_and_a_missing_care_noun_is_repaired(caplog, monkeypa
             },
         ],
     }, quotes, quote)
-    assert 'weather' in kept[1].lower()
     assert 'history helps others' in kept[0].lower()
+    assert all('weather' not in line.lower() for line in kept)
     dropped = _usable_model_bullets({
         'bullets': [
             {'behavior': behavior, 'quote': 'Q1', 'why': history},
@@ -946,7 +946,7 @@ def test_listener_whys_pass_and_a_missing_care_noun_is_repaired(caplog, monkeypa
     def fake_rest(model, key, prompt, mode='budget', max_output=512):
         seen.append(prompt[:80])
         if prompt.startswith('Rewrite this one sentence. Care'):
-            return type('Reply', (), {'content': 'You seem to care about owning your results, and it seemed like you were trying to name the work.'})()
+            return type('Reply', (), {'content': 'You seem to care about the budget, and it seemed like you were trying to name the client.'})()
         if prompt.startswith('Rewrite this one sentence'):
             return type('Reply', (), {'content': history})()
         if 'Simplify' in prompt or prompt.startswith('Rewrite this one section'):
@@ -990,6 +990,55 @@ def test_listener_whys_pass_and_a_missing_care_noun_is_repaired(caplog, monkeypa
     assert 'your team' not in story['bullets'][0].lower()
 
 
+def test_the_page_is_assembled_from_passing_candidates_only():
+    from lib.personal_narrative import assemble_personal_bullets, why_line_grade_problem
+    from lib.readability import reading_grade
+
+    movies = "I've always been into making movies, making music, whatever it is."
+    music = 'Making music stayed with him for years before the room heard it.'
+    merged = 'You seem to care about making movies, and it seemed like you were trying to make music.'
+    good = 'That story shows people that making movies started early.'
+    other = 'That moment lets others know the music still matters.'
+    hard = 'That choice shows people your autonomy grew into independence over years.'
+    assert why_line_grade_problem(hard, movies)
+    pool = [
+        {'behavior': merged, 'quote': movies, 'why': good, 'merged': True, 'passes': True, 'source': 'flash-lite'},
+        {'behavior': merged, 'quote': movies, 'why': hard, 'merged': True, 'passes': False, 'source': 'repair'},
+        {'behavior': 'The line stayed on the music.', 'quote': music, 'why': other, 'merged': False, 'passes': True, 'source': 'flash-lite'},
+        {'behavior': 'The turn named the movies.', 'quote': movies, 'why': '', 'merged': False, 'passes': False, 'source': 'repair'},
+    ]
+    page = assemble_personal_bullets(pool, [movies, music], movies)
+    assert page['needs_review'] is False
+    assert page['bullets'][0].lower().startswith('you seem to care')
+    assert 'autonomy' not in page['bullets'][0].lower()
+    assert 'making movies started early' in page['bullets'][0].lower()
+    for bullet in page['bullets']:
+        why = bullet.split('".')[-1].strip()
+        quote = movies if 'movies' in bullet else music
+        if why:
+            assert why_line_grade_problem(why, quote) == ''
+            assert reading_grade(bullet) <= 6.05
+
+    ric_pool = [
+        {'behavior': merged, 'quote': movies, 'why': hard, 'merged': True, 'passes': False, 'source': 'repair'},
+        {'behavior': merged, 'quote': movies, 'why': good, 'merged': True, 'passes': True, 'source': 'flash-lite'},
+        {'behavior': 'The line stayed on the music.', 'quote': music, 'why': other, 'merged': False, 'passes': True, 'source': '3.6-minimal'},
+    ]
+    ric = assemble_personal_bullets(ric_pool, [movies, music], movies)
+    assert ric['bullets'][0].lower().startswith('you seem to care')
+    assert 'autonomy' not in ' '.join(ric['bullets']).lower()
+    assert 'making movies started early' in ric['bullets'][0].lower()
+
+    stephen_pool = [
+        {'behavior': merged, 'quote': movies, 'why': good, 'merged': True, 'passes': True, 'source': 'flash-lite'},
+        {'behavior': 'The line stayed on the music.', 'quote': music, 'why': '', 'merged': False, 'passes': False, 'source': 'flash-lite'},
+    ]
+    stephen = assemble_personal_bullets(stephen_pool, [movies, music], movies)
+    assert stephen['needs_review'] is True
+    assert len(stephen['bullets']) == 1
+    assert stephen['bullets'][0].lower().startswith('you seem to care')
+
+
 def test_a_prompt_example_does_not_become_stephens_goal_and_bare_bullets_drop(monkeypatch):
     from lib.personal_narrative import _prompt, _usable_model_bullets, build_personal_story, prompt_example_problem
 
@@ -1024,8 +1073,9 @@ def test_a_prompt_example_does_not_become_stephens_goal_and_bare_bullets_drop(mo
             {'behavior': 'The turn named the movies.', 'quote': 'Q3', 'why': why},
         ],
     }, quotes, quote)
-    assert len(dropped) == 2
-    assert not dropped[0].lower().startswith('you seem to care')
+    assert dropped[0].lower().startswith('you seem to care')
+    assert len(dropped) == 3
+    assert all('we came to that conclusion because of' in line.lower() for line in dropped[1:])
 
     seen = []
 

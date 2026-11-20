@@ -1474,6 +1474,16 @@ def _grounded_simplify(llm, payload: dict, units: list[dict], quotes: list[str],
     return data
 
 
+def _ship_assembled(page: dict, payload: dict, lines, name, step, units, pick: str, needs_review: bool) -> dict:
+    data = dict(payload or {})
+    data['bullets_text'] = list(page.get('bullets') or [])
+    story = _finish(full_story(data, lines, name), step, units, pick)
+    story['short_mode'] = False
+    story['needs_review'] = bool(needs_review)
+    story['fallback_sections'] = ['needs_review'] if needs_review else []
+    return story
+
+
 def build_personal_story(llm, transcript, label: str, info: dict, stats: dict, progress_dir=None) -> dict:
     """Flash-lite first. One 3.6 upgrade if validators fail. SHORT is only under 60 words."""
     original = llm
@@ -1523,6 +1533,7 @@ def _build_personal_story(llm, transcript, label: str, info: dict, stats: dict, 
     simplified = False
     repaired = False
     speech = ' '.join(str(row.get('text') or '') for row in rows)
+    pool: list = []
     while attempts < 2:
         raw_text = ''
         try:
@@ -1554,6 +1565,7 @@ def _build_personal_story(llm, transcript, label: str, info: dict, stats: dict, 
         reasons = [reason for items in found.values() for reason in items]
         pick = str((payload or {}).get('style_id') or '')
         _note_rejected_whys(label, payload, quotes, progress_dir, raw_text, reasons, {**style_note, 'style_pick': pick, 'model': active}, speech)
+        _snapshot_candidates(pool, payload, active, quotes, speech)
         if payload is not None and not simplified and any(found.get(section) for section in ('character', 'goal', 'why_it_matters', 'challenge', 'yes_but')):
             payload = _grounded_simplify(llm, payload, units, quotes, found)
             payload = apply_quote_ids(payload, quotes)
@@ -1562,7 +1574,7 @@ def _build_personal_story(llm, transcript, label: str, info: dict, stats: dict, 
             reasons = [reason for items in found.values() for reason in items]
         if payload is not None and not repaired and not upgraded and (_why_failures(found) or _care_failures(found)):
             logging.warning('personal why repair for %s: %s', label, '; '.join(reasons))
-            payload = _repair_whys(llm, payload, quotes, speech=speech)
+            payload = _repair_whys(llm, payload, quotes, speech=speech, pool=pool, source='flash-lite-repair')
             payload = apply_quote_ids(payload, quotes)
             repaired = True
             found = section_problems(payload, quotes, allowed, moment, int(stats.get('share') or 0), speech)
@@ -1570,7 +1582,7 @@ def _build_personal_story(llm, transcript, label: str, info: dict, stats: dict, 
             _note_rejected_whys(label, payload, quotes, progress_dir, json.dumps(payload), reasons, {**style_note, 'model': personal_model_name(), 'repair': True}, speech)
         if payload is not None and repaired and not upgraded and (_why_failures(found) or _care_failures(found)):
             logging.warning('personal why repair uses %s for %s', upgrade_model_name(), label)
-            payload = _repair_whys(llm, payload, quotes, upgrade_model_name(), speech)
+            payload = _repair_whys(llm, payload, quotes, upgrade_model_name(), speech, pool, '3.6-repair')
             payload = apply_quote_ids(payload, quotes)
             upgraded = True
             found = section_problems(payload, quotes, allowed, moment, int(stats.get('share') or 0), speech)
@@ -1578,9 +1590,9 @@ def _build_personal_story(llm, transcript, label: str, info: dict, stats: dict, 
             _note_rejected_whys(label, payload, quotes, progress_dir, json.dumps(payload), reasons, {**style_note, 'model': upgrade_model_name(), 'repair': True}, speech)
         if reasons and not upgraded:
             logging.warning('personal flash-lite rejected %s: %s', label, '; '.join(reasons))
-        if payload is not None and not reasons:
-            story = _finish(full_story(payload, lines, name), step, units, pick)
-            story['fallback_sections'] = []
+        page = assemble_personal_bullets(pool, quotes, speech)
+        if payload is not None and not reasons and not page['needs_review']:
+            story = _ship_assembled(page, payload, lines, name, step, units, pick, False)
             return _stamp(story, progress_dir)
         if payload is not None and reasons and not upgraded:
             active = upgrade_model_name()
@@ -1592,18 +1604,13 @@ def _build_personal_story(llm, transcript, label: str, info: dict, stats: dict, 
             best_payload = payload
             best_found = found
         failures = reasons
-    salvaged = _usable_model_bullets(best_payload, quotes, speech)
-    if len(salvaged) >= 2 and best_payload is not None:
-        logging.warning('personal narrative kept the model bullets and dropped bad why lines: %s', failures)
-        payload = dict(best_payload)
-        payload['bullets_text'] = salvaged
-        story = _finish(full_story(payload, lines, name), step, units, str(payload.get('style_id') or ''))
-        story['short_mode'] = False
-        story['fallback_sections'] = ['why']
-        story['rejected_whys'] = rejected_why_lines(payload.get('bullets'), quotes, speech)
-        story['rejection_reasons'] = {
-            'why': '; '.join(f"{item['reason']}: {item['why']}" for item in story['rejected_whys']),
-        }
+    page = assemble_personal_bullets(pool, quotes, speech)
+    if page['bullets']:
+        logging.warning('personal narrative assembled from the candidate pool: %s', failures)
+        payload = dict(best_payload or {})
+        story = _ship_assembled(page, payload, lines, name, step, units, str(payload.get('style_id') or ''), page['needs_review'])
+        if page['needs_review']:
+            _record_attempt(progress_dir, label, '', failures, {**style_note, 'needs_review': True, 'assembled': True})
         return _stamp(story, progress_dir)
     if best_payload is None or best_found.get('character') or best_found.get('goal') or best_found.get('bullets'):
         logging.warning('personal narrative used the code template: %s', failures)
@@ -1696,10 +1703,11 @@ def _repair_behavior(llm, behavior: str, quote: str, model: str | None = None) -
         return behavior
 
 
-def _repair_whys(llm, payload: dict, quotes: list[str], model: str | None = None, speech: str = '') -> dict:
-    """Rewrite a drifting or hard why, and a care noun that is not in the speech."""
+def _repair_whys(llm, payload: dict, quotes: list[str], model: str | None = None, speech: str = '', pool: list | None = None, source: str = 'repair') -> dict:
+    """Rewrite a failing why. A passing why stays; the new attempt is only another candidate."""
     data = dict(payload)
     bullets = []
+    heard = speech or ' '.join(quotes)
     for index, item in enumerate(data.get('bullets') or []):
         if not isinstance(item, dict):
             continue
@@ -1707,14 +1715,24 @@ def _repair_whys(llm, payload: dict, quotes: list[str], model: str | None = None
         behavior = str(bullet.get('behavior') or '')
         why = str(bullet.get('why') or '')
         quote = _quote_by_id(str(bullet.get('quote') or ''), quotes, -1)
-        heard = speech or ' '.join(quotes)
+        if pool is not None and quote and why:
+            pool.append(_make_candidate(behavior, quote, why, source + '-prior', quotes, speech))
         if prompt_example_problem(behavior, heard) or (index == 0 and not care_grounded(behavior, heard, quote)):
             bullet['behavior'] = _repair_behavior(llm, behavior, quote, model)
             behavior = bullet['behavior']
-        problem = _why_problem(why, quote, behavior, quotes, speech)
-        if problem.startswith('why ') or 'reading level' in problem or problem.startswith('a why line') or problem.startswith('a bullet is above'):
-            bullet['why_rejected'] = why
-            bullet['why'] = _repair_sentence(llm, why, quote, behavior, model)
+        problem = _why_problem(why, quote, behavior, quotes, speech) if why else 'why is missing'
+        failing = problem.startswith('why ') or 'reading level' in problem or problem.startswith('a why line') or problem.startswith('a bullet is above') or problem == 'why is missing'
+        if failing and (index == 0 or why):
+            new_why = _repair_sentence(llm, why, quote, behavior, model)
+            if pool is not None and quote:
+                pool.append(_make_candidate(behavior, quote, new_why, source, quotes, speech))
+            if why and _why_passes_gate(behavior, quote, why, quotes, speech) and not _why_passes_gate(behavior, quote, new_why, quotes, speech):
+                bullet['why'] = why
+            else:
+                bullet['why_rejected'] = why
+                bullet['why'] = new_why
+        if pool is not None and quote:
+            pool.append(_make_candidate(behavior, quote, str(bullet.get('why') or ''), source, quotes, speech))
         bullets.append(bullet)
     if bullets:
         data['bullets'] = bullets
@@ -1734,51 +1752,132 @@ def _is_merged_bullet(behavior: str) -> bool:
     return text.startswith('you seem to care') and 'it seemed like you were trying to' in text
 
 
-def _usable_model_bullets(payload: dict | None, quotes: list[str], speech: str = '') -> list[str]:
-    """Two or three complete bullets. A bare line ships only when that is how we reach two."""
-    if not isinstance(payload, dict):
-        return []
-    rows = []
-    used: set[str] = set()
-    for source in payload.get('bullets') or []:
-        if not isinstance(source, dict):
-            continue
-        behavior = str(source.get('behavior') or '').strip()
-        if not behavior or re.fullmatch(r'you said\.?', behavior.lower()):
-            continue
-        if advice_problems(behavior) or _is_generic(behavior):
-            continue
-        quote = _quote_by_id(str(source.get('quote') or ''), quotes, -1)
-        if not quote or quote in used:
-            continue
-        why = str(source.get('why') or '')
-        rejected = str(source.get('why_rejected') or why)
+def _make_candidate(behavior: str, quote: str, why: str, source: str, quotes: list[str], speech: str) -> dict:
+    """One behavior, quote, and why, with the validator result from this attempt."""
+    behavior = str(behavior or '').strip()
+    why = str(why or '').strip()
+    quote = str(quote or '').strip()
+    problems = []
+    if not behavior or re.fullmatch(r'you said\.?', behavior.lower()) or advice_problems(behavior) or _is_generic(behavior):
+        problems.append('behavior does not pass')
+    leaked = prompt_example_problem(behavior, speech)
+    if leaked:
+        problems.append(leaked)
+    if _is_merged_bullet(behavior) and not care_grounded(behavior, speech, quote):
+        problems.append(f'care object is not in this person\'s speech: {_care_head(behavior)}')
+    if why:
         problem = _why_problem(why, quote, behavior, quotes, speech)
-        used.add(quote)
-        rows.append({
-            'behavior': behavior,
-            'quote': quote,
-            'why': '' if problem else why,
-            'rejected': rejected if problem else '',
-            'merged': _is_merged_bullet(behavior),
-        })
-    strict = sum(1 for row in rows if row['why'])
-    if strict < 2:
-        for row in rows:
-            if row['why'] or not _fallback_why(row['rejected']):
+        if problem:
+            problems.append(problem)
+    else:
+        problems.append('why is missing')
+    return {
+        'behavior': behavior,
+        'quote': quote,
+        'why': why,
+        'source': source,
+        'merged': _is_merged_bullet(behavior),
+        'problems': problems,
+        'passes': not problems,
+    }
+
+
+def _snapshot_candidates(pool: list, payload, source: str, quotes: list[str], speech: str) -> None:
+    """Keep every attempt. A later rewrite is another candidate, not a replacement."""
+    if not isinstance(payload, dict):
+        return
+    for item in payload.get('bullets') or []:
+        if not isinstance(item, dict):
+            continue
+        quote = _quote_by_id(str(item.get('quote') or ''), quotes, -1)
+        if not quote:
+            continue
+        pool.append(_make_candidate(
+            str(item.get('behavior') or ''),
+            quote,
+            str(item.get('why') or ''),
+            source,
+            quotes,
+            speech,
+        ))
+
+
+def _why_passes_gate(behavior: str, quote: str, why: str, quotes: list[str], speech: str) -> bool:
+    """The full why gate: drift, grade, syllables, and the bullet at grade 6."""
+    if not str(why or '').strip():
+        return False
+    if why_line_grade_problem(why, quote):
+        return False
+    if _why_problem(why, quote, behavior, quotes, speech):
+        return False
+    if reading_grade(_render_bullet(behavior, quote, why)) > 6.05:
+        return False
+    return True
+
+
+def assemble_personal_bullets(pool: list, quotes: list[str], speech: str = '') -> dict:
+    """Build the page from passing candidates. Re-check every shipped why."""
+    merged_rows = [item for item in pool if item.get('merged') and item.get('behavior') and item.get('quote')]
+    first = None
+    if merged_rows:
+        passing = [item for item in merged_rows if item.get('passes') and _why_passes_gate(item['behavior'], item['quote'], item['why'], quotes, speech)]
+        if passing:
+            first = dict(passing[0])
+        else:
+            behavior = merged_rows[0]['behavior']
+            quote = merged_rows[0]['quote']
+            same_quote = [
+                item for item in pool
+                if item.get('quote') == quote and item.get('passes')
+                and _why_passes_gate(behavior, quote, item.get('why') or '', quotes, speech)
+            ]
+            first = {
+                'behavior': behavior,
+                'quote': quote,
+                'why': same_quote[0]['why'] if same_quote else '',
+                'merged': True,
+                'source': merged_rows[0].get('source') or '',
+            }
+    others = []
+    used = {first['quote']} if first else set()
+    for item in pool:
+        if not item.get('passes'):
+            continue
+        if item.get('quote') in used:
+            continue
+        if not _why_passes_gate(item['behavior'], item['quote'], item.get('why') or '', quotes, speech):
+            continue
+        others.append(item)
+        used.add(item['quote'])
+        if len(others) == 2:
+            break
+    chosen = ([first] if first else []) + others
+    checked = []
+    for item in chosen:
+        why = str(item.get('why') or '')
+        if why and not _why_passes_gate(item['behavior'], item['quote'], why, quotes, speech):
+            if item.get('merged'):
+                item = dict(item)
+                item['why'] = ''
+            else:
                 continue
-            logging.warning('kept a rejected why at grade %s: %s', round(reading_grade(row['rejected']), 2), row['rejected'])
-            row['why'] = row['rejected']
-        strict = sum(1 for row in rows if row['why'])
-    chosen = [row for row in rows if row['why']]
-    if strict < 2:
-        needed = 2 - strict
-        bares = [row for row in rows if not row['why']]
-        bares.sort(key=lambda row: 0 if row['merged'] else 1)
-        chosen.extend(bares[:needed])
-    chosen.sort(key=lambda row: 0 if row['merged'] else 1)
-    rendered = [_render_bullet(row['behavior'], row['quote'], row['why']) for row in chosen]
-    return rendered if len(rendered) >= 2 else []
+        checked.append(item)
+    if checked and checked[0].get('merged'):
+        checked = [checked[0]] + [item for item in checked[1:] if item.get('why')]
+    complete_others = [item for item in checked[1:] if item.get('why')] if checked and checked[0].get('merged') else []
+    needs_review = not checked or not checked[0].get('merged') or len(complete_others) < 1
+    return {
+        'bullets': [_render_bullet(item['behavior'], item['quote'], item.get('why') or '') for item in checked],
+        'items': checked,
+        'needs_review': needs_review,
+    }
+
+
+def _usable_model_bullets(payload: dict | None, quotes: list[str], speech: str = '') -> list[str]:
+    """Assemble one payload. Passing candidates win. A failing why is not put back."""
+    pool: list = []
+    _snapshot_candidates(pool, payload, 'payload', quotes, speech)
+    return assemble_personal_bullets(pool, quotes, speech)['bullets']
 
 
 def _grade_failures(found: dict) -> bool:
