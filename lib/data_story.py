@@ -85,7 +85,7 @@ def _top_framework(values, explanations, name: str) -> str:
     note = ''
     if explanations is not None and name in explanations.index and best in explanations.columns:
         note = str(explanations.loc[name, best] or '').strip()
-    line = f'{best} ({score}/5).'
+    line = f'Your strongest AMASE lean is {best}, {score} out of 5.'
     if note:
         from lib.story_validation import BAN_PHRASES
 
@@ -239,6 +239,7 @@ def personal_story(
     stats_frame,
     framework: dict,
     draft: dict | None = None,
+    proposal_counts=None,
 ) -> dict:
     name = display_name(info.get('name') or label)
     lines = _lines(transcript, label)
@@ -469,8 +470,82 @@ def personal_story(
         'role': info.get('role') or 'participant',
         'handed_to': _handed_to(transcript, label),
         'roster_shares': _roster_shares(stats_frame),
+        'question_counts': _question_roster(transcript),
+        'word_counts': _word_roster(transcript),
+        'longest_turns': _longest_turns(transcript),
+        'proposal_counts': list(proposal_counts or []),
+        'header_name': _header_for(info),
+        'action': (draft or {}).get('action') or _personal_action(share_pct, speaker_count, question_count, int(words), turn_count),
+        'opening': (draft or {}).get('opening') or '',
         'appendix': _appendix(framework, name),
     }
+
+
+def _header_for(info: dict) -> str | None:
+    from lib.names import header_name
+
+    return header_name(
+        entered=str(info.get('entered_name') or ''),
+        email=str(info.get('email') or ''),
+        fallback=str(info.get('name') or ''),
+    )
+
+
+def _personal_action(share: int, speakers: int, questions: int, words: int, turns: int) -> str:
+    from lib.story_render import session_action
+
+    return session_action({
+        'share': share,
+        'speaker_count': speakers,
+        'questions': questions,
+        'words': words,
+        'turns': turns,
+    })
+
+
+def _named_rows(transcript: dict | None) -> dict[str, str]:
+    names = {}
+    for row in (transcript or {}).get('utterances') or []:
+        label = row.get('speaker')
+        who = row.get('name')
+        if label and who:
+            names[str(label)] = str(who)
+    return names
+
+
+def _question_roster(transcript: dict | None) -> list[tuple[str, int]]:
+    from lib.questions import question_counts
+
+    return question_counts(transcript, _named_rows(transcript) or None)
+
+
+def _longest_turns(transcript: dict | None) -> list[tuple[str, int]]:
+    best: dict[str, int] = {}
+    names = _named_rows(transcript)
+    for name in names.values():
+        best.setdefault(name, 0)
+    for row in (transcript or {}).get('utterances') or []:
+        text = str(row.get('text') or '')
+        if not text.strip():
+            continue
+        who = row.get('name') or names.get(str(row.get('speaker') or '')) or row.get('speaker') or 'Speaker'
+        count = len(re.findall(r"[A-Za-z']+", text))
+        best[str(who)] = max(best.get(str(who), 0), count)
+    return sorted(best.items(), key=lambda item: (-item[1], item[0]))
+
+
+def _word_roster(transcript: dict | None) -> list[tuple[str, int]]:
+    totals: dict[str, int] = {}
+    names = _named_rows(transcript)
+    for name in names.values():
+        totals.setdefault(name, 0)
+    for row in (transcript or {}).get('utterances') or []:
+        text = str(row.get('text') or '')
+        if not text.strip():
+            continue
+        who = row.get('name') or names.get(str(row.get('speaker') or '')) or row.get('speaker') or 'Speaker'
+        totals[str(who)] = totals.get(str(who), 0) + len(re.findall(r"[A-Za-z']+", text))
+    return sorted(totals.items(), key=lambda item: (-item[1], item[0]))
 
 
 def _roster_shares(frame) -> list[tuple[str, float]]:
@@ -501,8 +576,8 @@ def _handed_to(transcript: dict | None, label: str) -> str:
     ranked = sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:3]
     if not ranked:
         return ''
-    listed = ', '.join(f'{name} {count}' for name, count in ranked)
-    return f'Passed to {listed}.'
+    sentences = [f'You passed to {name}.' for name, _count in ranked]
+    return ' '.join(sentences)
 
 
 def _appendix(framework: dict, name: str) -> dict:
@@ -535,6 +610,18 @@ def _meeting_topics(transcript: dict | None, limit: int = 3) -> list[str]:
             counts[token] = counts.get(token, 0) + 1
     ranked = sorted(counts, key=lambda item: (-counts[item], item))
     return ranked[:limit]
+
+
+def _group_action(transcript, names, shares) -> str:
+    from lib.story_render import team_action
+
+    facilitator = ''
+    for row in (transcript or {}).get('utterances') or []:
+        if str(row.get('role') or '') in {'facilitator', 'host', 'moderator'}:
+            facilitator = str(row.get('name') or (names or {}).get(row.get('speaker')) or '')
+            if facilitator:
+                break
+    return team_action(facilitator or 'Team', _talk_least(shares))
 
 
 def _talk_least(shares) -> str:
@@ -685,8 +772,6 @@ def group_story(
     roster = [str(name) for name, _value in (shares or [])]
     if quiet and recruits_someone_else(character, quiet, roster):
         character = group_character_copy(facts)
-    if quiet and recruits_someone_else(one_thing, quiet, roster):
-        one_thing = f'Next time, ask {quiet} to speak before the next choice.'
     if quiet and recruits_someone_else(why, quiet, roster):
         why = f'Next time, leave one reply for {quiet}.'
     if draft.get('transitions'):
@@ -699,7 +784,6 @@ def group_story(
         'challenge': challenge,
         'drama': drama,
         'resolution': resolution,
-        'one_thing': one_thing,
         'why': why,
         'pattern_why': group_pattern_why(portrait, shares),
         'caveat': group_caveat(portrait, shares),
@@ -713,4 +797,6 @@ def group_story(
         'shares': list(shares or []),
         'question_counts': question_counts(transcript, names),
         'proposal_counts': draft.get('proposal_counts'),
+        'word_counts': _word_roster(transcript),
+        'one_thing': _group_action(transcript, names, shares),
     }

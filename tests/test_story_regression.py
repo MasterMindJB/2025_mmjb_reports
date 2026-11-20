@@ -207,7 +207,7 @@ def test_group_character_accepts_one_fact_and_the_page_holds_the_chord(tmp_path)
         'transitions': {},
     }
     write_group_story(pdf, story, image, [('Alex Rivera', 'Blake Chen', 2, 1)])
-    assert pdf._chord_page == 1
+    assert pdf._chord_page == pdf.page
     pdf.output(tmp_path / 'group.pdf')
     pdf.set_y(-15)
     ratios = pdf.page_fill_ratios()

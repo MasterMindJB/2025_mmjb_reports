@@ -184,7 +184,6 @@ def test_neighboring_labels_and_the_wordmark_do_not_overlap(tmp_path: Path):
         for index, label in enumerate(labels):
             for other in labels[index + 1:]:
                 assert not _boxes_overlap(label, other)
-        assert boxes['wordmark']
         for mark in boxes['wordmark']:
             for legend in boxes['legend'] + boxes['captions']:
                 assert not _boxes_overlap(mark, legend)

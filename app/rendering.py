@@ -87,6 +87,7 @@ class PdfReportRenderer:
             create_report_personal(
                 transcript=transcript,
                 story_drafts=stories.get('personal'),
+                proposal_counts=(stories.get('group') or {}).get('proposal_counts'),
                 path_report_assets=self.assets,
                 path_reports_dir=reports_dir,
                 df_nice_stats_data=bundle.tables.df_nice_stats_data,

@@ -1082,8 +1082,7 @@ def save_chord_diagram(
         _add_arc(axis, low, high, outer, thickness, colors[position])
     _draw_labels(axis, names, arcs, spans, roles, colors)
     _draw_header(figure, title)
-    _draw_guide(figure, chord_caption(names, directed))
-    _draw_wordmark(figure)
+    path.with_suffix('.title').write_text(title, encoding='utf-8')
 
     path.parent.mkdir(parents=True, exist_ok=True)
     if layout_boxes is not None:

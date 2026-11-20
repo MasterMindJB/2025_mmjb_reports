@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -218,45 +219,56 @@ def _save_chart(figure, folder: Path, name: str) -> Path:
     return path
 
 
+def _plain_axes(axis) -> None:
+    """No panel fill, no tick marks, no spines."""
+    axis.set_facecolor('white')
+    axis.tick_params(length=0, colors=INK, labelsize=8)
+    for spine in axis.spines.values():
+        spine.set_visible(False)
+
+
+def _talk_title(share: float, even: float) -> str:
+    if share > even + 2:
+        return 'You spoke more than an even share.'
+    if share + 2 < even:
+        return 'You spoke less than an even share.'
+    return 'You spoke near an even share.'
+
+
 def _talk_share(story: dict, folder: Path) -> Path:
-    """Ranked talk time. This person is navy, everyone else is gray, with an even-share line."""
+    """Ranked talk time. You is navy, everyone else is gray, with a labeled even-share line."""
     share = max(0, min(100, float(story.get('share') or 0)))
     roster = list(story.get('roster_shares') or [])
     name = _display_name(story.get('name') or 'You')
-    if not any(item[0] == name for item in roster):
+    if not any(_same_person(item[0], name) for item in roster):
         roster.append((name, share))
     roster.sort(key=lambda item: item[1])
     count = max(1, len(roster))
     even = 100 / count
-    figure, axis = plt.subplots(figsize=(5.4, max(1.6, 0.38 * count + 0.5)), facecolor=LIGHT)
-    axis.set_facecolor(LIGHT)
-    labels = [item[0] for item in roster]
+    figure, axis = plt.subplots(figsize=(5.4, max(1.6, 0.38 * count + 0.6)), facecolor='white')
+    _plain_axes(axis)
+    labels = ['You' if _same_person(item[0], name) else item[0] for item in roster]
     values = [item[1] for item in roster]
-    colors = [NAVY if label == name else '#C5CDD8' for label in labels]
+    colors = [NAVY if label == 'You' else '#C5CDD8' for label in labels]
     bars = axis.barh(labels, values, color=colors, height=0.55)
     axis.axvline(even, color=SKY, linestyle='--', linewidth=1)
+    top = len(labels) - 0.35
+    axis.text(even, top, f'Even share {even:.0f}%', color=SKY, fontsize=8, fontproperties=load_poppins('regular'), ha='left', va='bottom')
     axis.bar_label(
         bars,
-        labels=[str(int(round(value))) for value in values],
+        labels=[f'{int(round(value))}%' for value in values],
         padding=3,
         color=INK,
         fontproperties=load_poppins('regular'),
         fontsize=8,
     )
     axis.get_xaxis().set_visible(False)
-    axis.spines['bottom'].set_visible(False)
-    finding = (
-        f'{name} spoke more than an even share of {even:.0f}%.'
-        if share >= even
-        else f'{name} spoke less than an even share of {even:.0f}%.'
-    )
-    axis.set_title(_wrap_title(finding), color=INK, fontproperties=load_poppins('semibold'), fontsize=9, loc='left')
-    axis.tick_params(colors=INK, labelsize=8)
-    for label in axis.get_xticklabels() + axis.get_yticklabels():
+    finding = _talk_title(share, even)
+    axis.set_title(_wrap_title(finding, 42), color=INK, fontproperties=load_poppins('semibold'), fontsize=11, loc='left')
+    for label in axis.get_yticklabels():
         label.set_fontproperties(load_poppins('regular'))
-    for spine in axis.spines.values():
-        spine.set_color(LINE)
     figure.tight_layout()
+    _remember(folder, 'talk', 'horizontal_bar', [int(round(value)) for value in values])
     return _save_chart(figure, folder, 'talk-share.png')
 
 
@@ -266,8 +278,8 @@ def _wrap_title(title: str, width: int = 32) -> str:
     return '\n'.join(textwrap.wrap(title, width=width)) or title
 
 
-def _ranked_bars(pairs, folder: Path, filename: str, title: str) -> Path | None:
-    """Top bar is navy with a bold label. The other bars are gray."""
+def _ranked_bars(pairs, folder: Path, filename: str, title: str, percent: bool = False) -> Path | None:
+    """Top bar is navy. The other bars are gray. No panel and no tick marks."""
     rows = [(str(name), float(value or 0)) for name, value in (pairs or []) if str(name) != 'Average']
     if not rows:
         return None
@@ -276,31 +288,387 @@ def _ranked_bars(pairs, folder: Path, filename: str, title: str) -> Path | None:
     top_value = ranked[0][1]
     labels = [name for name, _value in ordered]
     values = [value for _name, value in ordered]
-    colors = [NAVY if value == top_value else '#C5CDD8' for value in values]
-    figure, axis = plt.subplots(figsize=(5.4, max(1.8, 0.42 * len(labels) + 0.7)), facecolor=LIGHT)
-    axis.set_facecolor(LIGHT)
+    colors = [NAVY if value == top_value and top_value > 0 else '#C5CDD8' for value in values]
+    figure, axis = plt.subplots(figsize=(5.4, max(1.8, 0.42 * len(labels) + 0.7)), facecolor='white')
+    _plain_axes(axis)
     bars = axis.barh(labels, values, color=colors, height=0.55)
     axis.bar_label(
         bars,
-        labels=[str(int(value)) for value in values],
+        labels=[f'{int(value)}%' if percent else str(int(value)) for value in values],
         padding=3,
         color=INK,
         fontproperties=load_poppins('regular'),
         fontsize=8,
     )
     axis.get_xaxis().set_visible(False)
-    axis.spines['bottom'].set_visible(False)
-    axis.set_title(_wrap_title(title), color=INK, fontproperties=load_poppins('semibold'), fontsize=11, loc='left')
-    axis.tick_params(colors=INK, labelsize=8)
+    axis.set_title(_wrap_title(title, 42), color=INK, fontproperties=load_poppins('semibold'), fontsize=11, loc='left')
     for tick in axis.get_yticklabels():
         weight = 'bold' if float(dict(ordered).get(tick.get_text(), -1)) == top_value else 'regular'
         tick.set_fontproperties(load_poppins(weight))
+    figure.tight_layout()
+    _remember(folder, 'talk-ranked' if 'talked' in filename else filename, 'horizontal_bar', [int(value) for value in values])
+    return _save_chart(figure, folder, filename)
+
+
+def _remember(folder: Path, key: str, kind: str, values: list[int]) -> None:
+    folder = Path(folder)
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / 'chart-types.json'
+    data = {}
+    if path.is_file():
+        try:
+            data = json.loads(path.read_text(encoding='utf-8'))
+        except json.JSONDecodeError:
+            data = {}
+    if not isinstance(data, dict):
+        data = {}
+    data[key] = {'type': kind, 'values': [int(value) for value in values]}
+    path.write_text(json.dumps(data, indent=2), encoding='utf-8')
+
+
+def chart_types(folder: Path) -> dict:
+    path = Path(folder) / 'chart-types.json'
+    if not path.is_file():
+        return {}
+    data = json.loads(path.read_text(encoding='utf-8'))
+    return data if isinstance(data, dict) else {}
+
+
+def _same_person(left: str, right: str) -> bool:
+    return _display_name(left).casefold() == _display_name(right).casefold()
+
+
+def _pie_slices(pairs, limit: int = 6) -> list[tuple[str, int]]:
+    """Drop zero counts. More than about six slices fold the tail into Others."""
+    rows = [
+        (str(name), int(value or 0))
+        for name, value in (pairs or [])
+        if str(name) != 'Average' and int(value or 0) > 0
+    ]
+    rows.sort(key=lambda item: (-item[1], item[0]))
+    if len(rows) <= limit:
+        return rows
+    head = rows[: limit - 1]
+    rest = sum(value for _name, value in rows[limit - 1:])
+    if rest:
+        head.append(('Others', rest))
+    return head
+
+
+def _vertical_bars(pairs, folder: Path, filename: str, title: str, highlight: str = '') -> Path | None:
+    """Columns. The subject, or every tied leader, is navy."""
+    rows = [(str(name), int(value or 0)) for name, value in (pairs or []) if str(name) != 'Average']
+    if not rows:
+        return None
+    ranked = sorted(rows, key=lambda item: (-item[1], item[0]))
+    labels = ['You' if highlight and _same_person(name, highlight) else name for name, _value in ranked]
+    values = [value for _name, value in ranked]
+    top = max(values) if values else 0
+    if highlight:
+        colors = [NAVY if label == 'You' else '#C5CDD8' for label in labels]
+    else:
+        colors = [NAVY if value == top and top > 0 else '#C5CDD8' for value in values]
+    figure, axis = plt.subplots(figsize=(5.4, 3.2), facecolor='white')
+    _plain_axes(axis)
+    bars = axis.bar(labels, values, color=colors, width=0.62)
+    axis.bar_label(
+        bars,
+        labels=[str(int(value)) for value in values],
+        padding=2,
+        color=INK,
+        fontproperties=load_poppins('regular'),
+        fontsize=8,
+    )
+    axis.get_yaxis().set_visible(False)
     for tick in axis.get_xticklabels():
         tick.set_fontproperties(load_poppins('regular'))
-    for spine in axis.spines.values():
-        spine.set_color(LINE)
+        tick.set_rotation(25)
+        tick.set_ha('right')
+    axis.set_title(_wrap_title(title, 42), color=INK, fontproperties=load_poppins('semibold'), fontsize=11, loc='left')
     figure.tight_layout()
+    _remember(folder, filename, 'vertical_bar', values)
     return _save_chart(figure, folder, filename)
+
+
+def _lollipop(pairs, folder: Path, filename: str, title: str, highlight: str = '') -> Path | None:
+    """A dot on a stem. Not a bar."""
+    rows = [(str(name), int(value or 0)) for name, value in (pairs or []) if str(name) != 'Average']
+    if not rows:
+        return None
+    ranked = sorted(rows, key=lambda item: (item[1], item[0]))
+    labels = ['You' if highlight and _same_person(name, highlight) else name for name, _value in ranked]
+    values = [value for _name, value in ranked]
+    top = max(values) if values else 0
+    figure, axis = plt.subplots(figsize=(5.4, max(1.8, 0.38 * len(labels) + 0.6)), facecolor='white')
+    _plain_axes(axis)
+    axis.hlines(range(len(labels)), 0, values, color='#C5CDD8', linewidth=1.5)
+    colors = []
+    for label, value in ranked:
+        if highlight and label == 'You':
+            colors.append(NAVY)
+        elif not highlight and value == top and top > 0:
+            colors.append(NAVY)
+        else:
+            colors.append('#C5CDD8')
+    axis.scatter(values, range(len(labels)), color=colors, s=36, zorder=3)
+    for index, value in enumerate(values):
+        axis.text(value + 0.2, index, str(int(value)), va='center', color=INK, fontproperties=load_poppins('regular'), fontsize=8)
+    axis.set_yticks(range(len(labels)))
+    axis.set_yticklabels(labels)
+    axis.get_xaxis().set_visible(False)
+    for tick in axis.get_yticklabels():
+        tick.set_fontproperties(load_poppins('regular'))
+    axis.set_title(_wrap_title(title, 42), color=INK, fontproperties=load_poppins('semibold'), fontsize=11, loc='left')
+    figure.tight_layout()
+    _remember(folder, filename, 'lollipop', values)
+    return _save_chart(figure, folder, filename)
+
+
+def _donut(pairs, folder: Path, filename: str, title: str, highlight: str = '', center: str = '') -> Path | None:
+    """A donut. The key slice starts at 12 o'clock. Zero slices are left out."""
+    slices = _pie_slices(pairs)
+    if not slices:
+        return None
+    labels = [f'{name} {value}' for name, value in slices]
+    values = [value for _name, value in slices]
+    top = max(values)
+    colors = []
+    for name, value in slices:
+        if highlight and (_same_person(name, highlight) or name == highlight):
+            colors.append(NAVY)
+        elif not highlight and value == top:
+            colors.append(NAVY)
+        else:
+            colors.append('#C5CDD8')
+    figure, axis = plt.subplots(figsize=(5.2, 3.4), facecolor='white')
+    axis.set_facecolor('white')
+    axis.pie(
+        values,
+        labels=labels,
+        colors=colors,
+        startangle=90,
+        wedgeprops={'width': 0.42, 'edgecolor': 'white'},
+        textprops={'fontproperties': load_poppins('regular'), 'fontsize': 8, 'color': INK},
+    )
+    if center:
+        axis.text(0, 0, center, ha='center', va='center', color=NAVY, fontproperties=load_poppins('semibold'), fontsize=12)
+    axis.set_title(_wrap_title(title, 42), color=INK, fontproperties=load_poppins('semibold'), fontsize=11, loc='left')
+    figure.tight_layout()
+    _remember(folder, filename, 'donut', values)
+    return _save_chart(figure, folder, filename)
+
+
+def _big_number(you: int, top: int, folder: Path, filename: str, title: str) -> Path:
+    """One tile. You, and the highest count in the room."""
+    figure, axis = plt.subplots(figsize=(5.2, 2.2), facecolor=LIGHT)
+    axis.set_facecolor(LIGHT)
+    axis.axis('off')
+    axis.set_xlim(0, 1)
+    axis.set_ylim(0, 1)
+    axis.set_title(_wrap_title(title, 42), color=INK, fontproperties=load_poppins('semibold'), fontsize=11, loc='left')
+    axis.text(0.28, 0.48, str(int(you)), ha='center', va='center', color=NAVY, fontproperties=load_poppins('semibold'), fontsize=28)
+    axis.text(0.28, 0.16, 'You', ha='center', va='center', color=INK, fontproperties=load_poppins('regular'), fontsize=10)
+    axis.text(0.72, 0.48, str(int(top)), ha='center', va='center', color='#8B95A8', fontproperties=load_poppins('semibold'), fontsize=28)
+    axis.text(0.72, 0.16, 'Room top', ha='center', va='center', color=INK, fontproperties=load_poppins('regular'), fontsize=10)
+    figure.tight_layout()
+    _remember(folder, filename, 'big_number', [int(you), int(top)])
+    return _save_chart(figure, folder, filename)
+
+
+def _question_share(counts, subject: str) -> list[tuple[str, int]]:
+    you = 0
+    others = 0
+    for name, value in counts or []:
+        if _same_person(str(name), subject):
+            you += int(value or 0)
+        else:
+            others += int(value or 0)
+    return [('You', you), ('Everyone else', others)]
+
+
+def _without_next_time(text: str) -> str:
+    """The only countable action lives in Your next rep."""
+    kept = []
+    for sentence in re.split(r'(?<=[.!?])\s+', str(text or '').strip()):
+        if sentence and not re.match(r'(?i)next time\b', sentence.strip()):
+            kept.append(sentence.strip())
+    return ' '.join(kept)
+
+
+def _finding_line(story: dict) -> str:
+    """Twelve words or fewer, with no verdict words."""
+    share = float(story.get('share') or 0)
+    roster = story.get('roster_shares') or []
+    even = 100 / max(1, len(roster) or 1)
+    if share > even + 2:
+        line = 'You spoke more than an even share.'
+    elif share + 2 < even:
+        line = 'You spoke less than an even share.'
+    else:
+        line = 'You spoke near an even share.'
+    words = line.replace('.', '').split()
+    banned = {'too', 'bad'}
+    words = [word for word in words if word.lower() not in banned]
+    return ' '.join(words[:12]) + '.'
+
+
+def _group_tiles(story: dict) -> list[tuple[str, str]]:
+    """People, turn passing, questions, and ideas. Grades use this meeting only."""
+    shares = story.get('shares') or []
+    spoke = sum(1 for _name, value in shares if float(value or 0) > 0)
+    total = len(shares) or spoke
+    questions = sum(int(value or 0) for _name, value in (story.get('question_counts') or []))
+    ideas = sum(int(value or 0) for _name, value in (story.get('proposal_counts') or []))
+    numbers = ' '.join(story.get('numbers') or [])
+    grade = 'This meeting'
+    if 'below an even mix' in numbers:
+        grade = 'Below an even mix'
+    elif 'at an even mix' in numbers:
+        grade = 'At an even mix'
+    elif 'near an even mix' in numbers:
+        grade = 'Near an even mix'
+    return [
+        (f'{spoke}', f'of {total} people'),
+        ('Turns', grade),
+        (str(questions), 'questions asked'),
+        (str(ideas), 'ideas put forward'),
+    ]
+
+
+def _personal_tiles(story: dict) -> list[tuple[str, str]]:
+    """Four numbers, each graded against this meeting only."""
+    share = int(round(float(story.get('share') or 0)))
+    roster = story.get('roster_shares') or [(story.get('name') or 'You', share)]
+    even = int(round(100 / max(1, len(roster))))
+    if share > even + 2:
+        share_grade = f'Above even share ({even}%)'
+    elif share + 2 < even:
+        share_grade = f'Below even share ({even}%)'
+    else:
+        share_grade = f'Near even share ({even}%)'
+    questions = story.get('question_counts') or []
+    you_q = 0
+    for name, value in questions:
+        if _same_person(str(name), str(story.get('name') or '')):
+            you_q = int(value or 0)
+    others = [int(value or 0) for name, value in questions if not _same_person(str(name), str(story.get('name') or ''))]
+    typical = int(round(sum(others) / len(others))) if others else you_q
+    if you_q > typical:
+        question_grade = f'Above the room ({typical})'
+    elif you_q < typical:
+        question_grade = f'Below the room ({typical})'
+    else:
+        question_grade = f'Same as the room ({typical})'
+    turns = story.get('longest_turns') or []
+    you_turn = 0
+    for name, value in turns:
+        if _same_person(str(name), str(story.get('name') or '')):
+            you_turn = int(value or 0)
+    other_turns = [int(value or 0) for name, value in turns if not _same_person(str(name), str(story.get('name') or ''))]
+    middle = sorted(other_turns)[len(other_turns) // 2] if other_turns else you_turn
+    if you_turn > middle:
+        turn_grade = f'Above the room middle ({middle})'
+    elif you_turn < middle:
+        turn_grade = f'Below the room middle ({middle})'
+    else:
+        turn_grade = f'Same as the room middle ({middle})'
+    ideas = story.get('proposal_counts') or []
+    you_ideas = 0
+    for name, value in ideas:
+        if _same_person(str(name), str(story.get('name') or '')):
+            you_ideas = int(value or 0)
+    top = max((int(value or 0) for _name, value in ideas), default=you_ideas)
+    if you_ideas >= top and top > 0:
+        idea_grade = f'Matches the room top ({top})'
+    else:
+        idea_grade = f'Below the room top ({top})'
+    return [
+        (f'{share}%', share_grade),
+        (str(you_q), question_grade),
+        (str(you_turn), turn_grade),
+        (str(you_ideas), idea_grade),
+    ]
+
+
+def _score_tiles(pdf, tiles: list[tuple[str, str]]) -> None:
+    """Navy numbers and one gray grade line. No traffic-light colors."""
+    if not tiles:
+        return
+    _flush_heading(pdf)
+    width = pdf.epw / len(tiles)
+    y = pdf.get_y()
+    for index, (number, grade) in enumerate(tiles):
+        x = pdf.l_margin + index * width
+        pdf.set_xy(x, y)
+        pdf.set_text_color(28, 44, 91)
+        pdf.set_font('Poppins', 'b', 28)
+        pdf.cell(w=width - 1, h=12, text=str(number), align='L')
+        pdf.set_xy(x, y + 12)
+        pdf.set_text_color(120, 128, 142)
+        pdf.set_font('Poppins', '', 8)
+        pdf.multi_cell(w=width - 1, h=3.5, text=str(grade), align='L')
+    pdf.set_y(y + 26)
+    pdf.set_text_color(20, 33, 74)
+
+
+def _anchored(text: str, action: str) -> str:
+    """Keep a real section, and end it on the one action. An empty section stays dropped."""
+    body = str(text or '').strip()
+    if not body:
+        return ''
+    for banned in ('here is your personal report', 'you spoke for too long'):
+        if banned in body.lower():
+            body = re.sub(re.escape(banned), '', body, flags=re.I).strip(' .')
+    if not body:
+        return action
+    if action and action.lower() not in body.lower():
+        return f'{body.rstrip()} {action}'
+    return body
+
+
+def _personal_charts(pdf, story: dict, folder: Path) -> None:
+    """Four different chart types. A 0% or 100% question share stays a tile, not a donut."""
+    subject = str(story.get('name') or 'You')
+    talk = _talk_share(story, folder)
+    questions = story.get('question_counts') or []
+    columns = None
+    donut = None
+    if questions:
+        askers = _join_names(_leaders(questions))
+        columns = _vertical_bars(
+            questions, folder, 'who-asked.png',
+            f'{askers} asked the most questions.' if askers else 'No one asked a question.',
+            subject,
+        )
+        share = _question_share(questions, subject)
+        you, others = share[0][1], share[1][1]
+        total = you + others
+        if total and 0 < you < total:
+            donut = _donut(
+                share, folder, 'question-share.png',
+                f'You asked {you} of {total} questions.',
+                'You',
+                center=f'{you} of {total}',
+            )
+    turns = story.get('longest_turns') or story.get('word_counts') or []
+    lollipop = None
+    if turns:
+        leaders = _join_names(_leaders(turns))
+        lollipop = _lollipop(
+            turns, folder, 'words.png',
+            f'{leaders} had the longest turn.' if story.get('longest_turns') else f'{leaders} used the most words.',
+            subject,
+        )
+    ideas = story.get('proposal_counts') or []
+    tile = None
+    if ideas:
+        you_ideas = next((int(value) for name, value in ideas if _same_person(str(name), subject)), 0)
+        top = max((int(value or 0) for _name, value in ideas), default=0)
+        tile = _big_number(you_ideas, top, folder, 'ideas-you.png', 'Ideas put forward')
+    _image_row(pdf, talk, columns)
+    _image_row(pdf, donut, lollipop)
+    if tile:
+        _image(pdf, tile)
 
 
 def _leaders(pairs) -> list[str]:
@@ -399,6 +767,25 @@ def _phrase_chart(story: dict, folder: Path) -> Path | None:
     axis.spines['bottom'].set_color(LINE)
     figure.tight_layout()
     return _save_chart(figure, folder, 'phrase.png')
+
+
+def _image_row(pdf, left: Path | None, right: Path | None) -> None:
+    """Two charts on one row when both exist. One chart uses the full width."""
+    paths = [path for path in (left, right) if path and Path(path).is_file()]
+    if not paths:
+        return
+    _flush_heading(pdf)
+    y = pdf.get_y()
+    if len(paths) == 1:
+        pdf.image(str(paths[0]), x='C', w=pdf.epw * 0.72)
+        pdf.ln(1)
+        return
+    width = pdf.epw * 0.48
+    pdf.image(str(paths[0]), x=pdf.l_margin, y=y, w=width)
+    pdf.image(str(paths[1]), x=pdf.l_margin + pdf.epw * 0.52, y=y, w=width)
+    pdf.set_y(y + 62)
+    if hasattr(pdf, 'note_y'):
+        pdf.note_y()
 
 
 def _image(pdf, path: Path | None, width: float = 0.72) -> None:
@@ -502,43 +889,51 @@ def write_personal_report(
     pdf.add_page()
     pdf.set_font('Poppins', '', 11)
     pdf.set_text_color(20, 33, 74)
-    headline = str(story.get('headline') or 'You spoke.')
-    pdf.set_font('Poppins', 'b', 16)
-    pdf.multi_cell(w=0, h=pdf.font_size * 1.2, text=headline, align='L')
-    pdf.ln(1)
-    if story.get('short_mode'):
-        count = int(story.get('turns') or 0)
-        if count == 1:
-            spoken = 'You spoke once.'
-        elif count > 1:
-            spoken = f'You spoke {count} times.'
-        else:
-            spoken = ''
-        if spoken and spoken.strip('.') != headline.strip('.'):
-            _body(pdf, spoken)
-        _image(pdf, _talk_share(story, chart_dir))
-        if story.get('said_quote'):
-            _pull_quote(pdf, str(story['said_quote']))
-        _heading(pdf, 'Your next rep')
-        _body(pdf, story.get('next_rep') or story.get('one_thing') or '')
+    from lib.names import header_name, is_placeholder_name, report_header
+
+    if 'header_name' in story:
+        header = report_header(story.get('header_name'))
     else:
+        candidate = str(story.get('name') or '')
+        headline = str(story.get('headline') or '')
+        if not candidate and headline and len(headline.split()) <= 3 and not is_placeholder_name(headline):
+            candidate = headline
+        header = report_header(header_name(fallback=candidate))
+    pdf.set_text_color(28, 44, 91)
+    pdf.set_font('Poppins', 'b', 22)
+    pdf.multi_cell(w=0, h=10, text=header, align='L')
+    pdf.ln(1)
+    pdf.set_text_color(20, 33, 74)
+    pdf.set_font('Poppins', 'b', 13)
+    pdf.multi_cell(w=0, h=7, text=_finding_line(story), align='L')
+    pdf.ln(1)
+    if story.get('opening'):
+        _body(pdf, str(story['opening']))
+    _heading(pdf, 'By the numbers')
+    _score_tiles(pdf, _personal_tiles(story))
+    action = str(story.get('action') or story.get('next_rep') or story.get('one_thing') or '')
+    big = _without_next_time(story.get('one_big_thing') or story.get('drama') or '')
+    if big:
         _heading(pdf, '1 big thing')
-        _body(pdf, story.get('one_big_thing') or story.get('drama') or '')
+        _body(pdf, big)
+    dropped = set(story.get('fallback_sections') or [])
+    why_text = '' if 'why_it_matters' in dropped else (story.get('why_it_matters') or story.get('goal') or '')
+    why_text = _without_next_time(why_text)
+    if why_text:
         _heading(pdf, 'Why it matters')
-        _body(pdf, story.get('why_it_matters') or story.get('goal') or '')
-        _heading(pdf, 'By the numbers')
-        for line in (story.get('numbers') or [])[:3]:
-            _body(pdf, line)
-        _image(pdf, _talk_share(story, chart_dir))
-        _heading(pdf, 'What you said')
-        if story.get('said_quote'):
-            _pull_quote(pdf, str(story['said_quote']))
+        _body(pdf, why_text)
+    _heading(pdf, 'By the numbers')
+    _personal_charts(pdf, story, chart_dir)
+    _heading(pdf, 'What you said')
+    if story.get('said_quote'):
+        _pull_quote(pdf, str(story['said_quote']))
+    caveat_text = '' if 'yes_but' in dropped else (story.get('yes_but') or story.get('challenge') or '')
+    caveat_text = _without_next_time(caveat_text)
+    if caveat_text:
         _heading(pdf, 'Yes, but')
-        _body(pdf, story.get('yes_but') or story.get('challenge') or '')
-        _heading(pdf, 'Your next rep')
-        _body(pdf, story.get('next_rep') or story.get('one_thing') or '')
-    if story.get('handed_to'):
-        _body(pdf, story['handed_to'])
+        _body(pdf, caveat_text)
+    _heading(pdf, 'Your next rep')
+    _body(pdf, action)
     appendix = [f'{name}: {line}' for name, line in (story.get('appendix') or {}).items()]
     _appendix_block(pdf, appendix, appendix_font, columns)
 
@@ -611,15 +1006,19 @@ def write_group_story(pdf, story: dict, chord_path, chord_pairs, *, gap: float =
     pdf.add_page()
     pdf.set_text_color(20, 33, 74)
     headline = str(story.get('headline') or '')
-    from lib.story_render import fit_headline
+    title_file = Path(str(chord_path)).with_suffix('.title') if chord_path else None
+    if title_file and title_file.is_file():
+        headline = title_file.read_text(encoding='utf-8').strip()
+    else:
+        from lib.story_render import fit_headline
 
-    headline = fit_headline(headline, 'A few people talked most.')
+        headline = fit_headline(headline, 'A few people talked most.')
     pdf.set_font('Poppins', 'b', 16)
     pdf.multi_cell(w=0, h=pdf.font_size * 1.2, text=headline, align='L')
     pdf.ln(1)
+    _score_tiles(pdf, _group_tiles(story))
     if hasattr(pdf, 'note_y'):
         pdf.note_y()
-    _chord_hero(pdf, chord_path, chord_pairs)
     from lib.story_render import narrative_text
 
     _heading(pdf, '1 big thing')
@@ -638,29 +1037,41 @@ def write_group_story(pdf, story: dict, chord_path, chord_pairs, *, gap: float =
                 folder,
                 'who-talked.png',
                 f'{talkers} talked the most.' if talkers else 'No one talked.',
+                percent=True,
             ),
         )
     questions = story.get('question_counts') or []
     if questions:
-        from lib.questions import QUESTION_FOOTNOTE
-
         askers = _join_names(_leaders(questions))
         _image(
             pdf,
-            _ranked_bars(
+            _vertical_bars(
                 questions,
                 folder,
                 'who-asked.png',
                 f'{askers} asked the most questions.' if askers else 'No one asked a question.',
             ),
         )
+        from lib.questions import QUESTION_FOOTNOTE
+
         _footnote(pdf, QUESTION_FOOTNOTE)
-    # The proposal chart is only the bars. No finding sentence and no footnote.
-    proposals = story.get('proposal_counts')
-    if proposals:
+    proposals = story.get('proposal_counts') or []
+    proposed = [(name, int(value or 0)) for name, value in proposals if int(value or 0) > 0]
+    if len(proposed) >= 2:
+        _image(pdf, _donut(proposals, folder, 'ideas.png', 'Ideas put forward'))
+    elif len(proposed) == 1:
+        _image(pdf, _big_number(proposed[0][1], proposed[0][1], folder, 'ideas.png', f'1 idea, from {proposed[0][0]}'))
+    words = story.get('word_counts') or []
+    if words:
+        leaders = _join_names(_leaders(words))
         _image(
             pdf,
-            _ranked_bars(proposals, folder, 'ideas.png', 'Ideas put forward'),
+            _lollipop(
+                words,
+                folder,
+                'words.png',
+                f'{leaders} used the most words.' if leaders else 'No one spoke.',
+            ),
         )
     if hasattr(pdf, 'note_y'):
         pdf.note_y()
@@ -672,4 +1083,7 @@ def write_group_story(pdf, story: dict, chord_path, chord_pairs, *, gap: float =
     _body(pdf, narrative_text(story['one_thing']))
     if story.get('why'):
         _body(pdf, narrative_text(story['why']))
+    _heading(pdf, 'Appendix')
+    _remember(folder, 'structure', 'chord', [])
+    _chord_hero(pdf, chord_path, chord_pairs)
     _flush_heading(pdf)

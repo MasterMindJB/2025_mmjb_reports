@@ -818,31 +818,51 @@ def session_talk_phrase(transcript) -> str:
     return f'this {minutes}-minute talk'
 
 
+def session_action(stats: dict, rows: list[dict] | None = None) -> str:
+    """One countable next step from this person's own numbers."""
+    share = int(stats.get('share') or 0)
+    speakers = max(int(stats.get('speaker_count') or 1), 1)
+    questions = int(stats.get('questions') or 0)
+    ideas = stats.get('ideas')
+    words = int(stats.get('words') or 0)
+    turns = int(stats.get('turns') or 0)
+    if rows is not None:
+        words = sum(len(re.findall(r"[A-Za-z']+", str(row.get('text') or ''))) for row in rows)
+        turns = len(rows)
+    if share + 2 < room_average(speakers):
+        return 'Come in within the first 2 minutes.'
+    if questions == 0:
+        return 'Ask 2 questions before your first point.'
+    if turns <= 2 and words >= 60:
+        return 'Stop after 2 sentences and name someone.'
+    if ideas == 0:
+        return 'Put forward 1 idea before you stop.'
+    return 'Ask 1 question before you add a point.'
+
+
+def team_action(facilitator: str, quiet: str) -> str:
+    """The group's one action, aimed at the person running the room."""
+    who = facilitator or 'Team'
+    person = quiet or 'one quiet person'
+    return f'{who}: invite {person} by name in the first 3 minutes.'
+
+
 def turns_sentence(count: int, median: int | None = None, words: int | None = None) -> str:
     """The room median is the comparator. One long turn is described by its words."""
     counted = int(count)
     if counted == 1:
         amount = f'about {int(words)} words' if words else 'one stretch'
-        return (
-            f'You spoke in one long turn of {amount}. '
-            'Next time, stop after two sentences and ask who has tried that.'
-        )
+        return f'You spoke in one long turn of {amount}. That is more than one point.'
     middle = counted if median is None else int(median)
     turn_word = 'turn' if counted == 1 else 'turns'
     median_word = 'turn' if middle == 1 else 'turns'
     if counted > middle:
         judge = 'That is more than most people in the room.'
-        take = 'Next time, leave one of those turns for someone else.'
     elif counted < middle:
         judge = 'That is less than most people in the room.'
-        take = 'Next time, take one more turn before the close.'
     else:
         judge = 'That matches the middle of the room.'
-        take = 'Next time, use one of those turns to ask a question.'
-    return (
-        f'You took {counted} {turn_word}. The room median was {middle} {median_word}. '
-        f'{judge} {take}'
-    )
+    return f'You took {counted} {turn_word}. The room median was {middle} {median_word}. {judge}'
 
 
 def talk_number_line(share: int, speaker_count: int, span: str = 'this talk') -> str:
@@ -850,15 +870,12 @@ def talk_number_line(share: int, speaker_count: int, span: str = 'this talk') ->
     even = room_average(speaker_count)
     gap = int(share) - even
     if abs(gap) <= 2:
-        judge = f'That is close to an even split of {span}.'
-        take = 'Next time, keep your turn about this long.'
+        judge = 'That is close to an even split.'
     elif gap > 0:
-        judge = f'That is more than an even split of {span}, so this was a lot of the talking.'
-        take = 'Next time, stop after one point and let someone else speak.'
+        judge = 'That is more than an even split.'
     else:
-        judge = f'That is less than an even split of {span}.'
-        take = 'Next time, add one short point before you stop.'
-    return f'You spoke for {int(share)}% of {span}. That is your share of the talking. {judge} {take}'
+        judge = 'That is less than an even split.'
+    return f'You spoke for {int(share)}% of {span}. {judge}'
 
 
 def question_number_line(count: int, average: int) -> str:
@@ -867,22 +884,12 @@ def question_number_line(count: int, average: int) -> str:
     typical = int(average)
     if asked > typical:
         judge = 'That is more than the typical person here.'
-        take = 'Next time, leave one question for someone else to answer.'
     elif asked < typical:
         judge = 'That is less than the typical person here.'
-        take = 'Next time, ask one question before you add a point.'
     else:
         judge = 'That matches the typical person here.'
-        take = 'Next time, keep one of those questions open for someone else.'
     asked_word = 'question' if asked == 1 else 'questions'
-    typical_word = 'question' if typical == 1 else 'questions'
-    if asked == 0:
-        meaning = 'That means you did not ask the room anything.'
-    elif asked == 1:
-        meaning = 'That means you asked the room one thing.'
-    else:
-        meaning = 'That means you asked the room more than once.'
-    return f'You asked {asked} {asked_word}. {meaning} {judge} {take}'
+    return f'You asked {asked} {asked_word}. {judge}'
 
 
 def group_plain_numbers(
@@ -898,23 +905,20 @@ def group_plain_numbers(
     if people > 1:
         even = int(round(100 * (people - 1) / people))
         if moved + 10 < even:
-            judge = (
-                'That is low. If the next turn were just as likely to be any other person, '
-                'more turns would move. Most of the time the same few people kept trading turns, '
-                'so most of the room listened.'
-            )
+            grade_word = 'below'
         elif moved >= even:
-            judge = 'That is high. Turns moved to a new person as often as an even mix.'
+            grade_word = 'at'
         else:
-            judge = 'That is close to an even mix, where any other person is just as likely to speak next.'
+            grade_word = 'near'
     else:
-        judge = 'This shows how often the next voice was a new person.'
-    handoff = (
-        f'{moved}% of turns moved to someone new. {judge} '
-        'Next time, after you answer, pass the question to someone who has not spoken.'
-    )
+        even = moved
+        grade_word = 'at'
+    if people > 1:
+        handoff = f'{moved}% of turns moved to someone new, {grade_word} an even mix of {even}%.'
+    else:
+        handoff = f'{moved}% of turns moved to someone new.'
     if spoke is None or not roster:
-        people_line = 'Next time, invite one quiet person in before you close.'
+        people_line = f'{people} people were in the room.'
     else:
         people_line = people_spoke_line(spoke, roster)
     return [handoff, people_line]
@@ -928,18 +932,12 @@ def people_spoke_line(spoke: int, total: int) -> str:
     spoke = max(0, int(spoke))
     total = max(spoke, int(total or 0))
     if total <= 0:
-        return f'{spoke} people spoke. Next time, invite one quiet person in before you close.'
+        return f'{spoke} people spoke.'
     silent = total - spoke
     if silent <= 0:
-        return (
-            f'{spoke} of {total} people spoke. Everyone took a turn. '
-            'Next time, keep passing the turn.'
-        )
+        return f'{spoke} of {total} people spoke. Everyone took a turn.'
     quiet = _SPOKEN_WORDS.get(silent, str(silent))
-    return (
-        f'{spoke} of {total} people spoke. {quiet} never did. '
-        'Next time, invite one quiet person in before you close.'
-    )
+    return f'{spoke} of {total} people spoke. {quiet} never did.'
 
 
 def group_pattern_why(portrait: dict, shares=None) -> str:
@@ -953,7 +951,7 @@ def group_pattern_why(portrait: dict, shares=None) -> str:
         opening = f'Most of the back and forth ran between {pair[0]} and {pair[1]}.'
     else:
         opening = f'{quiet} had less chance to change the choice.'
-    return f'{opening} Next time, ask {quiet} before you decide.'
+    return opening
 
 
 def group_caveat(portrait: dict, shares=None) -> str:
@@ -962,11 +960,8 @@ def group_caveat(portrait: dict, shares=None) -> str:
     _most, least_talk = _talk_ends(shares or [])
     least = least_talk or (portrait or {}).get('least') or 'the quiet person'
     if len(pair) >= 2 and pair[0] and pair[1]:
-        return (
-            f'A point can end with {pair[0]} and {pair[1]} before {least} speaks. '
-            f'Next time, stop and ask {least}.'
-        )
-    return f'A point can end before {least} speaks. Next time, stop and ask {least}.'
+        return f'A point can end with {pair[0]} and {pair[1]} before {least} speaks.'
+    return f'A point can end before {least} speaks.'
 
 
 def rate_sentence(value: int, name: str) -> str:

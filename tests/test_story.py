@@ -86,7 +86,7 @@ def test_personal_report_section_order(tmp_path):
     from pypdf import PdfReader
 
     text = '\n'.join(page.extract_text() or '' for page in PdfReader(tmp_path / 'Alex Rivera.pdf').pages)
-    order = ('1 big thing', 'Why it matters', 'By the numbers', 'What you said', 'Yes, but', 'Your next rep')
+    order = ('By the numbers', '1 big thing', 'Why it matters', 'What you said', 'Yes, but', 'Your next rep')
     positions = [text.find(heading) for heading in order]
     assert all(position != -1 for position in positions), text
     assert positions == sorted(positions)

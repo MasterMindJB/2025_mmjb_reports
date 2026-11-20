@@ -543,6 +543,7 @@ def create_report_personal(
     transcript: dict | None = None,
     story_drafts: dict | None = None,
     include_personality: bool = False,
+    proposal_counts=None,
 ):
     logging.info('Creating personal PDF reports for each speaker.')
 
@@ -576,6 +577,7 @@ def create_report_personal(
                 'include_personality': include_personality,
             },
             draft=(story_drafts or {}).get(speaker),
+            proposal_counts=proposal_counts,
         )
         chart_dir = path_reports_dir / '_story' / pdf_filename_for(speaker_name).replace('.pdf', '')
 

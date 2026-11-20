@@ -296,8 +296,7 @@ def test_one_thing_follows_the_personal_gap():
     from lib.story_render import turns_sentence
 
     assert turns_sentence(1, words=180) == (
-        'You spoke in one long turn of about 180 words. '
-        'Next time, stop after two sentences and ask who has tried that.'
+        'You spoke in one long turn of about 180 words. That is more than one point.'
     )
     assert 'you came in once' not in turns_sentence(1)
     assert '1 turns' not in turns_sentence(1)

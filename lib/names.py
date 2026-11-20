@@ -25,6 +25,63 @@ def display_name(name: str) -> str:
     return cleaned or 'Participant'
 
 
+_EMAIL_ROLE = {
+    'admin', 'contact', 'hello', 'info', 'noreply', 'office', 'sales', 'support', 'team',
+}
+
+
+def is_placeholder_name(name: str) -> bool:
+    """A label such as Speaker G or F is not a person's name."""
+    cleaned = re.sub(r'\s+', ' ', (name or '').strip())
+    if not cleaned:
+        return True
+    if re.fullmatch(r'[A-Za-z]', cleaned):
+        return True
+    if re.fullmatch(r'(?i)speaker\s+\w+', cleaned):
+        return True
+    if cleaned.lower() in {'host', 'facilitator', 'moderator', 'participant', 'audience member'}:
+        return True
+    return False
+
+
+def name_from_email(email: str) -> str | None:
+    """first.last, first_last, and first-last become First Last. Handles and roles do not."""
+    local = str(email or '').split('@', 1)[0].strip().lower()
+    if not local or any(character.isdigit() for character in local):
+        return None
+    parts = [part for part in re.split(r'[._-]+', local) if part]
+    if not parts or not all(part.isalpha() for part in parts):
+        return None
+    if any(part in _EMAIL_ROLE or part in ROLE_WORDS for part in parts):
+        return None
+    if len(parts) == 1:
+        token = parts[0]
+        if len(token) < 3:
+            return None
+        if len(token) <= 4 and token[0] not in 'aeiou' and token[1] not in 'aeiou':
+            return None
+        return token[:1].upper() + token[1:]
+    if any(len(part) < 2 for part in parts):
+        return None
+    return ' '.join(part[:1].upper() + part[1:] for part in parts)
+
+
+def header_name(*, entered: str = '', email: str = '', fallback: str = '') -> str | None:
+    """The app-entered name wins. Otherwise a clear email name. Never a placeholder."""
+    for candidate in (entered, fallback):
+        cleaned = re.sub(r'\s+', ' ', (candidate or '').strip())
+        if cleaned and not is_placeholder_name(cleaned):
+            return cleaned
+    return name_from_email(email)
+
+
+def report_header(name: str | None) -> str:
+    """The only top line. The model does not write it."""
+    if name:
+        return f"{name}, here's your report"
+    return "Here's your report"
+
+
 def table_name(name: str) -> str:
     """A pair-table label. 'Speaker F' is the letter. 'Audience member 1' is 'Aud. member 1'."""
     full = display_name(name)
