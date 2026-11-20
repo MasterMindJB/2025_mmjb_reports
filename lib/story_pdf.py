@@ -940,22 +940,10 @@ def _group_height(pdf, charts: list, ratio: float) -> float:
 
 
 def _place_leftover_charts(pdf, charts: list) -> None:
-    """One or two small charts shrink onto page 1. A larger set stays together, donut included."""
+    """Page 2 holds the donut, the longest-turn chart, and the ideas tile at full size."""
     charts = [path for path in charts if path and Path(path).is_file()]
     if not charts:
         return
-    room = _remaining(pdf)
-    ratio = 0.42 if len(charts) >= 2 else 0.46
-    natural = _group_height(pdf, charts, ratio)
-    if natural + 1 <= room:
-        _draw_chart_group(pdf, charts, ratio)
-        return
-    if room >= 22 and natural > 0:
-        scale = (room - 4) / natural
-        floor = 0.26 if len(charts) <= 2 else 0.32
-        if scale >= floor:
-            _draw_chart_group(pdf, charts, ratio * min(scale, 1))
-            return
     pdf.add_page()
     _draw_chart_group(pdf, charts, 0.48)
 

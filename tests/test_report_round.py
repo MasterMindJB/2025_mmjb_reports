@@ -663,11 +663,15 @@ def test_a_grade_repair_stays_on_flash_lite_and_one_upgrade_is_the_cap(monkeypat
 
     def fake_rest(model, key, prompt, mode='budget', max_output=512):
         seen.append((model, mode, max_output, prompt[:24]))
-        if prompt.startswith('Rewrite this one sentence'):
+        if prompt.startswith('Write 3'):
             assert model == 'gemini-3.1-flash-lite'
             assert mode == 'budget'
-            assert max_output <= 256
-            return type('Reply', (), {'content': 'That shows people the budget still matters.'})()
+            assert max_output <= 512
+            return type('Reply', (), {'content': json.dumps({'whys': [
+                'That choice shows people your autonomy took years.',
+                'This shows people the budget still matters.',
+                'This helps people see the owner.',
+            ]})})()
         if '3.6' in model:
             return type('Reply', (), {'content': '{"character": ""}'})()
         return type('Reply', (), {'content': json.dumps({
@@ -703,9 +707,10 @@ def test_a_grade_repair_stays_on_flash_lite_and_one_upgrade_is_the_cap(monkeypat
         {'share': 18, 'turns': 2, 'questions': 1, 'speaker_count': 6, 'words': 80},
     )
     assert story['short_mode'] is False
-    assert any(item[3].startswith('Rewrite') for item in seen)
+    assert any(item[3].startswith('Write 3') for item in seen)
     assert not any(item[0] == 'gemini-3.6-flash' for item in seen)
-    assert reading_grade(story['bullets'][0].split('".')[-1]) <= 6
+    assert 'the budget still matters' in story['bullets'][0].lower()
+    assert 'autonomy' not in story['bullets'][0].lower()
 
     seen.clear()
 
@@ -759,9 +764,9 @@ def test_talk_and_question_charts_stay_with_the_box(tmp_path):
     assert 'By the numbers' in first
     assert 'Your charts' in first
     counts = [len(list(page.images)) for page in pages]
-    assert counts[0] >= 5
-    for count in counts[1:]:
-        assert count == 1 or count >= 4
+    assert len(pages) >= 2
+    assert 'What you said' not in first
+    assert counts[1] >= 4
 
 
 def test_a_drifting_why_is_rewritten_without_dropping_the_behavior(monkeypatch, tmp_path):
@@ -771,11 +776,14 @@ def test_a_drifting_why_is_rewritten_without_dropping_the_behavior(monkeypatch, 
 
     def fake_rest(model, key, prompt, mode='budget', max_output=512):
         seen.append((model, mode, max_output, prompt[:40]))
-        if prompt.startswith('Rewrite this one sentence'):
+        if prompt.startswith('Write 3'):
             assert 'BEHAVIOR' in prompt
-            assert 'This helps people see that your love for art started early.' in prompt
-            assert mode == 'budget' and max_output <= 128
-            return type('Reply', (), {'content': 'This helps people see that the budget still matters.'})()
+            assert mode == 'budget' and max_output <= 512
+            return type('Reply', (), {'content': json.dumps({'whys': [
+                'The weather stayed cold all morning.',
+                'This helps people see that the budget still matters.',
+                'This shows people the owner.',
+            ]})})()
         return type('Reply', (), {'content': json.dumps({
             'bullets': [
                 {
@@ -1013,11 +1021,12 @@ def test_the_page_is_assembled_from_passing_candidates_only():
     assert 'autonomy' not in page['bullets'][0].lower()
     assert 'making movies started early' in page['bullets'][0].lower()
     for bullet in page['bullets']:
-        why = bullet.split('".')[-1].strip()
+        why = bullet.split('."')[-1].strip()
         quote = movies if 'movies' in bullet else music
         if why:
             assert why_line_grade_problem(why, quote) == ''
-            assert reading_grade(bullet) <= 6.05
+            assert 'autonomy' not in why.lower()
+            assert 'independence' not in why.lower()
 
     ric_pool = [
         {'behavior': merged, 'quote': movies, 'why': hard, 'merged': True, 'passes': False, 'source': 'repair'},
@@ -1109,3 +1118,77 @@ def test_a_prompt_example_does_not_become_stephens_goal_and_bare_bullets_drop(mo
     assert any('own your results' in prompt or 'prompt example' in prompt or prompt.startswith('Rewrite') for prompt in seen)
     assert all('owning your results' not in prompt for prompt in seen)
     assert 'own your results' not in ' '.join(story['bullets']).lower()
+
+
+def test_quote_periods_listener_whys_and_short_behavior_words():
+    from lib.personal_narrative import (
+        _first_why_choice,
+        _render_bullet,
+        _repair_whys,
+        behavior_word_problem,
+        listener_why,
+    )
+
+    line = _render_bullet(
+        'You seem to care about the work, and it seemed like you were trying to name it',
+        'except for that one thing.',
+        'This shows people why that one thing matters.',
+    )
+    assert '.".' not in line
+    assert 'because of "except for that one thing."' in line
+    loader = _render_bullet(
+        'You seem to care about the job, and it seemed like you were trying to name it',
+        'become a loader.',
+        'This helps people see the job.',
+    )
+    assert 'loader.".' not in loader
+    assert 'because of "become a loader."' in loader
+    behavior = 'You insist on doing this one thing your own way.'
+    assert listener_why(
+        'You insist on doing this one thing your own way. This shows how much this goal means to you.',
+        behavior,
+    ) == 'This shows how much this goal means to you.'
+    quote = 'The budget can wait until the client signs.'
+    assert 'autonomy' in behavior_word_problem(
+        'You seem to care about autonomy, and it seemed like you were trying to name the client.',
+        quote,
+    )
+    assert 'prioritize' in behavior_word_problem(
+        'You seem to care about the budget, and it seemed like you were trying to prioritize the client.',
+        quote,
+    )
+    assert behavior_word_problem(
+        'You seem to care about the budget, and it seemed like you were trying to name the client.',
+        quote,
+    ) == ''
+
+    class Chooser:
+        model = 'gemini-3.1-flash-lite'
+
+        def invoke(self, prompt, **kwargs):
+            return type('Reply', (), {'content': __import__('json').dumps({'whys': [
+                'That choice shows people your autonomy took years.',
+                'This shows people the movies started early.',
+                'This helps people see the music.',
+            ]})})()
+
+    movies = "I've always been into making movies, making music, whatever it is."
+    merged = 'You seem to care about making movies, and it seemed like you were trying to make music.'
+    chosen = _first_why_choice(Chooser(), merged, movies, [movies], movies, None, 'flash-lite-repair')
+    assert chosen == 'This shows people the movies started early.'
+
+    class NonePass:
+        model = 'gemini-3.6-flash'
+
+        def invoke(self, prompt, **kwargs):
+            return type('Reply', (), {'content': __import__('json').dumps({'whys': [
+                'That choice shows people your autonomy took years.',
+                'That growth shows people your independence took years.',
+                'That story shows people your autonomy stayed put.',
+            ]})})()
+
+    payload = {'bullets': [{'behavior': merged, 'quote': 'Q1', 'why': ''}]}
+    import logging
+    # The warning is emitted by the repair when the 3.6 round finds no passing why.
+    _repair_whys(NonePass(), payload, [movies], 'gemini-3.6-flash', movies, None, '3.6-repair')
+    assert payload['bullets'][0]['why'] == ''
