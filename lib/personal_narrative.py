@@ -781,47 +781,63 @@ def _sentence_restates(sentence: str, behavior: str) -> bool:
 _CLAUSE_SPLIT = re.compile(r'\s*[,;:]+\s*|\s+[—–]\s+|\s+-\s+|\s+\b(?:and|but|or)\b\s+', re.I)
 
 
-def _verbatim_clauses(text: str) -> list[str]:
-    """Contiguous spans that end at a comma, colon, dash, conjunction, or the sentence end."""
-    parts = []
-    start = 0
+def _clause_spans(text: str) -> list[str]:
+    """Every contiguous span that starts and ends on a clause boundary."""
+    points = [0, len(text)]
     for match in _CLAUSE_SPLIT.finditer(text):
-        chunk = text[start:match.start()].strip(' ,;:—–-')
-        if chunk:
-            parts.append(chunk)
-        start = match.end()
-    tail = text[start:].strip(' ,;:—–-')
-    if tail:
-        parts.append(tail)
-    return parts
+        points.extend((match.start(), match.end()))
+    points = sorted(set(points))
+    spans = []
+    for index, start in enumerate(points):
+        for end in points[index + 1:]:
+            chunk = text[start:end].strip(' ,;:—–-')
+            if chunk and chunk in text:
+                spans.append(chunk)
+    return spans
 
 
-def shorten_quote(quote: str, limit: int = 20) -> str:
-    """The shortest verbatim clause that still shares the sentence's point. No ellipsis."""
+def _point_words(behavior: str, quote: str) -> set[str]:
+    """Content words the behavior names. The quote's own words are the fallback."""
+    named = f'{_care_phrase(behavior)} {_goal_phrase(behavior)}'.strip()
+    source = named or quote
+    return {word.lower() for word in _content_words(source)}
+
+
+def _shares_point(clause: str, point: set[str]) -> bool:
+    if not point:
+        return True
+    got = [word.lower() for word in _content_words(clause)]
+    return any(word in point or _lemma_hit(_lemma(word), list(point)) for word in got)
+
+
+def shorten_quote(quote: str, behavior: str = '', limit: int = 20) -> str:
+    """A verbatim clause of at least 8 words, or the whole sentence when it is shorter.
+
+    Only a quote longer than 20 words is shortened. The clause has to carry the
+    point the behavior names. No ellipsis.
+    """
     text = str(quote or '').strip().strip('"').strip('“”').strip()
-    if len(_raw_words(text)) <= limit:
+    total = len(_raw_words(text))
+    if total <= limit or total < 8:
         return text
-    point = {word.lower() for word in _content_words(text)}
+    point = _point_words(behavior, text)
     best = ''
-    best_len = len(_raw_words(text)) + 1
-    for clause in _verbatim_clauses(text):
-        core = clause.rstrip('.!?').strip()
-        if not core or core not in text:
+    best_len = total + 1
+    for clause in _clause_spans(text):
+        count = len(_raw_words(clause))
+        if count < 8 or count >= total or count >= best_len:
             continue
-        got = {word.lower() for word in _content_words(core)}
-        if point and not (got & point):
+        if not _shares_point(clause, point):
             continue
-        count = len(_raw_words(core))
-        if count and count < best_len:
-            best = core
-            best_len = count
+        best = clause
+        best_len = count
     return best or text
 
 
 def _render_bullet(behavior: str, quote: str, why: str) -> str:
     """Behavior, the code-owned because line, then one why. The quote keeps its own period."""
     statement = _strip_typed_quotes(behavior).strip().rstrip('.')
-    spoken = shorten_quote(str(quote or '').strip().strip('"').strip('“”'))
+    spoken = shorten_quote(str(quote or '').strip().strip('"').strip('“”'), behavior)
     if spoken and spoken[-1] not in '.!?':
         spoken += '.'
     reason = listener_why(_strip_typed_quotes(why), behavior)
@@ -1850,7 +1866,7 @@ def _build_personal_story(llm, transcript, label: str, info: dict, stats: dict, 
         if upgraded:
             break
     page = assemble_personal_bullets(pool, quotes, speech)
-    if page['bullets']:
+    if page['bullets'] or (pool and page['needs_review']):
         logging.warning('personal narrative assembled from the candidate pool: %s', failures)
         payload = dict(best_payload or {})
         story = _ship_assembled(page, payload, lines, name, step, units, str(payload.get('style_id') or ''), page['needs_review'])
@@ -2161,45 +2177,52 @@ def assemble_personal_bullets(pool: list, quotes: list[str], speech: str = '') -
     merged_rows = [item for item in pool if item.get('merged') and item.get('behavior') and item.get('quote')]
     first = None
     if merged_rows:
-        shippable = [
-            item for item in merged_rows
-            if not behavior_word_problem(item['behavior'], item['quote'])
-            and not voice_problem(item['behavior'], speech)
-            and not merged_length_problem(item['behavior'], '')
-        ]
-        passing = [
-            item for item in shippable
-            if item.get('passes') and _why_passes_gate(item['behavior'], item['quote'], item['why'], quotes, speech)
-        ]
+        phrase_ok = []
+        for item in merged_rows:
+            behavior = item['behavior']
+            quote = item['quote']
+            if (
+                behavior_word_problem(behavior, quote)
+                or voice_problem(behavior, speech)
+                or care_phrase_problem(behavior, quote)
+                or goal_phrase_problem(behavior, quote)
+                or prompt_example_problem(behavior, speech)
+                or merged_length_problem(behavior, '')
+            ):
+                continue
+            phrase_ok.append(item)
+
+        def _why_ok(behavior: str, quote: str, why: str) -> bool:
+            text = str(why or '').strip()
+            return bool(
+                text
+                and not why_length_problem(text)
+                and not merged_length_problem(behavior, text)
+                and _why_passes_gate(behavior, quote, text, quotes, speech)
+            )
+
+        passing = [item for item in phrase_ok if _why_ok(item['behavior'], item['quote'], item.get('why') or '')]
         if passing:
             first = dict(passing[0])
-        elif shippable:
-            clean = [
-                item for item in shippable
-                if not any(
-                    str(problem).startswith((
-                        'care object', 'goal object', 'goal restates', 'behavior uses', 'behavior is above',
-                        'uncharitable', 'first person',
-                    ))
-                    for problem in item.get('problems') or []
-                )
-            ]
-            base = (clean or shippable)[-1]
-            behavior = base['behavior']
-            quote = base['quote']
-            same_quote = [
-                item for item in pool
-                if item.get('quote') == quote
-                and _why_passes_gate(behavior, quote, item.get('why') or '', quotes, speech)
-                and not merged_length_problem(behavior, item.get('why') or '')
-            ]
-            first = {
-                'behavior': behavior,
-                'quote': quote,
-                'why': same_quote[0]['why'] if same_quote else '',
-                'merged': True,
-                'source': base.get('source') or '',
-            }
+        elif phrase_ok:
+            borrowed = None
+            for base in phrase_ok:
+                for item in pool:
+                    why = str(item.get('why') or '')
+                    if item.get('quote') == base['quote'] and _why_ok(base['behavior'], base['quote'], why):
+                        borrowed = (base, why)
+                        break
+                if borrowed:
+                    break
+            if borrowed:
+                base, why = borrowed
+                first = {
+                    'behavior': base['behavior'],
+                    'quote': base['quote'],
+                    'why': why,
+                    'merged': True,
+                    'source': base.get('source') or '',
+                }
     others = []
     used = {first['quote']} if first else set()
     for item in pool:
@@ -2220,14 +2243,16 @@ def assemble_personal_bullets(pool: list, quotes: list[str], speech: str = '') -
         if item.get('merged') and (
             behavior_word_problem(item['behavior'], item['quote'])
             or voice_problem(item['behavior'], speech)
+            or care_phrase_problem(item['behavior'], item['quote'])
+            or goal_phrase_problem(item['behavior'], item['quote'])
+            or prompt_example_problem(item['behavior'], speech)
+            or not why
+            or why_length_problem(why)
+            or not _why_passes_gate(item['behavior'], item['quote'], why, quotes, speech)
         ):
             continue
-        if why and not _why_passes_gate(item['behavior'], item['quote'], why, quotes, speech):
-            if item.get('merged'):
-                item = dict(item)
-                item['why'] = ''
-            else:
-                continue
+        if why and not item.get('merged') and not _why_passes_gate(item['behavior'], item['quote'], why, quotes, speech):
+            continue
         checked.append(item)
     if checked and checked[0].get('merged'):
         checked = [checked[0]] + [item for item in checked[1:] if item.get('why')]

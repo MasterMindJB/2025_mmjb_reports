@@ -117,7 +117,7 @@ def test_a_quoted_script_may_say_i_and_one_bad_section_stays_full(tmp_path):
             return type('Reply', (), {'content': json.dumps({
                 'bullets': [
                     {
-                        'behavior': 'You seem to care about the budget, and it seemed like you were trying to hold the point.',
+                        'behavior': 'You seem to care about real work, and it seemed like you were trying to hold the point.',
                         'quote': 'Q1',
                         'why': 'The budget stays in that line.',
                     },

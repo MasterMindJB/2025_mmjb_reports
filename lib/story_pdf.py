@@ -812,9 +812,16 @@ def _personal_charts(pdf, story: dict, folder: Path) -> None:
         top = max((int(value or 0) for _name, value in ideas), default=0)
         tile = _big_number(you_ideas, top, folder, 'ideas-you.png', 'Ideas put forward')
     _image_row(pdf, talk, columns)
-    _image_row(pdf, donut, lollipop)
-    if tile:
-        _image(pdf, tile)
+    if donut:
+        _image_row(pdf, donut, lollipop)
+        if tile:
+            _image(pdf, tile)
+    elif lollipop:
+        # No question donut. Keep the lollipop on this page at the paired width.
+        tile_fits = bool(tile) and _remaining(pdf) >= 62
+        _paired_row(pdf, lollipop, tile if tile_fits else None)
+        if tile and not tile_fits:
+            _image(pdf, tile)
 
 
 def _leaders(pairs) -> list[str]:
@@ -924,6 +931,26 @@ def _phrase_chart(story: dict, folder: Path) -> Path | None:
     axis.spines['bottom'].set_color(LINE)
     figure.tight_layout()
     return _save_chart(figure, folder, 'phrase.png')
+
+
+def _paired_row(pdf, left: Path | None, right: Path | None = None) -> None:
+    """One or two charts at the paired-row width, kept on the current page."""
+    paths = [path for path in (left, right) if path and Path(path).is_file()]
+    if not paths:
+        return
+    _flush_heading(pdf)
+    previous = pdf.auto_page_break
+    margin = pdf.b_margin
+    pdf.set_auto_page_break(False)
+    y = pdf.get_y()
+    width = pdf.epw * 0.48
+    pdf.image(str(paths[0]), x=pdf.l_margin, y=y, w=width)
+    if len(paths) > 1:
+        pdf.image(str(paths[1]), x=pdf.l_margin + pdf.epw * 0.52, y=y, w=width)
+    pdf.set_y(y + 62)
+    pdf.set_auto_page_break(previous, margin)
+    if hasattr(pdf, 'note_y'):
+        pdf.note_y()
 
 
 def _image_row(pdf, left: Path | None, right: Path | None) -> None:

@@ -770,6 +770,17 @@ def test_talk_and_question_charts_stay_with_the_box(tmp_path):
     assert full.find('Your charts') < full.find('What you said')
     assert 'Why it matters' not in full
 
+    quiet = dict(story)
+    quiet['name'] = 'Leslie'
+    quiet['header_name'] = 'Leslie'
+    quiet['question_counts'] = [('Leslie', 0), ('Ric', 0), ('Steve', 0)]
+    quiet_pdf = MM_PDF(path_report_assets=__import__('pathlib').Path('report_assets'))
+    write_personal_report(quiet_pdf, quiet, tmp_path)
+    quiet_pdf.output(tmp_path / 'leslie.pdf')
+    quiet_pages = PdfReader(tmp_path / 'leslie.pdf').pages
+    quiet_counts = [len(list(page.images)) for page in quiet_pages]
+    assert quiet_counts[0] >= 4
+
 
 def test_a_drifting_why_is_rewritten_without_dropping_the_behavior(monkeypatch, tmp_path):
     from lib.personal_narrative import build_personal_story
@@ -870,9 +881,7 @@ def test_two_quotes_never_become_a_short_report_and_a_bad_why_is_dropped():
     )
     assert story['short_mode'] is False
     assert story['needs_review'] is True
-    assert story['bullets'][0].lower().startswith('you seem to care')
-    assert 'name an owner' in story['bullets'][0]
-    assert 'weather' not in story['bullets'][0].lower()
+    assert 'weather' not in ' '.join(story['bullets']).lower()
     assert 'a loader' not in ' '.join(story['bullets']).lower()
 
 
@@ -896,7 +905,7 @@ def test_listener_whys_pass_and_a_missing_care_noun_is_repaired(caplog, monkeypa
         'That history helps others see where your creative drive started.',
         'That growth shows others how quickly your hard work paid off.',
     ]
-    behavior = 'You seem to care about the budget, and it seemed like you were trying to name the client.'
+    behavior = 'You seem to care about real work, and it seemed like you were trying to name the client.'
     quote = 'The budget can wait until the client signs.'
     for line in lines:
         assert why_on_topic(line, '', '', [], speech='')
@@ -1073,9 +1082,10 @@ def test_a_prompt_example_does_not_become_stephens_goal_and_bare_bullets_drop(mo
             {'behavior': 'The turn named the movies.', 'quote': 'Q3', 'why': ''},
         ],
     }, quotes, quote)
-    assert kept[0].lower().startswith('you seem to care')
-    assert len(kept) == 2
-    assert 'we came to that conclusion because of' in kept[1].lower()
+    assert kept
+    assert not any('make music' in bullet.lower() for bullet in kept)
+    assert any('music still matters' in bullet.lower() for bullet in kept)
+    assert all('we came to that conclusion because of' in bullet.lower() for bullet in kept)
 
     dropped = _usable_model_bullets({
         'bullets': [
@@ -1084,9 +1094,9 @@ def test_a_prompt_example_does_not_become_stephens_goal_and_bare_bullets_drop(mo
             {'behavior': 'The turn named the movies.', 'quote': 'Q3', 'why': why},
         ],
     }, quotes, quote)
-    assert dropped[0].lower().startswith('you seem to care')
-    assert len(dropped) == 3
-    assert all('we came to that conclusion because of' in line.lower() for line in dropped[1:])
+    assert not any(line.lower().startswith('you seem to care') for line in dropped)
+    assert len(dropped) == 2
+    assert all('we came to that conclusion because of' in line.lower() for line in dropped)
 
     seen = []
 
@@ -1368,10 +1378,76 @@ def test_the_first_bullet_stays_short_and_a_long_quote_keeps_a_clause():
         'and the work should show people a feeling they can keep for years.'
     )
     clause = shorten_quote(long)
+    assert len(clause.split()) >= 8
     assert len(clause.split()) < len(long.split())
-    assert len(clause.split()) <= 20
     assert '...' not in clause
     assert clause in long
+    assert shorten_quote('I told myself.') == 'I told myself.'
+    behavior = 'You seem to care about real limits, and it seemed like you were trying to hold firm on them.'
+    ric = (
+        'I told myself, how hard you drive, and then I said I would hold firm '
+        'on the limits that matter most to the people in the room today.'
+    )
+    kept_clause = shorten_quote(ric, behavior)
+    assert len(kept_clause.split()) >= 8
+    assert kept_clause in ric
+    assert kept_clause not in {'I told myself', 'how hard you drive'}
+    assert 'firm' in kept_clause or 'limits' in kept_clause
     rendered = _render_bullet(short, long, why)
     assert '...' not in rendered
     assert clause in rendered
+
+
+def test_an_eleven_word_goal_without_a_why_does_not_ship():
+    from lib.personal_narrative import _repair_whys, assemble_personal_bullets, goal_phrase_problem
+
+    quote = 'I told myself I would hold firm on the limits that matter.'
+    long_goal = (
+        'You seem to care about real limits, and it seemed like you were trying to '
+        'show your limits because you hold firm on what matters most.'
+    )
+    assert goal_phrase_problem(long_goal, quote)
+    page = assemble_personal_bullets(
+        [{'behavior': long_goal, 'quote': quote, 'why': '', 'merged': True, 'passes': True, 'source': 'flash-lite'}],
+        [quote],
+        quote,
+    )
+    assert page['needs_review'] is True
+    assert all('what matters most' not in bullet for bullet in page['bullets'])
+
+    good = 'You seem to care about real limits, and it seemed like you were trying to hold firm now.'
+    why = 'This shows people the limits.'
+    kept = assemble_personal_bullets(
+        [
+            {'behavior': long_goal, 'quote': quote, 'why': '', 'merged': True, 'passes': True, 'source': 'flash-lite'},
+            {'behavior': good, 'quote': quote, 'why': why, 'merged': True, 'passes': True, 'source': 'repair'},
+        ],
+        [quote],
+        quote,
+    )
+    assert 'hold firm now' in kept['bullets'][0]
+    assert 'what matters most' not in kept['bullets'][0]
+    assert 'this shows people the limits' in kept['bullets'][0].lower()
+
+    class Repair:
+        model = 'gemini-3.1-flash-lite'
+
+        def invoke(self, prompt, **kwargs):
+            if prompt.startswith('Write 3'):
+                return type('Reply', (), {'content': __import__('json').dumps({'whys': [
+                    'This sentence keeps going past the twelve word cap for a why line.',
+                    'This shows people the limits.',
+                    'This helps people see it.',
+                ]})})()
+            if prompt.startswith('Rewrite this one sentence. Care'):
+                return type('Reply', (), {'content': good})()
+            return type('Reply', (), {'content': good})()
+
+    fixed = _repair_whys(
+        Repair(),
+        {'bullets': [{'behavior': long_goal, 'quote': 'Q1', 'why': ''}]},
+        [quote],
+        speech=quote,
+    )
+    assert fixed['bullets'][0]['behavior'] == good
+    assert fixed['bullets'][0]['why'] == 'This shows people the limits.'
