@@ -69,8 +69,9 @@ def test_short_mode_skips_the_model_when_there_are_not_enough_words():
     assert story['headline'] == 'You spoke twice, for under a minute.'
     assert '1 big thing' not in story['one_big_thing']
     assert story['one_big_thing'] == ''
-    assert story['why_it_matters'] == ''
-    assert story['yes_but'] == ''
+    assert story['why_it_matters'].startswith('The room can still hear')
+    assert story['yes_but'] == 'The turn was short.'
+    assert story['next_rep'] == ''
     assert 'budget can wait' in story['said_quote']
     assert 'to.' not in story['said_quote']
 
@@ -112,16 +113,12 @@ def test_a_quoted_script_may_say_i_and_one_bad_section_stays_full(tmp_path):
     class Scripted:
         def invoke(self, prompt):
             return type('Reply', (), {'content': json.dumps({
-                'headline': 'You held the budget point.',
-                'one_big_thing': f'You kept the budget in one stretch. You said "{quote}" Will you let the room answer?',
-                'why_it_matters': 'The room could not answer while you were still talking.',
+                'character': 'You seem to care about the budget.',
+                'character_quote': 'Q1',
+                'goal': 'It seemed like you were trying to hold the budget point.',
+                'challenge': 'The room waited while you kept going.',
+                'why_it_matters': 'The room could not move on while the budget was still open.',
                 'yes_but': 'The point was clear. It left no gap for a reply.',
-                'next_rep': 'Say: "I would ask Leslie, what would you add?"',
-                'number_lines': [
-                    'You spoke for 21% of the hour. The even split is 14%.',
-                    'You asked 1 question. The typical person asked 1.',
-                    'You took 6 turns. The room median was 6 turns.',
-                ],
                 'said_quote': second,
             })})()
 
@@ -131,7 +128,8 @@ def test_a_quoted_script_may_say_i_and_one_bad_section_stays_full(tmp_path):
         progress_dir=tmp_path,
     )
     assert story['short_mode'] is False
-    assert story['next_rep'] == 'Ask 1 question before you add a point.'
+    assert story['next_rep'] == ''
+    assert story['goal'].startswith('It seemed like you were trying to ')
     saved = json.loads((tmp_path / 'checkpoints.json').read_text(encoding='utf-8'))
     assert saved[0]['raw']
     assert 'unquoted first-person' not in ' '.join(saved[0]['reasons'])
@@ -210,7 +208,9 @@ def test_a_garbled_next_rep_and_a_label_headline_fail():
         'said_quote': '',
     }, [], set(), 'budget')
     assert any('generic' in item for item in problems.get('why_it_matters', []))
-    assert any('script' in item for item in problems.get('next_rep', []))
+    from lib.personal_narrative import advice_problems
+
+    assert advice_problems('What if you stopped and asked who else should speak?')
     script = suggested_next_rep(
         [{'text': 'The work is very intimidating to begin now for a new team today.', 'start': 0, 'end': 70000}],
         {'share': 6, 'speaker_count': 6, 'questions': 0},
@@ -278,14 +278,14 @@ def test_personal_model_404_falls_back_to_flash_lite(monkeypatch, caplog):
         rows.append({**row, 'text': f"{row['text']} {row['text']}", 'end': row['start'] + 70000})
     transcript = {'utterances': rows}
     quotes = candidate_quotes([row['text'] for row in rows])
-    moment = moment_word(quotes, rows)
+    moment_word(quotes, rows)
     payload = {
-        'headline': 'You held the budget point.',
-        'one_big_thing': 'You kept the point in one stretch. What if you stopped and asked who had tried that?',
-        'one_big_thing_quote': 'Q1',
-        'why_it_matters': f'The room heard {moment} and could not answer while you kept going.',
+        'character': 'You seem to care about the budget.',
+        'character_quote': 'Q1',
+        'goal': 'It seemed like you were trying to hold the budget point.',
+        'challenge': 'The room waited while you kept going.',
+        'why_it_matters': 'The room could not move on while the budget was still open.',
         'yes_but': 'The point was clear. It left no gap for a reply.',
-        'next_rep': f'Say: "I will stop after one point about {moment}, then ask who has tried that."',
         'said_quote': 'Q2',
     }
 

@@ -929,7 +929,8 @@ def test_annie_like_seven_person_report_compacts_a_thin_last_page(tmp_path):
     assert fitted.page_fill_ratios()[-1] >= 0.15
 
 
-def test_personal_layout_fits_two_pages_and_keeps_the_doshas_line(tmp_path):
+def test_personal_layout_fits_two_pages_and_keeps_the_doshas_line(tmp_path, monkeypatch):
+    monkeypatch.setenv('PERSONAL_NEXT_REP', 'on')
     from pypdf import PdfReader
 
     from lib.pdf_functions import MM_PDF

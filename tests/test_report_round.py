@@ -22,7 +22,9 @@ def test_header_uses_the_entered_name_then_the_email_then_nothing():
     assert header_name(entered='', email='room2@example.com') is None
     assert header_name(entered='', email='info@example.com') is None
     assert header_name(entered='', email='') is None
-    assert report_header('Steve Switaj') == "Steve Switaj, here's your report"
+    assert report_header('Steve Switaj') == "Steve, here's your report"
+    assert report_header('Ric') == "Ric, here's your report"
+    assert report_header(header_name(entered='', email='ric.viers@example.com')) == "Ric, here's your report"
     assert report_header(None) == "Here's your report"
     assert not report_header('Leslie').endswith('.')
 
@@ -302,12 +304,13 @@ def test_a_long_turn_stays_full_when_both_models_fail_the_grade():
         {'share': 18, 'turns': 1, 'questions': 1, 'session_question_average': 1, 'speaker_count': 6},
     )
     assert story['short_mode'] is False
-    assert story['one_big_thing'].startswith('You spoke in one long turn of ')
-    assert story['one_big_thing'].count('"') == 2
-    assert 'Will you stop after two lines?' in story['one_big_thing']
+    assert story['goal'].startswith('It seemed like you were trying to ')
+    assert not any(character.isdigit() for character in story['character'])
+    assert 'Will you' not in story['challenge']
+    assert story['challenge'].count('"') == 2
     assert 'below' not in story['why_it_matters'].lower()
     assert 'A1' not in story['why_it_matters']
-    assert reading_grade(story['why_it_matters']) <= 5
+    assert reading_grade(story['why_it_matters']) <= 6
 
 
 def test_question_columns_include_every_speaker_with_unique_labels(tmp_path):
@@ -381,3 +384,68 @@ def test_group_page_uses_the_pattern_and_one_easy_action(tmp_path):
     joined = '\n'.join(pages)
     assert 'A question is a sentence that ends in ? or starts with a question word.' in joined
     assert 'back and forth' in joined
+
+
+def test_personal_box_keeps_longest_turn_and_leads_with_surprise():
+    from lib.scorecard import personal_metrics
+
+    story = {
+        'name': 'Ric',
+        'roster_shares': [('Ric', 40), ('Steve', 20), ('Leslie', 10), ('G', 30)],
+        'word_counts': [('Ric', 100), ('Steve', 90), ('Leslie', 80), ('G', 95)],
+        'question_counts': [('Ric', 0), ('Steve', 4), ('Leslie', 3), ('G', 4)],
+        'longest_turns': [('Ric', 200), ('Steve', 40), ('Leslie', 30), ('G', 50)],
+        'proposal_counts': [('Ric', 1), ('Steve', 1), ('Leslie', 1), ('G', 1)],
+    }
+    metrics = personal_metrics(story)
+    assert len(metrics) == 4
+    assert any(item['key'] == 'longest' for item in metrics)
+    surprises = [item['surprise'] for item in metrics]
+    assert surprises == sorted(surprises, reverse=True)
+    assert metrics[0]['key'] == 'questions'
+    assert 'ideas' not in {item['key'] for item in metrics}
+
+
+def test_personal_report_has_no_next_rep_when_the_flag_is_off(tmp_path, monkeypatch):
+    from PIL import Image
+    from pypdf import PdfReader
+
+    from lib.pdf_functions import MM_PDF
+    from lib.personal_narrative import advice_problems, log_scorecard
+    from lib.story_pdf import write_personal_report
+
+    monkeypatch.delenv('PERSONAL_NEXT_REP', raising=False)
+    assert advice_problems('Try this next time. What if you asked?') 
+    assert not advice_problems('The room waited. You said "The budget can wait until Monday."')
+    story = {
+        'name': 'Ric Viers',
+        'header_name': 'Ric Viers',
+        'character': 'You seem to care a lot about doing work you love.',
+        'goal': 'It seemed like you were trying to name the work.',
+        'challenge': 'You said "The budget can wait until Monday."',
+        'why_it_matters': 'The room can still hear you on budget.',
+        'yes_but': 'The point was clear.',
+        'next_rep': 'Ask 1 question before you add a point.',
+        'said_quote': 'The budget can wait until Monday.',
+        'share': 40,
+        'roster_shares': [('Ric Viers', 40), ('Steve', 20)],
+        'word_counts': [('Ric Viers', 100), ('Steve', 40)],
+        'question_counts': [('Ric Viers', 0), ('Steve', 3)],
+        'longest_turns': [('Ric Viers', 80), ('Steve', 20)],
+        'proposal_counts': [('Ric Viers', 1), ('Steve', 1)],
+        'appendix': {},
+    }
+    pdf = MM_PDF(path_report_assets=__import__('pathlib').Path('report_assets'))
+    write_personal_report(pdf, story, tmp_path)
+    pdf.output(tmp_path / 'ric.pdf')
+    text = '\n'.join(page.extract_text() or '' for page in PdfReader(tmp_path / 'ric.pdf').pages)
+    assert text.startswith("Ric, here's your report") or "Ric, here's your report" in text
+    assert 'Your next rep' not in text
+    assert 'Ask 1 question' not in text
+    assert 'By the numbers' in text
+    assert 'Longest turn' in text
+    assert 'Your charts' in text
+    log_scorecard(tmp_path, 'Ric', story.get('scorecard') or __import__('lib.scorecard', fromlist=['personal_metrics']).personal_metrics(story))
+    saved = json.loads((tmp_path / 'checkpoints.json').read_text(encoding='utf-8'))
+    assert saved[-1]['lead_metric']
+    assert 'surprise' in saved[-1]

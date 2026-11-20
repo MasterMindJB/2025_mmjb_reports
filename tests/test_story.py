@@ -86,11 +86,13 @@ def test_personal_report_section_order(tmp_path):
     from pypdf import PdfReader
 
     text = '\n'.join(page.extract_text() or '' for page in PdfReader(tmp_path / 'Alex Rivera.pdf').pages)
-    order = ('By the numbers', '1 big thing', 'Why it matters', 'What you said', 'Yes, but', 'Your next rep')
+    assert "Alex, here's your report" in text
+    order = ('By the numbers', 'Your charts', 'What you said')
     positions = [text.find(heading) for heading in order]
     assert all(position != -1 for position in positions), text
     assert positions == sorted(positions)
-    assert text.find('Your next rep') < text.find('Appendix: style lenses')
+    assert 'Your next rep' not in text
+    assert '1 big thing' not in text
     assert 'Enneagram' not in text
     assert 'Doshas' not in text
     assert 'AMASE' in text

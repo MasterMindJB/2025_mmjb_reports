@@ -76,9 +76,10 @@ def header_name(*, entered: str = '', email: str = '', fallback: str = '') -> st
 
 
 def report_header(name: str | None) -> str:
-    """The only top line. The model does not write it."""
-    if name:
-        return f"{name}, here's your report"
+    """The only top line. First name only. The model does not write it."""
+    cleaned = re.sub(r'\s+', ' ', (name or '').strip())
+    if cleaned:
+        return f"{cleaned.split()[0]}, here's your report"
     return "Here's your report"
 
 

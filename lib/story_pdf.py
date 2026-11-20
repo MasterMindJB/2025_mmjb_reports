@@ -1017,6 +1017,51 @@ def _short_headline(share: int, role: str) -> str:
     return 'You set the point. Name it.'
 
 
+def _observed(text: str, observation_only: bool) -> str:
+    """Drop a prescriptive sentence when the next-rep flag is off."""
+    if not observation_only:
+        return _without_next_time(text)
+    from lib.personal_narrative import advice_problems
+
+    kept = []
+    for sentence in re.split(r'(?<=[.!?])\s+', str(text or '').strip()):
+        if sentence and not advice_problems(sentence):
+            kept.append(sentence.strip())
+    return ' '.join(kept)
+
+
+def _metric_box(pdf, metrics: list[dict]) -> None:
+    """One thin box. A short name, the number, and one gray grade. No fill."""
+    metrics = list(metrics or [])[:4]
+    if not metrics:
+        return
+    _flush_heading(pdf)
+    height = 34
+    if _remaining(pdf) < height + 4:
+        pdf.add_page()
+    y = pdf.get_y()
+    pdf.set_draw_color(197, 205, 216)
+    pdf.set_line_width(0.2)
+    pdf.rect(pdf.l_margin, y, pdf.epw, height)
+    width = pdf.epw / len(metrics)
+    for index, metric in enumerate(metrics):
+        x = pdf.l_margin + 1.5 + index * width
+        pdf.set_xy(x, y + 2)
+        pdf.set_text_color(120, 128, 142)
+        pdf.set_font('Poppins', '', 8)
+        pdf.multi_cell(w=width - 3, h=3.2, text=str(metric.get('label') or ''), align='L')
+        pdf.set_xy(x, y + 12)
+        pdf.set_text_color(28, 44, 91)
+        pdf.set_font('Poppins', 'b', 16)
+        pdf.cell(w=width - 3, h=8, text=str(metric.get('number') or ''), align='L')
+        pdf.set_xy(x, y + 21)
+        pdf.set_text_color(120, 128, 142)
+        pdf.set_font('Poppins', '', 7)
+        pdf.multi_cell(w=width - 3, h=3.2, text=str(metric.get('grade') or ''), align='L')
+    pdf.set_y(y + height + 3)
+    pdf.set_text_color(20, 33, 74)
+
+
 def _clear_footer(pdf) -> None:
     """Keep the last line above the footer, which is drawn at 15mm."""
     pdf.set_auto_page_break(auto=True, margin=18)
@@ -1056,42 +1101,42 @@ def write_personal_report(
     pdf.multi_cell(w=0, h=10, text=header, align='L')
     pdf.ln(1)
     pdf.set_text_color(20, 33, 74)
-    pdf.set_font('Poppins', 'b', 13)
-    pdf.multi_cell(w=0, h=7, text=_finding_line(story), align='L')
-    pdf.ln(1)
-    if story.get('opening'):
-        _body(pdf, str(story['opening']))
-    _heading(pdf, 'By the numbers')
-    _score_tiles(pdf, _personal_tiles(story))
-    action = str(story.get('action') or story.get('next_rep') or story.get('one_thing') or '')
-    raw_big = story.get('one_big_thing') or ''
-    if story.get('short_mode') and story.get('said_quote'):
-        spoken = str(story['said_quote']).strip().strip('"').strip('“”')
-        raw_big = f'You said "{spoken}"' if spoken else raw_big
-    big = _without_next_time(raw_big or story.get('drama') or '')
-    if big:
-        _heading(pdf, '1 big thing')
-        _body(pdf, big)
+    from lib.personal_narrative import personal_next_rep_enabled
+    from lib.scorecard import personal_metrics
+
+    observe = not personal_next_rep_enabled()
+    character = _observed(story.get('character') or '', observe)
+    goal = str(story.get('goal') or '')
+    if not goal.startswith('It seemed like you were trying to '):
+        goal = ''
+    challenge = _observed(story.get('challenge') or '', observe)
+    for line in (character, goal, challenge):
+        if line:
+            _body(pdf, line)
     dropped = set(story.get('fallback_sections') or [])
     why_text = story.get('why_it_matters') or ''
     if not why_text and 'why_it_matters' not in dropped:
-        why_text = story.get('goal') or ''
-    why_text = _without_next_time(why_text)
+        why_text = ''
+    why_text = _observed(why_text, observe)
     if why_text:
         _heading(pdf, 'Why it matters')
         _body(pdf, why_text)
+    _heading(pdf, 'By the numbers')
+    _metric_box(pdf, story.get('scorecard') or personal_metrics(story))
     _heading(pdf, 'Your charts')
     _personal_charts(pdf, story, chart_dir)
     _heading(pdf, 'What you said')
     if story.get('said_quote'):
         _pull_quote(pdf, str(story['said_quote']))
-    caveat_text = '' if 'yes_but' in dropped else (story.get('yes_but') or story.get('challenge') or '')
-    caveat_text = _without_next_time(caveat_text)
+    caveat_text = '' if 'yes_but' in dropped else (story.get('yes_but') or '')
+    caveat_text = _observed(caveat_text, observe)
     if caveat_text:
         _heading(pdf, 'Yes, but')
         _body(pdf, caveat_text)
-    _heading(pdf, 'Your next rep')
-    _body(pdf, action)
+    if personal_next_rep_enabled():
+        action = str(story.get('action') or story.get('next_rep') or story.get('one_thing') or '')
+        _heading(pdf, 'Your next rep')
+        _body(pdf, action)
     appendix = [f'{name}: {line}' for name, line in (story.get('appendix') or {}).items()]
     _appendix_block(pdf, appendix, appendix_font, columns)
 

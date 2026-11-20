@@ -433,7 +433,7 @@ def personal_story(
         from lib.story_render import computed_signature
 
         cards = computed_signature(bigram, int(signature.get('count') or 0), phrase_quotes)
-    return {
+    built = {
         'name': name,
         'headline': headline,
         'character_body': character_body,
@@ -476,9 +476,17 @@ def personal_story(
         'proposal_counts': list(proposal_counts or []),
         'header_name': _header_for(info),
         'action': (draft or {}).get('action') or _personal_action(share_pct, speaker_count, question_count, int(words), turn_count),
-        'opening': (draft or {}).get('opening') or '',
+        'opening': '',
+        'character': (draft or {}).get('character') or '',
         'appendix': _appendix(framework, name),
     }
+    from lib.personal_narrative import log_scorecard
+    from lib.scorecard import personal_metrics
+
+    built['scorecard'] = personal_metrics(built)
+    built['speaker_count'] = speaker_count
+    log_scorecard((draft or {}).get('_progress_dir'), label, built['scorecard'])
+    return built
 
 
 def _header_for(info: dict) -> str | None:

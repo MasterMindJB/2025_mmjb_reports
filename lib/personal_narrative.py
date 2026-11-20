@@ -208,36 +208,37 @@ def computed_numbers(transcript, label: str, stats: dict) -> tuple[list[str], se
     return lines, allowed
 
 
+def personal_next_rep_enabled() -> bool:
+    """Off for this Full Sail run. Set PERSONAL_NEXT_REP=on to bring the section back."""
+    return os.getenv('PERSONAL_NEXT_REP', 'off').strip().lower() in {'1', 'on', 'true', 'yes'}
+
+
 def _prompt(name: str, lines: list[str], quotes: list[str], failures: list[str], phrase: str, next_rep: str, units: list[dict] | None = None) -> str:
     quote_block = '\n'.join(f'Q{index + 1}: {quote}' for index, quote in enumerate(quotes)) or 'None.'
-    number_block = '\n'.join(f'- {line}' for line in lines)
     retry = ''
     if failures:
         retry = 'The last draft failed:\n' + '\n'.join(f'- {item}' for item in failures) + '\n'
+    del name, lines, phrase, next_rep
     return (
         f'{PROMPT_MARK}\n'
-        'Write the personal report in second person. Do not write the person\'s name. Say you.\n'
-        'Do not write a headline. Do not write how often a word or phrase was said. '
-        'style_id is only an id from the list, such as U1.\n'
-        'one_big_thing: one behavior in plain words, then a question that invites a change. '
-        'Do not type a quote. Put the id in one_big_thing_quote, such as "Q2". Code inserts the words.\n'
-        'Good: You told one long story with lots of detail. What if you stopped after the NBC example and asked who had tried that?\n'
-        'Good: You answered and then kept going. What if you stopped after one point and asked who would add to it?\n'
-        'Bad: You repeated the phrase a niche. Who can speak Farsi?\n'
-        'Bad: Here is your personal report. You said a lot. Who else should speak?\n'
-        'why_it_matters: a specific consequence of that behavior, then the action below. '
-        'Not generic praise such as "Your voice brings good ideas to the team."\n'
-        'yes_but: one caveat. Do not add a separate next step. Do not say most of or almost all '
-        'unless the share is over 50%.\n'
-        'action_id must be A1. Do not write the action text.\n'
-        'said_quote: a quote id such as "Q2", or "" if there is no Q2. Do not retype the words.\n'
-        'Use at most one number in a sentence. Never name a metric.\n'
+        'Write in second person. Do not write the person\'s name. Say you. Do not give advice.\n'
+        'Do not write a headline, a count, or a next step.\n'
+        'character: one sentence on what you seem to care about. No digits and no counts. '
+        'Ground it in a quote. Put that quote id in character_quote, such as "Q1". Do not retype the quote.\n'
+        'Good: You seem to care a lot about doing work you love.\n'
+        'Bad: You said "life" 5 times.\n'
+        'goal: one sentence that starts exactly "It seemed like you were trying to ".\n'
+        'challenge: one thing that happened. No advice, no question, no "what if", no "you should". '
+        'If you use a quote, put its id in challenge_quote. Do not retype it.\n'
+        'why_it_matters: one specific consequence of this pattern, using a word from their quote. '
+        'Do not say below, above, next page, or step below. No generic praise.\n'
+        'yes_but: one observed caveat. No advice and no next step.\n'
+        'said_quote: a quote id such as "Q2", or "" if there is no Q2.\n'
         f'{retry}'
-        f'NUMBERS\n{number_block}\n'
         f'QUOTES\n{quote_block}\n'
         f'STYLE UNITS\n{_style_block(units)}\n'
-        f'ACTION\nA1: {next_rep}\n'
-        'Return JSON only with keys one_big_thing, one_big_thing_quote, why_it_matters, yes_but, said_quote, style_id, action_id.\n'
+        'Return JSON only with keys character, character_quote, goal, challenge, challenge_quote, '
+        'why_it_matters, yes_but, said_quote.\n'
     )
 
 
@@ -279,16 +280,37 @@ def _place_quote(text: str, quote: str) -> str:
     return f'{sentences[0]} {spoken} ' + ' '.join(sentences[1:])
 
 
+def advice_problems(text: str) -> list[str]:
+    """Advice, a question, or a suggestion. Quoted speech is not judged."""
+    plain = _outside_quotes(text)
+    reasons = []
+    if '?' in plain:
+        reasons.append('a question is advice here')
+    if re.search(r'\b(what if|next time|you should|you could|you might|ought|try to|try this|will you|who will)\b', plain, re.I):
+        reasons.append('this tells the person what to do')
+    if re.search(r'(?:^|[.!?]\s+)(ask|stop|name|come|put|give|let|invite|try|hand|pause)\b', plain, re.I):
+        reasons.append('an imperative is advice here')
+    return reasons
+
+
 def apply_quote_ids(payload: dict, quotes: list[str]) -> dict:
     """Replace quote ids with the candidate text. Drop anything the model retyped."""
     data = dict(payload or {})
-    big = _quote_by_id(str(data.get('one_big_thing_quote') or ''), quotes, 0)
     said_default = 1 if len(quotes) > 1 else 0
     said = _quote_by_id(str(data.get('said_quote') or ''), quotes, said_default if quotes else -1)
-    data['one_big_thing'] = _place_quote(str(data.get('one_big_thing') or ''), big) if big else _strip_typed_quotes(str(data.get('one_big_thing') or ''))
+    challenge_quote = _quote_by_id(str(data.get('challenge_quote') or ''), quotes, -1)
+    data['character'] = _strip_typed_quotes(str(data.get('character') or ''))
+    data['goal'] = _strip_typed_quotes(str(data.get('goal') or ''))
+    challenge = _strip_typed_quotes(str(data.get('challenge') or ''))
+    if challenge_quote:
+        challenge = f'{challenge} You said "{challenge_quote}"'.strip()
+    data['challenge'] = challenge
     data['said_quote'] = said
     for key in ('why_it_matters', 'yes_but'):
         data[key] = _strip_typed_quotes(str(data.get(key) or ''))
+    if data.get('one_big_thing'):
+        big = _quote_by_id(str(data.get('one_big_thing_quote') or ''), quotes, 0)
+        data['one_big_thing'] = _place_quote(str(data.get('one_big_thing') or ''), big) if big else _strip_typed_quotes(str(data.get('one_big_thing') or ''))
     return data
 
 
@@ -315,6 +337,11 @@ def _quote_is_verbatim(span: str, quotes: list[str]) -> bool:
     return any(cleaned == quote or cleaned in quote for quote in quotes)
 
 
+def _content_words(text: str) -> list[str]:
+    skip = {'about', 'their', 'there', 'which', 'would', 'could', 'should', 'while', 'still', 'being'}
+    return [word.lower() for word in re.findall(r"[A-Za-z']{5,}", text or '') if word.lower() not in skip]
+
+
 def _for_grade(text: str) -> str:
     """The mandated header is not part of the reading-grade check."""
     body = re.sub(r"^[^.\n]{0,80}, here's your report\s*", '', str(text or ''), count=1)
@@ -334,22 +361,38 @@ def section_problems(payload: dict, quotes: list[str], allowed: set[str], moment
         found.setdefault(name, []).append(reason)
 
     fields = {
-        'one_big_thing': str(payload.get('one_big_thing') or ''),
+        'character': str(payload.get('character') or ''),
+        'goal': str(payload.get('goal') or ''),
+        'challenge': str(payload.get('challenge') or ''),
         'why_it_matters': str(payload.get('why_it_matters') or ''),
         'yes_but': str(payload.get('yes_but') or ''),
-        'next_rep': str(payload.get('next_rep') or ''),
     }
-    if '?' not in _outside_quotes(fields['one_big_thing']):
-        add('one_big_thing', 'one_big_thing needs a question')
-    elif not re.search(r'\b(what if|will you|who will|stop|ask|tried|change)\b', fields['one_big_thing'], re.I):
-        add('one_big_thing', 'the question must invite a change in what you do')
-    if re.search(r'repeated the phrase|here is your personal report', fields['one_big_thing'], re.I):
-        add('one_big_thing', 'one_big_thing must describe a behavior, not a label')
+    if personal_next_rep_enabled():
+        fields['next_rep'] = str(payload.get('next_rep') or '')
+    character = fields['character']
+    if not character.strip():
+        add('character', 'character is missing')
+    elif re.search(r'\d|%|\b(times|words|turns|percent)\b', _outside_quotes(character), re.I):
+        add('character', 'character has a count')
+    token = str(payload.get('character_quote') or '').strip()
+    if quotes and not re.fullmatch(r'Q[1-3]', token, re.I):
+        add('character', 'character must point at a quote id')
+    elif quotes and re.fullmatch(r'Q[1-3]', token, re.I) and int(token[1]) > len(quotes):
+        add('character', 'character quote id is out of range')
+    if not fields['goal'].startswith('It seemed like you were trying to '):
+        add('goal', 'goal must start with the set phrase')
+    for reason in advice_problems(fields['challenge']):
+        add('challenge', reason)
+    for reason in advice_problems(fields['yes_but']):
+        add('yes_but', reason)
     why = fields['why_it_matters'].lower()
-    if any(phrase in why for phrase in ('your voice brings', 'good ideas', 'brings good ideas', 'to the team')):
+    if any(phrase in why for phrase in ('your voice brings', 'good ideas', 'brings good ideas', 'to the team', 'your aim')):
         add('why_it_matters', 'why_it_matters is generic praise')
-    if re.search(r'\b(below|above|next page)\b', why):
+    if re.search(r'\b(below|above|next page|step below)\b', why):
         add('why_it_matters', 'why_it_matters points at the page')
+    heard = _content_words(str(payload.get('said_quote') or ''))
+    if heard and not any(word in why for word in heard):
+        add('why_it_matters', 'why_it_matters does not use this person\'s words')
     if share is not None and re.search(r'\b(most of|almost all)\b', fields['yes_but'], re.I) and int(share) <= 50:
         add('yes_but', 'yes_but says most of the talk, but the share is not a majority')
     for name, text in fields.items():
@@ -375,16 +418,17 @@ def section_problems(payload: dict, quotes: list[str], allowed: set[str], moment
             quoted = span[0] or span[1]
             if not _quote_is_verbatim(quoted, quotes):
                 add(name, f'{name} quotes text that is not one verbatim sentence')
-    next_rep = fields['next_rep']
-    if next_rep and (
-        re.search(r'\bask about \w+\b', next_rep, re.I)
-        or (not _IMPERATIVE.search(next_rep) and 'next time' not in next_rep.lower())
-        or len(_words(next_rep)) < 8
-    ):
-        add('next_rep', 'next_rep must be a full script line')
-    next_numbers = _numbers_outside(next_rep)
-    if any(number not in allowed for number in next_numbers):
-        add('next_rep', 'next_rep uses a number that was not computed')
+    if personal_next_rep_enabled():
+        next_rep = fields.get('next_rep') or ''
+        if next_rep and (
+            re.search(r'\bask about \w+\b', next_rep, re.I)
+            or (not _IMPERATIVE.search(next_rep) and 'next time' not in next_rep.lower())
+            or len(_words(next_rep)) < 8
+        ):
+            add('next_rep', 'next_rep must be a full script line')
+        next_numbers = _numbers_outside(next_rep)
+        if any(number not in allowed for number in next_numbers):
+            add('next_rep', 'next_rep uses a number that was not computed')
     said = str(payload.get('said_quote') or '').strip().strip('"').strip('“”')
     expected = quotes[1] if len(quotes) > 1 else ''
     if said != expected:
@@ -420,15 +464,16 @@ def short_story(name: str, rows: list[dict], lines: list[str], quotes: list[str]
         'short_mode': True,
         'headline': speech_headline(rows),
         'one_big_thing': '',
-        'why_it_matters': '',
-        'yes_but': '',
-        'next_rep': step,
+        'character': character_template(),
+        'why_it_matters': why_template(rows, stats, quote),
+        'yes_but': 'The turn was short.',
+        'next_rep': step if personal_next_rep_enabled() else '',
         'numbers': lines,
         'said_quote': quote,
         'big_quote': quote,
         'drama': quote,
-        'goal': '',
-        'challenge': '',
+        'goal': goal_template(),
+        'challenge': challenge_template([quote] if quote else []),
         'one_thing': step,
         'why': '',
         'turns': count,
@@ -438,23 +483,26 @@ def short_story(name: str, rows: list[dict], lines: list[str], quotes: list[str]
 
 
 def full_story(payload: dict, lines: list[str], name: str) -> dict:
-    one_big = str(payload.get('one_big_thing') or '').strip()
+    character = str(payload.get('character') or '').strip()
+    goal = str(payload.get('goal') or '').strip()
+    challenge = str(payload.get('challenge') or '').strip()
     why = str(payload.get('why_it_matters') or '').strip()
     yes_but = str(payload.get('yes_but') or '').strip()
-    next_rep = str(payload.get('next_rep') or '').strip()
+    next_rep = str(payload.get('next_rep') or '').strip() if personal_next_rep_enabled() else ''
     return {
         'short_mode': False,
         'headline': str(payload.get('headline') or '').strip(),
-        'one_big_thing': one_big,
+        'character': character,
+        'one_big_thing': '',
         'why_it_matters': why,
         'yes_but': yes_but,
         'next_rep': next_rep,
         'numbers': lines,
         'said_quote': str(payload.get('said_quote') or '').strip().strip('"'),
         'big_quote': '',
-        'drama': one_big,
-        'goal': why,
-        'challenge': yes_but,
+        'drama': character,
+        'goal': goal,
+        'challenge': challenge,
         'one_thing': next_rep,
         'why': '',
         'fallback_sections': [],
@@ -463,13 +511,20 @@ def full_story(payload: dict, lines: list[str], name: str) -> dict:
 
 
 def _fallback_line(section: str, rows, lines, quotes, stats, moment: str) -> str:
+    del lines
     if section == 'headline':
         return speech_headline(rows)
+    if section == 'character':
+        return character_template()
+    if section == 'goal':
+        return goal_template()
+    if section == 'challenge':
+        return challenge_template(quotes)
     if section == 'why_it_matters':
-        return why_template(rows, stats)
-    if section in {'yes_but', 'headline'}:
-        return ''
-    if section == 'next_rep':
+        return why_template(rows, stats, quotes[0] if quotes else '')
+    if section == 'yes_but':
+        return 'The turn still left one thing unsaid.'
+    if section == 'next_rep' and personal_next_rep_enabled():
         return suggested_next_rep(rows, stats, moment)
     if section == 'said_quote':
         return quotes[1] if len(quotes) > 1 else (quotes[0] if quotes else '')
@@ -695,73 +750,49 @@ def _simplify(llm, text: str) -> str:
         return text
 
 
-def deterministic_big_thing(rows: list[dict], quotes: list[str], stats: dict) -> str:
-    """Pattern, a code-inserted quote, and one question. Used when both models fail the grade."""
-    words = word_total(rows)
-    turns = len(rows)
-    share = int(stats.get('share') or 0)
-    speakers = max(int(stats.get('speaker_count') or 1), 1)
-    questions = int(stats.get('questions') or 0)
-    ideas = stats.get('ideas')
-    if turns <= 2 and words >= 60:
-        fact = f'You spoke in one long turn of {words} words.'
-        question = 'Will you stop after two lines?'
-    elif share + 2 < room_average(speakers):
-        fact = f'You spoke for {share}% of the talk.'
-        question = 'Will you come in sooner?'
-    elif questions == 0:
-        fact = 'You asked no questions.'
-        question = 'Will you ask one question?'
-    elif ideas == 0:
-        fact = 'You put no idea forward.'
-        question = 'Will you add one idea?'
-    else:
-        fact = f'You took {turns} turns.'
-        question = 'Will you ask one question?'
+def character_template() -> str:
+    return 'You seem to care about the work in front of you.'
+
+
+def goal_template() -> str:
+    return 'It seemed like you were trying to make one point.'
+
+
+def challenge_template(quotes: list[str]) -> str:
     spoken = str(quotes[0] if quotes else '').strip().strip('"').strip('“”')
-    parts = [fact]
     if spoken:
-        parts.append(f'You said "{spoken}"')
-    parts.append(question)
-    return ' '.join(parts)
+        return f'You said "{spoken}"'
+    return 'You held one turn and then stopped.'
 
 
-def why_template(rows: list[dict], stats: dict) -> str:
+def why_template(rows: list[dict], stats: dict, quote: str = '') -> str:
     """A grade-5 line that does not point at the page."""
-    words = word_total(rows)
-    turns = len(rows)
-    share = int(stats.get('share') or 0)
-    speakers = max(int(stats.get('speaker_count') or 1), 1)
-    if turns <= 2 and words >= 60:
-        return 'A long turn leaves no room for a reply.'
-    if share + 2 < room_average(speakers):
-        return 'A short share is easy to miss.'
-    if int(stats.get('questions') or 0) == 0:
-        return 'A point with no question is hard to join.'
-    return 'The room needs a gap to answer.'
+    del rows, stats
+    words = _content_words(quote)
+    if words:
+        return f'The room can still hear you on {words[0]}.'
+    return 'The room can still hear that moment.'
 
 
 def _templated_story(name, rows, lines, quotes, stats, step, units, best_payload, best_found) -> dict:
-    """Full report. 1 big thing is the template. Why is the model line only when it still passes."""
+    """Full report from the observation templates. No next step."""
     payload = dict(best_payload or {})
-    payload['one_big_thing'] = deterministic_big_thing(rows, quotes, stats)
+    payload['character'] = character_template()
+    payload['character_quote'] = 'Q1' if quotes else ''
+    payload['goal'] = goal_template()
+    payload['challenge'] = challenge_template(quotes)
+    payload['one_big_thing'] = ''
     why = _strip_ids(str(payload.get('why_it_matters') or ''))
-    why_problems = section_problems(
-        {**payload, 'why_it_matters': why, 'one_big_thing': 'You spoke once. Will you ask?'},
-        quotes,
-        set(),
-        '',
-        int(stats.get('share') or 0),
-    )
-    if why_problems.get('why_it_matters') or not why:
-        why = why_template(rows, stats)
+    if not why or advice_problems(why) or re.search(r'\b(below|above|next page|step below)\b', why, re.I):
+        why = why_template(rows, stats, quotes[0] if quotes else '')
     payload['why_it_matters'] = why
-    payload['yes_but'] = '' if (best_found or {}).get('yes_but') else str(payload.get('yes_but') or '')
+    yes_but = '' if (best_found or {}).get('yes_but') else str(payload.get('yes_but') or '')
+    payload['yes_but'] = '' if advice_problems(yes_but) else yes_but
     payload['said_quote'] = quotes[1] if len(quotes) > 1 else (quotes[0] if quotes else '')
     story = _finish(full_story(payload, lines, name), step, units, str(payload.get('style_id') or ''))
     story['short_mode'] = False
-    story['fallback_sections'] = ['one_big_thing']
-    story['rejection_reasons'] = {'one_big_thing': '; '.join((best_found or {}).get('one_big_thing') or [])}
+    story['fallback_sections'] = ['character']
+    story['rejection_reasons'] = {'character': '; '.join((best_found or {}).get('character') or [])}
     return story
 
 
@@ -790,7 +821,7 @@ def build_personal_story(llm, transcript, label: str, info: dict, stats: dict, p
     if needs_short_report(rows):
         story = short_story(name, rows, lines, quotes, stats)
         _attach_style(story, units, units[0]['id'] if units else '')
-        return story
+        return _stamp(story, progress_dir)
     failures: list[str] = []
     best_payload = None
     best_found: dict[str, list[str]] = {'one_big_thing': ['response was not JSON']}
@@ -841,29 +872,29 @@ def build_personal_story(llm, transcript, label: str, info: dict, stats: dict, p
         if payload is not None and not reasons:
             story = _finish(full_story(payload, lines, name), step, units, pick)
             story['fallback_sections'] = []
-            return story
+            return _stamp(story, progress_dir)
         if payload is not None and (best_payload is None or len(found) < len(best_found)):
             best_payload = payload
             best_found = found
         failures = reasons
-    if best_payload is None or best_found.get('one_big_thing'):
+    if best_payload is None or best_found.get('character') or best_found.get('goal'):
         logging.warning('personal narrative used the code template: %s', failures)
-        return _templated_story(name, rows, lines, quotes, stats, step, units, best_payload, best_found)
+        return _stamp(_templated_story(name, rows, lines, quotes, stats, step, units, best_payload, best_found), progress_dir)
     patched = dict(best_payload)
     replaced = []
     for section, reasons in best_found.items():
-        if section == 'one_big_thing' or not reasons:
+        if section in {'one_big_thing', 'character', 'goal'} or not reasons:
             continue
         patched[section] = _fallback_line(section, rows, lines, quotes, stats, moment)
         replaced.append(section)
     story = full_story(patched, lines, name)
     story['fallback_sections'] = replaced
     story['rejection_reasons'] = {section: '; '.join(best_found[section]) for section in replaced}
-    story['next_rep'] = step
-    story['one_thing'] = step
+    story['next_rep'] = step if personal_next_rep_enabled() else ''
+    story['one_thing'] = story['next_rep']
     story['short_mode'] = False
     _attach_style(story, units, str((best_payload or {}).get('style_id') or ''))
-    return story
+    return _stamp(story, progress_dir)
 
 
 def _grade_failures(found: dict) -> bool:
@@ -885,18 +916,38 @@ def _strip_ids(text: str) -> str:
 
 
 def _finish(story: dict, step: str, units: list[dict], pick: str) -> dict:
-    story['next_rep'] = step
-    story['one_thing'] = step
-    for key in ('one_big_thing', 'why_it_matters', 'yes_but', 'next_rep'):
+    story['next_rep'] = step if personal_next_rep_enabled() else ''
+    story['one_thing'] = story['next_rep']
+    for key in ('character', 'goal', 'challenge', 'why_it_matters', 'yes_but', 'next_rep'):
         story[key] = _strip_ids(story.get(key) or '')
     _attach_style(story, units, pick)
     return story
 
 
-def _attach_style(story: dict, units: list[dict], picked: str) -> None:
-    from lib.style_units import chosen_style, opening_line
+def _stamp(story: dict, progress_dir) -> dict:
+    if progress_dir:
+        story['_progress_dir'] = str(progress_dir)
+    return story
 
-    story['opening'] = opening_line(chosen_style(units, picked))
+
+def log_scorecard(progress_dir, label: str, metrics: list[dict]) -> None:
+    """Which metric led, and its surprise, for this person."""
+    if not progress_dir or not metrics:
+        return
+    lead = metrics[0]
+    _record_attempt(progress_dir, label, '', [], {
+        'scorecard': True,
+        'lead_metric': lead['key'],
+        'lead_label': lead['label'],
+        'surprise': lead['surprise'],
+        'metrics': [{'key': item['key'], 'surprise': item['surprise']} for item in metrics],
+    })
+
+
+def _attach_style(story: dict, units: list[dict], picked: str) -> None:
+    from lib.style_units import chosen_style
+
+    story['opening'] = ''
     story['style_unit'] = (chosen_style(units, picked) or {}).get('text') or ''
 
 
@@ -906,7 +957,7 @@ def _scrub_own_name(payload: dict, name: str) -> dict:
         return payload
     data = dict(payload)
     pattern = re.compile(rf'\b{re.escape(name)}\b', re.I)
-    for key in ('one_big_thing', 'why_it_matters', 'yes_but'):
+    for key in ('character', 'goal', 'challenge', 'one_big_thing', 'why_it_matters', 'yes_but'):
         data[key] = pattern.sub('you', str(data.get(key) or ''))
     return data
 
