@@ -703,6 +703,14 @@ def group_story(
         'participation': {'value': participation_pct},
         '_portrait': portrait,
         '_shares': list(shares or []),
+        '_lines': [
+            {
+                'name': row.get('name') or (names or {}).get(row.get('speaker')) or '',
+                'text': str(row.get('text') or ''),
+            }
+            for row in (transcript or {}).get('utterances') or []
+            if str(row.get('text') or '').strip()
+        ],
     }
     last_name = 'the last voice'
     last_line = ''
@@ -753,8 +761,10 @@ def group_story(
     draft = draft or {}
     if draft.get('headline'):
         headline = draft['headline']
+    from lib.story_render import group_big_thing_problems
+
     draft_character = str(draft.get('character') or '')
-    if draft_character and not narrative_problems(draft_character, big=True):
+    if draft_character and not narrative_problems(draft_character, big=True) and not group_big_thing_problems(draft_character):
         character = draft_character
     goal = draft.get('goal') or goal
     challenge = draft.get('challenge') or challenge
@@ -766,17 +776,22 @@ def group_story(
         one_thing = draft_one
     if draft_why and not narrative_problems(draft_why):
         why = draft_why
-    from lib.story_render import recruits_someone_else
+    from lib.story_render import group_big_thing_problems, recruits_someone_else
 
     quiet = _talk_least(shares)
     roster = [str(name) for name, _value in (shares or [])]
     if quiet and recruits_someone_else(character, quiet, roster):
+        character = group_character_copy(facts)
+    if group_big_thing_problems(character):
         character = group_character_copy(facts)
     if quiet and recruits_someone_else(why, quiet, roster):
         why = f'Next time, leave one reply for {quiet}.'
     if draft.get('transitions'):
         transitions = draft['transitions']
     portrait = facts.get('_portrait') or {}
+    from lib.story_render import group_page_headline
+
+    headline = group_page_headline(character, headline)
     return {
         'headline': headline,
         'character': character,

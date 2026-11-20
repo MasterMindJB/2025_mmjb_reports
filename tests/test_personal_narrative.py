@@ -248,12 +248,16 @@ def test_passed_to_keeps_the_full_display_name():
     assert 'Passed to Full 1' not in line
 
 
-def test_personal_call_uses_a_low_thinking_budget():
-    from lib.personal_narrative import THINKING_BUDGET, personal_client_settings
+def test_personal_call_uses_a_low_thinking_level():
+    from lib.personal_narrative import THINKING_REQUEST, personal_client_settings, personal_request
 
     settings = personal_client_settings(type('LLM', (), {'timeout': 30})())
     assert settings['model'] == 'gemini-3.1-flash-lite'
-    assert settings['thinking_budget'] == THINKING_BUDGET == 256
+    assert settings['thinking_level'] == 'low'
+    body = personal_request('Hello')
+    assert body['generationConfig']['thinkingConfig']['thinkingLevel'] == 'low'
+    assert THINKING_REQUEST['generationConfig']['thinkingConfig']['thinkingLevel'] == 'low'
+    assert 'thinking_budget' not in json.dumps(body)
 
 
 def test_twenty_one_percent_of_seven_is_one_and_a_half_times():

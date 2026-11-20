@@ -840,11 +840,27 @@ def session_action(stats: dict, rows: list[dict] | None = None) -> str:
     return 'Ask 1 question before you add a point.'
 
 
+def short_call_name(name: str) -> str:
+    """A grade-5 name: Moderator, Speaker F, or a first name."""
+    text = str(name or '').strip()
+    if not text:
+        return 'someone'
+    if re.search(r'\b(moderator|host|facilitator)\b', text, re.I):
+        return 'Moderator'
+    match = re.match(r'(?i)^speaker\s+([A-Za-z0-9]+)$', text)
+    if match:
+        token = match.group(1)
+        return f'Speaker {token.upper() if len(token) == 1 else token}'
+    return text.split()[0]
+
+
 def team_action(facilitator: str, quiet: str) -> str:
     """The group's one action, aimed at the person running the room."""
-    who = facilitator or 'Team'
-    person = quiet or 'one quiet person'
-    return f'{who}: ask {person} to speak in the first 3 minutes.'
+    who = short_call_name(facilitator or 'Team')
+    if who == 'someone':
+        who = 'Team'
+    person = short_call_name(quiet or 'someone')
+    return f'{who}, ask {person} to talk. Do this in the first 3 minutes.'
 
 
 def turns_sentence(count: int, median: int | None = None, words: int | None = None) -> str:
@@ -955,13 +971,10 @@ def group_pattern_why(portrait: dict, shares=None) -> str:
 
 
 def group_caveat(portrait: dict, shares=None) -> str:
-    """One caveat. The person we ask is the one who talked least, not who was least connected."""
-    pair = (portrait or {}).get('pair') or ()
+    """One caveat at a fifth-grade reading level."""
     _most, least_talk = _talk_ends(shares or [])
-    least = least_talk or (portrait or {}).get('least') or 'the quiet person'
-    if len(pair) >= 2 and pair[0] and pair[1]:
-        return f'A point can end with {pair[0]} and {pair[1]} before {least} speaks.'
-    return f'A point can end before {least} speaks.'
+    least = short_call_name(least_talk or (portrait or {}).get('least') or 'someone')
+    return f'A point can end before {least} talks.'
 
 
 def rate_sentence(value: int, name: str) -> str:
@@ -1117,8 +1130,62 @@ def _talk_ends(shares) -> tuple[str, str]:
     return ordered[0][0], ordered[-1][0]
 
 
+def _same_speaker(left: str, right: str) -> bool:
+    a = str(left or '').strip().lower()
+    b = str(right or '').strip().lower()
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    return a.split()[0] == b.split()[0] and len(a.split()[0]) > 2
+
+
+def _quote_for_person(facts: dict, person: str) -> str:
+    """One verbatim sentence from the person the pattern is about."""
+    from lib.personal_narrative import candidate_quotes
+
+    chunks = []
+    for item in facts.get('_lines') or []:
+        if _same_speaker(item.get('name'), person):
+            chunks.append(str(item.get('text') or ''))
+    moment = facts.get('_moment') or {}
+    if _same_speaker(moment.get('name'), person) and moment.get('text'):
+        chunks.insert(0, str(moment.get('text') or ''))
+    found = candidate_quotes(chunks) if chunks else []
+    if found:
+        return found[0].strip().strip('"')
+    for chunk in chunks:
+        for sentence in re.findall(r'[^.!?]*[.!?]', chunk):
+            if 6 <= len(sentence.split()) <= 40:
+                return sentence.strip().strip('"')
+    return ''
+
+
+def group_big_thing_problems(text: str) -> list[str]:
+    """Pattern, then a verbatim quote, then a question."""
+    body = str(text or '').strip()
+    problems = []
+    quote = re.search(r'"[^"]+"|“[^”]+”', body)
+    if not quote:
+        problems.append('group 1 big thing needs a verbatim quote')
+    elif not body[:quote.start()].strip():
+        problems.append('group 1 big thing needs a pattern before the quote')
+    if '?' not in body:
+        problems.append('group 1 big thing needs a question')
+    return problems
+
+
+def group_page_headline(character: str, fallback: str = '') -> str:
+    """Page 1 states the 1 big thing. The chord title stays on the chord."""
+    plain = re.sub(r'"[^"]*"|“[^”]*”', '', str(character or ''))
+    sentence = next((part.strip() for part in re.split(r'(?<=[.!?])\s+', plain) if part.strip()), '')
+    if not sentence:
+        return fallback or 'A few people talked most.'
+    return sentence if sentence.endswith(('.', '?', '!')) else sentence + '.'
+
+
 def group_character_copy(facts: dict) -> str:
-    """One pattern, one moment, one question. Talk most and least come from talk share."""
+    """One pattern, one quote from that person, one question. Talk most comes from talk share."""
     portrait = facts.get('_portrait') or {}
     pair = portrait.get('pair') or ()
     most, least_talk = _talk_ends(facts.get('_shares') or [])
@@ -1134,17 +1201,12 @@ def group_character_copy(facts: dict) -> str:
     else:
         pattern = 'Most people gave one long answer and then went quiet.'
         tied = most
-    moment = facts.get('_moment') or {}
-    closing = facts.get('_closing') or {}
-    quote_name = str(moment.get('name') or closing.get('name') or '').strip()
-    quote = str(moment.get('text') or '').strip().strip('"')
-    if not quote and quote_name and quote_name == tied:
-        quote = str(closing.get('text') or '').strip().strip('"')
+    quote = _quote_for_person(facts, tied) if tied else ''
     sentences = [pattern]
-    if tied and quote and (not quote_name or quote_name == tied):
+    if tied and quote:
         sentences.append(f'{tied} said "{quote}"')
-    ask = least_talk or portrait.get('least') or 'the person who talked the least'
-    sentences.append(f'Who will ask {ask} to speak sooner?')
+    ask = short_call_name(least_talk or portrait.get('least') or 'someone')
+    sentences.append(f'Who will ask {ask} to talk?')
     return close_quotes(' '.join(sentences))
 
 

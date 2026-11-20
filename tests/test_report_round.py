@@ -3,7 +3,7 @@
 import json
 
 from lib.names import header_name, report_header
-from lib.personal_narrative import THINKING_BUDGET, estimate_personal_cost, section_problems, suggested_next_rep
+from lib.personal_narrative import estimate_personal_cost, section_problems, suggested_next_rep
 from lib.readability import reading_grade
 from lib.style_units import opening_line, style_candidates
 
@@ -233,12 +233,151 @@ def test_passed_to_stays_at_grade_six_and_the_run_stays_under_two_cents():
     assert 'Full Sail Moderator' in line
     assert reading_grade(line) <= 6
     assert estimate_personal_cost(6, attempts=2) < 0.02
-    client_budget = THINKING_BUDGET
-    from langchain_google_genai import ChatGoogleGenerativeAI
-    client = ChatGoogleGenerativeAI(model='gemini-3.6-flash', thinking_budget=client_budget, google_api_key='test')
-    config = client._prepare_params(None)
-    thinking = config['thinking_config'] if isinstance(config, dict) else config.thinking_config
-    if not isinstance(thinking, dict):
-        thinking = {'thinking_budget': getattr(thinking, 'thinking_budget', None)}
-    assert thinking['thinking_budget'] == 256
-    assert json.dumps(thinking)
+    from lib.personal_narrative import personal_request
+
+    body = personal_request('Count the turns.')
+    assert body['generationConfig']['thinkingConfig'] == {'thinkingLevel': 'low'}
+
+
+def test_flash_lite_then_flash_upgrade_goes_through_the_entry_point(monkeypatch):
+    from lib.personal_narrative import build_personal_story
+
+    seen = []
+
+    def fake_rest(model, key, prompt, level='low'):
+        seen.append((model, level))
+        if 'flash-lite' in model or prompt.startswith('Simplify'):
+            return type('Reply', (), {'content': '{"one_big_thing": "A1", "why_it_matters": "Your aim: the layout below."}'})()
+        quote = 'The budget can wait until the client signs.'
+        return type('Reply', (), {'content': (
+            '{"one_big_thing": "You kept one point. Will you ask?", '
+            '"one_big_thing_quote": "Q1", '
+            '"why_it_matters": "The room could not answer while you kept going.", '
+            '"yes_but": "The point was clear.", '
+            f'"said_quote": "Q2", "style_id": "U1"}}'
+        )})()
+
+    monkeypatch.setattr('lib.personal_narrative._rest_generate', fake_rest)
+    sentence = 'The budget can wait until the client signs. '
+    transcript = {'utterances': [
+        {'speaker': 'S', 'name': 'Stephen', 'text': sentence * 8, 'start': 0, 'end': 80000},
+    ]}
+
+    class Client:
+        google_api_key = 'test-key'
+        model = 'gemini-3.1-flash-lite'
+
+        def invoke(self, prompt, **kwargs):
+            raise AssertionError('the entry point should call REST')
+
+    story = build_personal_story(
+        Client(), transcript, 'S', {'name': 'Stephen'},
+        {'share': 18, 'turns': 1, 'questions': 1, 'session_question_average': 1, 'speaker_count': 6, 'words': 80},
+    )
+    assert seen[0] == ('gemini-3.1-flash-lite', 'low')
+    assert ('gemini-3.6-flash', 'low') in seen
+    assert story['short_mode'] is False
+
+
+def test_a_long_turn_stays_full_when_both_models_fail_the_grade():
+    from lib.personal_narrative import build_personal_story
+
+    sentence = 'The budget can wait until the client signs. '
+    transcript = {'utterances': [
+        {'speaker': 'S', 'name': 'Stephen', 'text': sentence * 12, 'start': 0, 'end': 90000},
+    ]}
+
+    class Bad:
+        def invoke(self, prompt, **kwargs):
+            return type('Reply', (), {'content': json.dumps({
+                'one_big_thing': 'Your aim is a sophisticated articulation of the strategic implication.',
+                'why_it_matters': 'Your aim: try the step below on the next page. See A1.',
+                'yes_but': 'I felt the turn was long.',
+                'next_rep': 'Target: 135 words.',
+                'said_quote': 'not a quote',
+            })})()
+
+    story = build_personal_story(
+        Bad(), transcript, 'S', {'name': 'Stephen'},
+        {'share': 18, 'turns': 1, 'questions': 1, 'session_question_average': 1, 'speaker_count': 6},
+    )
+    assert story['short_mode'] is False
+    assert story['one_big_thing'].startswith('You spoke in one long turn of ')
+    assert story['one_big_thing'].count('"') == 2
+    assert 'Will you stop after two lines?' in story['one_big_thing']
+    assert 'below' not in story['why_it_matters'].lower()
+    assert 'A1' not in story['why_it_matters']
+    assert reading_grade(story['why_it_matters']) <= 5
+
+
+def test_question_columns_include_every_speaker_with_unique_labels(tmp_path):
+    from lib.story_pdf import _vertical_bars, chart_types
+
+    rows = [
+        ('Speaker F', 0),
+        ('Speaker G', 0),
+        ('Full Sail Moderator', 3),
+        ('Steve Switaj', 4),
+        ('Stephen', 2),
+        ('Ric Viers', 1),
+        ('Leslie Brathwaite', 1),
+    ]
+    path = _vertical_bars(rows, tmp_path, 'who-asked.png', 'Steve asked the most questions.')
+    info = chart_types(tmp_path)['who-asked.png']
+    assert path.is_file()
+    assert info['values'] == [4, 3, 2, 1, 1, 0, 0]
+    assert len(info['labels']) == 7
+    assert len(set(info['labels'])) == 7
+    assert 'Moderator' in info['labels']
+    assert 'Full' not in info['labels']
+    assert 'Speaker' not in info['labels']
+    assert any(label.replace('\n', ' ') == 'Speaker F' for label in info['labels'])
+    assert any(label.replace('\n', ' ') == 'Speaker G' for label in info['labels'])
+    assert '0' not in info['value_labels']
+
+
+def test_group_page_uses_the_pattern_and_one_easy_action(tmp_path):
+    from PIL import Image
+    from pypdf import PdfReader
+
+    from lib.pdf_functions import MM_PDF
+    from lib.readability import reading_grade
+    from lib.story_pdf import write_group_story
+    from lib.story_render import group_big_thing_problems, group_caveat, team_action
+
+    text = 'Steve Switaj held the floor, and Leslie Brathwaite stayed quiet. Steve Switaj said "We can find a niche in this market today." Who will ask Leslie to talk?'
+    assert group_big_thing_problems(text) == []
+    assert group_big_thing_problems('Steve Switaj held the floor, and Leslie Brathwaite stayed quiet. Who will ask Leslie to talk?')
+    action = team_action('Full Sail Moderator', 'Leslie Brathwaite')
+    caveat = group_caveat({'least': 'Leslie Brathwaite'}, [('Steve Switaj', 21), ('Leslie Brathwaite', 6)])
+    assert action == 'Moderator, ask Leslie to talk. Do this in the first 3 minutes.'
+    assert reading_grade(action) <= 5
+    assert reading_grade(caveat) <= 5
+    image = tmp_path / 'chord.png'
+    Image.new('RGB', (80, 80), 'white').save(image)
+    image.with_suffix('.title').write_text('Full Sail Moderator had the most back and forth.', encoding='utf-8')
+    pdf = MM_PDF(path_report_assets=__import__('pathlib').Path('report_assets'))
+    story = {
+        'headline': 'Full Sail Moderator had the most back and forth.',
+        'character': text,
+        'goal': 'The room had one thread.',
+        'pattern_why': 'Steve held the floor, so Leslie had less chance to change the choice.',
+        'caveat': caveat,
+        'one_thing': action,
+        'shares': [('Steve Switaj', 21), ('Leslie Brathwaite', 6), ('Speaker F', 4)],
+        'question_counts': [('Steve Switaj', 2), ('Leslie Brathwaite', 0)],
+        'proposal_counts': [('Steve Switaj', 1)],
+        'numbers': ['20% of turns moved to someone new, below an even mix of 86%.', '2 of 3 people spoke. One never did.'],
+        'word_counts': [('Steve Switaj', 200), ('Leslie Brathwaite', 40)],
+    }
+    write_group_story(pdf, story, image, [('Steve Switaj', 'Leslie Brathwaite', 2, 1)])
+    pdf.output(tmp_path / 'group.pdf')
+    pages = [page.extract_text() or '' for page in PdfReader(tmp_path / 'group.pdf').pages]
+    assert 'held the floor' in pages[0]
+    assert 'back and forth' not in pages[0]
+    assert 'from Steve Switaj' in pages[0]
+    assert '1 idea, from Steve Switaj' not in '\n'.join(pages)
+    assert '20% of turns moved' not in pages[0]
+    joined = '\n'.join(pages)
+    assert 'A question is a sentence that ends in ? or starts with a question word.' in joined
+    assert 'back and forth' in joined

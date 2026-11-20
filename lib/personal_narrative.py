@@ -348,6 +348,8 @@ def section_problems(payload: dict, quotes: list[str], allowed: set[str], moment
     why = fields['why_it_matters'].lower()
     if any(phrase in why for phrase in ('your voice brings', 'good ideas', 'brings good ideas', 'to the team')):
         add('why_it_matters', 'why_it_matters is generic praise')
+    if re.search(r'\b(below|above|next page)\b', why):
+        add('why_it_matters', 'why_it_matters points at the page')
     if share is not None and re.search(r'\b(most of|almost all)\b', fields['yes_but'], re.I) and int(share) <= 50:
         add('yes_but', 'yes_but says most of the talk, but the share is not a majority')
     for name, text in fields.items():
@@ -463,7 +465,9 @@ def full_story(payload: dict, lines: list[str], name: str) -> dict:
 def _fallback_line(section: str, rows, lines, quotes, stats, moment: str) -> str:
     if section == 'headline':
         return speech_headline(rows)
-    if section in {'why_it_matters', 'yes_but', 'headline'}:
+    if section == 'why_it_matters':
+        return why_template(rows, stats)
+    if section in {'yes_but', 'headline'}:
         return ''
     if section == 'next_rep':
         return suggested_next_rep(rows, stats, moment)
@@ -499,8 +503,16 @@ def _record_attempt(progress_dir, label: str, raw: str, reasons: list[str], extr
 
 
 THINKING_BUDGET = 256
-# Thinking tokens are billed with output. These rates keep a 6-person Full Sail
-# run, with the budget enforced, under two cents.
+# Gemini 3.x ignores thinkingBudget. The live call uses thinkingLevel instead.
+# Flash-lite at 'low' spent 119–192 thought tokens. Charge that, not 256.
+THINKING_LEVEL = 'low'
+THOUGHT_TOKENS = 192
+# REST shape. The proto client has no thinkingLevel field and drops it.
+THINKING_REQUEST = {
+    'generationConfig': {
+        'thinkingConfig': {'thinkingLevel': THINKING_LEVEL},
+    },
+}
 INPUT_PER_MILLION = 0.30
 OUTPUT_PER_MILLION = 3.50
 
@@ -515,17 +527,25 @@ def upgrade_model_name() -> str:
     return os.getenv('GEMINI_UPGRADE_MODEL', 'gemini-3.6-flash')
 
 
-THINKING_REQUEST = {'thinking_budget': THINKING_BUDGET, 'thinking_level': 'low'}
+def personal_request(prompt: str, level: str = THINKING_LEVEL) -> dict:
+    """The JSON body generateContent accepts. thinkingLevel, not thinkingBudget."""
+    return {
+        'contents': [{'role': 'user', 'parts': [{'text': prompt}]}],
+        'generationConfig': {
+            'temperature': 0,
+            'thinkingConfig': {'thinkingLevel': level},
+        },
+    }
 
 
 def personal_client_settings(llm) -> dict:
-    """A low thinking budget. The 3.5 run spent almost all of its cost on thinking."""
+    """Flash-lite first. Thinking is a REST thinkingLevel, not a token budget."""
     return {
         'model': personal_model_name(),
         'temperature': 0,
         'timeout': getattr(llm, 'timeout', 120),
         'max_retries': 2,
-        'thinking_budget': THINKING_BUDGET,
+        'thinking_level': THINKING_LEVEL,
     }
 
 
@@ -535,17 +555,15 @@ def estimate_personal_cost(
     attempts: int = 1,
     prompt_tokens: int = 900,
     answer_tokens: int = 180,
-    thinking_budget: int = THINKING_BUDGET,
+    thinking_budget: int = THOUGHT_TOKENS,
 ) -> float:
-    """A planning estimate. Only the first call spends the thinking budget. Retries are flash-lite."""
+    """Each personal call, including the 3.6 upgrade, is priced at thinkingLevel low."""
     people = max(0, int(people))
-    first = (
+    one = (
         prompt_tokens * INPUT_PER_MILLION
         + (answer_tokens + thinking_budget) * OUTPUT_PER_MILLION
     ) / 1_000_000
-    retry = (prompt_tokens * INPUT_PER_MILLION + answer_tokens * OUTPUT_PER_MILLION) / 1_000_000
-    retries = max(0, int(attempts) - 1)
-    return people * (first + retries * retry)
+    return people * max(1, int(attempts)) * one
 
 
 def _model_not_found(exc: BaseException) -> bool:
@@ -566,36 +584,101 @@ def _model_not_found(exc: BaseException) -> bool:
 
 
 def for_personal_narrative(llm):
-    """The first personal call stays on flash-lite. A test double is returned unchanged."""
+    """The first personal call stays on the client the app built. A test double is unchanged."""
     return llm
 
 
-def upgrade_personal_llm(llm):
-    """One stronger retry after flash-lite fails a validator."""
+def _api_key(llm) -> str:
+    """A key on the client, or on a wrapper's inner client. Not the process environment."""
+    seen: set[int] = set()
+    current = llm
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        for attr in ('google_api_key', 'api_key'):
+            value = getattr(current, attr, None)
+            if hasattr(value, 'get_secret_value'):
+                try:
+                    value = value.get_secret_value()
+                except Exception:
+                    value = None
+            if isinstance(value, str) and value:
+                return value
+        inner = getattr(current, 'llm', None)
+        if inner is None or inner is current:
+            break
+        current = inner
+    return ''
+
+
+def _use_model(llm, model: str) -> None:
+    """The next invoke on this client, and a wrapper that reads .model, uses this id."""
     try:
-        from langchain_google_genai import ChatGoogleGenerativeAI
-    except ImportError:
-        return llm
-    if not isinstance(llm, ChatGoogleGenerativeAI):
-        return llm
-    kwargs = personal_client_settings(llm)
-    kwargs['model'] = upgrade_model_name()
-    key = getattr(llm, 'google_api_key', None)
+        llm.model = model
+    except Exception:
+        logging.warning('personal model stayed on the client; wanted %s', model)
+
+
+class _Reply:
+    def __init__(self, content: str, thoughts: int | None = None):
+        self.content = content
+        self.usage_metadata = {'thoughts_token_count': thoughts}
+
+
+def _rest_generate(model: str, key: str, prompt: str, level: str = THINKING_LEVEL):
+    """POST generateContent. Retries once with thinkingLevel minimal when low is refused."""
+    import urllib.error
+    import urllib.request
+
+    def _post(thinking: str):
+        body = personal_request(prompt, thinking)
+        url = f'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}'
+        request = urllib.request.Request(
+            url,
+            data=json.dumps(body).encode(),
+            headers={'Content-Type': 'application/json'},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=120) as response:
+                return json.loads(response.read().decode())
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode(errors='replace')
+            error = RuntimeError(f'{exc.code} {detail}')
+            error.status_code = exc.code
+            error.body = detail
+            raise error from exc
+
+    try:
+        data = _post(level)
+    except RuntimeError as exc:
+        detail = str(getattr(exc, 'body', '') or exc).lower()
+        if level != 'minimal' and 'thinkinglevel' in detail:
+            logging.warning('thinkingLevel %s was refused; retrying minimal', level)
+            data = _post('minimal')
+        else:
+            raise
+    parts = (((data.get('candidates') or [{}])[0].get('content') or {}).get('parts') or [])
+    text = ''.join(str(part.get('text') or '') for part in parts if isinstance(part, dict))
+    usage = data.get('usageMetadata') or {}
+    thoughts = usage.get('thoughtsTokenCount')
+    logging.warning('personal call model=%s thinkingLevel=%s thought tokens=%s', model, level, thoughts)
+    return _Reply(text, thoughts)
+
+
+def _invoke_personal(llm, prompt, model: str | None = None):
+    """REST thinkingLevel low when this client has a key. Otherwise pass that config to invoke."""
+    model = model or getattr(llm, 'model', None) or personal_model_name()
+    _use_model(llm, model)
+    key = _api_key(llm)
     if key:
-        kwargs['google_api_key'] = key
-    return ChatGoogleGenerativeAI(**kwargs)
-
-
-def _invoke_personal(llm, prompt):
-    """Ask for a low thinking level, then log whatever thought tokens came back."""
+        return _rest_generate(model, key, prompt)
+    config = THINKING_REQUEST['generationConfig']
     try:
-        raw = llm.invoke(prompt, generation_config={'thinking_config': dict(THINKING_REQUEST)})
+        raw = llm.invoke(prompt, generationConfig=config)
     except TypeError:
         raw = llm.invoke(prompt)
     meta = getattr(raw, 'usage_metadata', None) or {}
     thoughts = meta.get('thoughts_token_count') if isinstance(meta, dict) else getattr(meta, 'thoughts_token_count', None)
-    if thoughts:
-        logging.warning('personal call thought tokens: %s', thoughts)
+    logging.warning('personal call model=%s thinkingLevel=%s thought tokens=%s', model, THINKING_LEVEL, thoughts)
     return raw
 
 
@@ -612,11 +695,83 @@ def _simplify(llm, text: str) -> str:
         return text
 
 
+def deterministic_big_thing(rows: list[dict], quotes: list[str], stats: dict) -> str:
+    """Pattern, a code-inserted quote, and one question. Used when both models fail the grade."""
+    words = word_total(rows)
+    turns = len(rows)
+    share = int(stats.get('share') or 0)
+    speakers = max(int(stats.get('speaker_count') or 1), 1)
+    questions = int(stats.get('questions') or 0)
+    ideas = stats.get('ideas')
+    if turns <= 2 and words >= 60:
+        fact = f'You spoke in one long turn of {words} words.'
+        question = 'Will you stop after two lines?'
+    elif share + 2 < room_average(speakers):
+        fact = f'You spoke for {share}% of the talk.'
+        question = 'Will you come in sooner?'
+    elif questions == 0:
+        fact = 'You asked no questions.'
+        question = 'Will you ask one question?'
+    elif ideas == 0:
+        fact = 'You put no idea forward.'
+        question = 'Will you add one idea?'
+    else:
+        fact = f'You took {turns} turns.'
+        question = 'Will you ask one question?'
+    spoken = str(quotes[0] if quotes else '').strip().strip('"').strip('“”')
+    parts = [fact]
+    if spoken:
+        parts.append(f'You said "{spoken}"')
+    parts.append(question)
+    return ' '.join(parts)
+
+
+def why_template(rows: list[dict], stats: dict) -> str:
+    """A grade-5 line that does not point at the page."""
+    words = word_total(rows)
+    turns = len(rows)
+    share = int(stats.get('share') or 0)
+    speakers = max(int(stats.get('speaker_count') or 1), 1)
+    if turns <= 2 and words >= 60:
+        return 'A long turn leaves no room for a reply.'
+    if share + 2 < room_average(speakers):
+        return 'A short share is easy to miss.'
+    if int(stats.get('questions') or 0) == 0:
+        return 'A point with no question is hard to join.'
+    return 'The room needs a gap to answer.'
+
+
+def _templated_story(name, rows, lines, quotes, stats, step, units, best_payload, best_found) -> dict:
+    """Full report. 1 big thing is the template. Why is the model line only when it still passes."""
+    payload = dict(best_payload or {})
+    payload['one_big_thing'] = deterministic_big_thing(rows, quotes, stats)
+    why = _strip_ids(str(payload.get('why_it_matters') or ''))
+    why_problems = section_problems(
+        {**payload, 'why_it_matters': why, 'one_big_thing': 'You spoke once. Will you ask?'},
+        quotes,
+        set(),
+        '',
+        int(stats.get('share') or 0),
+    )
+    if why_problems.get('why_it_matters') or not why:
+        why = why_template(rows, stats)
+    payload['why_it_matters'] = why
+    payload['yes_but'] = '' if (best_found or {}).get('yes_but') else str(payload.get('yes_but') or '')
+    payload['said_quote'] = quotes[1] if len(quotes) > 1 else (quotes[0] if quotes else '')
+    story = _finish(full_story(payload, lines, name), step, units, str(payload.get('style_id') or ''))
+    story['short_mode'] = False
+    story['fallback_sections'] = ['one_big_thing']
+    story['rejection_reasons'] = {'one_big_thing': '; '.join((best_found or {}).get('one_big_thing') or [])}
+    return story
+
+
 def build_personal_story(llm, transcript, label: str, info: dict, stats: dict, progress_dir=None) -> dict:
-    """One call when there is enough speech. A failed 1 big thing becomes the short report."""
-    fallback = llm
-    llm = for_personal_narrative(llm)
-    used_fallback = llm is fallback
+    """Flash-lite first. One 3.6 upgrade if validators fail. SHORT is only under 60 words."""
+    original = llm
+    llm = for_personal_narrative(original)
+    active = personal_model_name() if llm is original else (getattr(llm, 'model', None) or personal_model_name())
+    _use_model(llm, active)
+    upgraded = False
     from lib.style_units import style_candidates
 
     rows = speaker_rows(transcript, label)
@@ -640,23 +795,25 @@ def build_personal_story(llm, transcript, label: str, info: dict, stats: dict, p
     best_payload = None
     best_found: dict[str, list[str]] = {'one_big_thing': ['response was not JSON']}
     attempts = 0
+    simplified = False
     while attempts < 2:
         raw_text = ''
         try:
-            raw_text = _raw_text(_invoke_personal(llm, _prompt(name, lines, quotes, failures, '', step, units)))
+            raw_text = _raw_text(_invoke_personal(llm, _prompt(name, lines, quotes, failures, '', step, units), active))
             payload = _parse(raw_text)
             if payload is not None:
                 payload = apply_quote_ids(payload, quotes)
                 payload = _scrub_own_name(payload, name)
         except Exception as exc:
-            if not used_fallback and _model_not_found(exc):
+            if llm is not original and _model_not_found(exc):
                 logging.warning(
                     'personal model %s returned 404; falling back to %s',
-                    getattr(llm, 'model', None) or personal_model_name(),
-                    getattr(fallback, 'model', None) or 'flash-lite',
+                    active,
+                    getattr(original, 'model', None) or 'gemini-3.1-flash-lite',
                 )
-                llm = fallback
-                used_fallback = True
+                llm = original
+                active = personal_model_name()
+                _use_model(llm, active)
                 continue
             logging.warning('personal narrative call failed: %s', exc)
             payload = None
@@ -668,19 +825,19 @@ def build_personal_story(llm, transcript, label: str, info: dict, stats: dict, p
             found = section_problems(payload, quotes, allowed, moment, int(stats.get('share') or 0))
         reasons = [reason for items in found.values() for reason in items]
         pick = str((payload or {}).get('style_id') or '')
-        _record_attempt(progress_dir, label, raw_text, reasons, {**style_note, 'style_pick': pick})
-        if payload is not None and _grade_failures(found) and not used_fallback:
+        _record_attempt(progress_dir, label, raw_text, reasons, {**style_note, 'style_pick': pick, 'model': active})
+        if payload is not None and _grade_failures(found) and not simplified:
             payload = _rewrite_grade(llm, payload, found)
+            simplified = True
             found = section_problems(payload, quotes, allowed, moment, int(stats.get('share') or 0))
             reasons = [reason for items in found.values() for reason in items]
-        if payload is not None and reasons and not used_fallback:
-            upgrade = upgrade_personal_llm(fallback)
-            if upgrade is not fallback and upgrade is not llm:
-                logging.warning('personal narrative retry uses %s', upgrade_model_name())
-                llm = upgrade
-                used_fallback = True
-                failures = reasons
-                continue
+        if payload is not None and reasons and not upgraded:
+            active = upgrade_model_name()
+            _use_model(llm, active)
+            logging.warning('personal narrative retry uses %s', active)
+            upgraded = True
+            failures = reasons
+            continue
         if payload is not None and not reasons:
             story = _finish(full_story(payload, lines, name), step, units, pick)
             story['fallback_sections'] = []
@@ -690,12 +847,8 @@ def build_personal_story(llm, transcript, label: str, info: dict, stats: dict, p
             best_found = found
         failures = reasons
     if best_payload is None or best_found.get('one_big_thing'):
-        logging.warning('personal narrative fell back to the short report: %s', failures)
-        story = short_story(name, rows, lines, quotes, stats)
-        story['fallback_sections'] = ['one_big_thing']
-        story['rejection_reasons'] = {'one_big_thing': '; '.join(best_found.get('one_big_thing') or failures)}
-        _attach_style(story, units, '')
-        return story
+        logging.warning('personal narrative used the code template: %s', failures)
+        return _templated_story(name, rows, lines, quotes, stats, step, units, best_payload, best_found)
     patched = dict(best_payload)
     replaced = []
     for section, reasons in best_found.items():

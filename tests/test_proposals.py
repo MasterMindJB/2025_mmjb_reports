@@ -123,8 +123,11 @@ def test_talk_most_comes_from_share_not_from_who_followed_whom():
         ],
         '_portrait': {'pair': ('Moderator', 'Ric'), 'least': 'G'},
         '_closing': {'name': 'Leslie', 'text': 'The quiet line still closed the hour well.'},
+        '_lines': [{'name': 'Steve', 'text': 'We can find a niche in this market today.'}],
     })
     assert 'Steve held the floor, and Leslie stayed quiet.' in text
+    assert 'Steve said "We can find a niche in this market today."' in text
+    assert 'Leslie said' not in text
     assert 'back and forth' not in text
     assert 'Moderator and Ric did most of the talking' not in text
     assert 'G spoke the least' not in text

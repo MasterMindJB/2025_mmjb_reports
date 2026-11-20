@@ -339,7 +339,7 @@ def _ranked_bars(pairs, folder: Path, filename: str, title: str, percent: bool =
     return _save_chart(figure, folder, filename)
 
 
-def _remember(folder: Path, key: str, kind: str, values: list[int]) -> None:
+def _remember(folder: Path, key: str, kind: str, values: list[int], labels: list[str] | None = None, value_labels: list[str] | None = None) -> None:
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / 'chart-types.json'
@@ -351,7 +351,12 @@ def _remember(folder: Path, key: str, kind: str, values: list[int]) -> None:
             data = {}
     if not isinstance(data, dict):
         data = {}
-    data[key] = {'type': kind, 'values': [int(value) for value in values]}
+    entry = {'type': kind, 'values': [int(value) for value in values]}
+    if labels is not None:
+        entry['labels'] = list(labels)
+    if value_labels is not None:
+        entry['value_labels'] = list(value_labels)
+    data[key] = entry
     path.write_text(json.dumps(data, indent=2), encoding='utf-8')
 
 
@@ -384,32 +389,80 @@ def _pie_slices(pairs, limit: int = 6) -> list[tuple[str, int]]:
     return head
 
 
-def _axis_name(name: str, highlight: str = '') -> str:
-    """A short horizontal label. The reader is You."""
-    if highlight and (_same_person(name, highlight) or name == 'You'):
+def _column_label(name: str, highlight: str = '') -> str:
+    """First name, Moderator, or Speaker F. The reader is You."""
+    text = str(name or '').strip()
+    if highlight and (_same_person(text, highlight) or text == 'You'):
         return 'You'
-    return str(name).split()[0]
+    if re.search(r'\b(moderator|host|facilitator)\b', text, re.I):
+        return 'Moderator'
+    match = re.match(r'(?i)^speaker\s+([A-Za-z0-9]+)$', text)
+    if match:
+        token = match.group(1)
+        return f'Speaker {token.upper() if len(token) == 1 else token}'
+    match = re.match(r'(?i)^aud\.?\s*member\s+(\d+)$', text)
+    if match:
+        return f'Aud. member {match.group(1)}'
+    return text.split()[0] if text else 'Speaker'
 
 
-def _vertical_bars(pairs, folder: Path, filename: str, title: str, highlight: str = '') -> Path | None:
-    """Columns. The subject, or every tied leader, is navy."""
-    rows = [(str(name), int(value or 0)) for name, value in (pairs or []) if str(name) != 'Average']
+def _unique_column_labels(names: list[str], highlight: str = '') -> list[str]:
+    """Labels that do not collapse two people into one word. Speaker F wraps."""
+    raw = [_column_label(name, highlight) for name in names]
+    counts: dict[str, int] = {}
+    for label in raw:
+        counts[label] = counts.get(label, 0) + 1
+    labels = []
+    for name, label in zip(names, raw):
+        if counts[label] > 1 and label not in {'You', 'Moderator'} and not label.startswith('Speaker'):
+            parts = str(name).split()
+            label = parts[0] if len(parts) == 1 else f'{parts[0]} {parts[-1][:1]}'
+        if label.startswith('Speaker '):
+            label = label.replace(' ', '\n', 1)
+        labels.append(label)
+    return labels
+
+
+def _complete_pairs(pairs, roster) -> list[tuple[str, int]]:
+    """Every person in the roster gets a column, including a zero."""
+    values: dict[str, int] = {}
+    order: list[str] = []
+    for name, _value in roster or []:
+        key = str(name)
+        if key == 'Average' or key in values:
+            continue
+        values[key] = 0
+        order.append(key)
+    for name, value in pairs or []:
+        key = str(name)
+        if key == 'Average':
+            continue
+        if key not in values:
+            order.append(key)
+        values[key] = int(value or 0)
+    return [(name, values[name]) for name in order]
+
+
+def _vertical_bars(pairs, folder: Path, filename: str, title: str, highlight: str = '', roster=None) -> Path | None:
+    """Columns. The subject, or every tied leader, is navy. A zero has no value label."""
+    rows = _complete_pairs(pairs, roster)
     if not rows:
         return None
     ranked = sorted(rows, key=lambda item: (-item[1], item[0]))
-    labels = [_axis_name(name, highlight) for name, _value in ranked]
+    labels = _unique_column_labels([name for name, _value in ranked], highlight)
     values = [value for _name, value in ranked]
     top = max(values) if values else 0
     if highlight:
         colors = [NAVY if label == 'You' else '#C5CDD8' for label in labels]
     else:
         colors = [NAVY if value == top and top > 0 else '#C5CDD8' for value in values]
-    figure, axis = plt.subplots(figsize=(5.4, 3.2), facecolor='white')
+    figure, axis = plt.subplots(figsize=(max(5.4, 0.72 * len(labels)), 3.4), facecolor='white')
     _plain_axes(axis)
     bars = axis.bar(labels, values, color=colors, width=0.62)
+    shown = ['' if int(value) == 0 else str(int(value)) for value in values]
     axis.bar_label(
         bars,
-        labels=[str(int(value)) for value in values],
+        labels=shown,
         padding=2,
         color=INK,
         fontproperties=load_poppins('regular'),
@@ -424,7 +477,7 @@ def _vertical_bars(pairs, folder: Path, filename: str, title: str, highlight: st
     axis.set_title(_wrap_title(title, 42), color=INK, fontproperties=load_poppins('semibold'), fontsize=11, loc='left')
     figure.tight_layout()
     _note_overlaps(figure, filename)
-    _remember(folder, filename, 'vertical_bar', values)
+    _remember(folder, filename, 'vertical_bar', values, labels, [label for label in shown if label])
     return _save_chart(figure, folder, filename)
 
 
@@ -587,8 +640,31 @@ def _group_tiles(story: dict) -> list[tuple[str, str]]:
         ('People who spoke', f'{spoke} of {total}', ''),
         ('Turns that moved to someone new', moved, grade if found else ''),
         ('Questions', str(questions), ''),
-        ('Ideas', str(ideas), ''),
+        ('Ideas', str(ideas), _idea_grade(story)),
     ]
+
+
+def _idea_grade(story: dict) -> str:
+    """One idea names the person. Several ideas need no extra line."""
+    proposed = [
+        (str(name), int(value or 0))
+        for name, value in (story.get('proposal_counts') or [])
+        if int(value or 0) > 0
+    ]
+    if len(proposed) == 1:
+        return f'from {proposed[0][0]}'
+    return ''
+
+
+def _number_lines(story: dict) -> list[str]:
+    """Drop lines the tiles already show. An empty list omits the section."""
+    kept = []
+    for line in story.get('numbers') or []:
+        low = str(line).lower()
+        if 'moved to someone new' in low or 'people spoke' in low or 'people were in the room' in low:
+            continue
+        kept.append(str(line))
+    return kept
 
 
 def _personal_tiles(story: dict) -> list[tuple[str, str]]:
@@ -699,6 +775,7 @@ def _personal_charts(pdf, story: dict, folder: Path) -> None:
             questions, folder, 'who-asked.png',
             f'{askers} asked the most questions.' if askers else 'No one asked a question.',
             subject,
+            roster=story.get('roster_shares') or story.get('shares'),
         )
         share = _question_share(questions, subject)
         you, others = share[0][1], share[1][1]
@@ -996,7 +1073,9 @@ def write_personal_report(
         _heading(pdf, '1 big thing')
         _body(pdf, big)
     dropped = set(story.get('fallback_sections') or [])
-    why_text = '' if 'why_it_matters' in dropped else (story.get('why_it_matters') or story.get('goal') or '')
+    why_text = story.get('why_it_matters') or ''
+    if not why_text and 'why_it_matters' not in dropped:
+        why_text = story.get('goal') or ''
     why_text = _without_next_time(why_text)
     if why_text:
         _heading(pdf, 'Why it matters')
@@ -1084,14 +1163,9 @@ def write_group_story(pdf, story: dict, chord_path, chord_pairs, *, gap: float =
     _clear_footer(pdf)
     pdf.add_page()
     pdf.set_text_color(20, 33, 74)
-    headline = str(story.get('headline') or '')
-    title_file = Path(str(chord_path)).with_suffix('.title') if chord_path else None
-    if title_file and title_file.is_file():
-        headline = title_file.read_text(encoding='utf-8').strip()
-    else:
-        from lib.story_render import fit_headline
+    from lib.story_render import group_page_headline
 
-        headline = fit_headline(headline, 'A few people talked most.')
+    headline = group_page_headline(story.get('character') or '', str(story.get('headline') or ''))
     pdf.set_font('Poppins', 'b', 16)
     pdf.multi_cell(w=0, h=pdf.font_size * 1.2, text=headline, align='L')
     pdf.ln(1)
@@ -1101,10 +1175,12 @@ def write_group_story(pdf, story: dict, chord_path, chord_pairs, *, gap: float =
     from lib.story_render import narrative_text
 
     _heading(pdf, '1 big thing')
-    _body(pdf, narrative_text(story['character'], big=True))
-    _heading(pdf, 'By the numbers')
-    for line in story.get('numbers') or []:
-        _body(pdf, line)
+    _body(pdf, _without_next_time(story.get('character') or ''))
+    number_lines = _number_lines(story)
+    if number_lines:
+        _heading(pdf, 'By the numbers')
+        for line in number_lines:
+            _body(pdf, line)
     folder = Path(chord_path).parent if chord_path else Path('.')
     shares = story.get('shares') or []
     questions = story.get('question_counts') or []
@@ -1126,6 +1202,7 @@ def write_group_story(pdf, story: dict, chord_path, chord_pairs, *, gap: float =
             folder,
             'who-asked.png',
             f'{askers} asked the most questions.' if askers else 'No one asked a question.',
+            roster=shares,
         )
     if talk_path and question_path and _remaining(pdf) >= 70:
         _image_row(pdf, talk_path, question_path)
@@ -1140,11 +1217,6 @@ def write_group_story(pdf, story: dict, chord_path, chord_pairs, *, gap: float =
     proposed = [(name, int(value or 0)) for name, value in proposals if int(value or 0) > 0]
     if len(proposed) >= 2:
         _image(pdf, _donut(proposals, folder, 'ideas.png', 'Ideas put forward'))
-    elif len(proposed) == 1:
-        _image(pdf, _big_number(
-            proposed[0][1], proposed[0][1], folder, 'ideas.png',
-            f'1 idea, from {proposed[0][0]}', left=proposed[0][0], right='',
-        ))
     words = story.get('word_counts') or []
     if words:
         leaders = _join_names(_leaders(words))
@@ -1172,5 +1244,8 @@ def write_group_story(pdf, story: dict, chord_path, chord_pairs, *, gap: float =
     pdf.add_page()
     _heading(pdf, 'Appendix')
     _flush_heading(pdf)
+    title_file = Path(str(chord_path)).with_suffix('.title') if chord_path else None
+    if title_file and title_file.is_file():
+        _body(pdf, title_file.read_text(encoding='utf-8').strip())
     _remember(folder, 'structure', 'chord', [])
     _chord_hero(pdf, chord_path, chord_pairs)
