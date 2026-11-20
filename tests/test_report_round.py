@@ -729,7 +729,7 @@ def test_a_grade_repair_stays_on_flash_lite_and_one_upgrade_is_the_cap(monkeypat
         Client(), transcript, 'S', {'name': 'Stephen'},
         {'share': 18, 'turns': 2, 'questions': 1, 'speaker_count': 6, 'words': 80},
     )
-    assert seen.count('gemini-3.6-flash') == 1
+    assert seen.count('gemini-3.6-flash') == 2
 
 
 def test_talk_and_question_charts_stay_with_the_box(tmp_path):
@@ -1350,6 +1350,7 @@ def test_the_first_bullet_stays_short_and_a_long_quote_keeps_a_clause():
         merged_length_problem,
         shorten_quote,
         why_length_problem,
+        _clause_is_complete,
         _render_bullet,
     )
 
@@ -1393,6 +1394,12 @@ def test_the_first_bullet_stays_short_and_a_long_quote_keeps_a_clause():
     assert kept_clause in ric
     assert kept_clause not in {'I told myself', 'how hard you drive'}
     assert 'firm' in kept_clause or 'limits' in kept_clause
+    told = 'Since I was a kid, I told myself I would hold firm on the limits that matter most to me today.'
+    told_clause = shorten_quote(told, behavior)
+    assert not told_clause.lower().rstrip('.').endswith('told myself')
+    assert 'hold firm' in told_clause
+    assert _clause_is_complete('I told myself') is False
+    assert _clause_is_complete('how hard you drive for') is False
     rendered = _render_bullet(short, long, why)
     assert '...' not in rendered
     assert clause in rendered
@@ -1451,3 +1458,100 @@ def test_an_eleven_word_goal_without_a_why_does_not_ship():
     )
     assert fixed['bullets'][0]['behavior'] == good
     assert fixed['bullets'][0]['why'] == 'This shows people the limits.'
+
+
+def test_a_why_does_not_repeat_care_and_common_heads_pass():
+    from lib.personal_narrative import care_grounded, why_line_grade_problem, why_repeats_care
+    from lib.readability import reading_grade
+
+    behavior = 'You seem to care about making art, and it seemed like you were trying to show the point.'
+    assert why_repeats_care('This shows people a deep love for making art.', behavior)
+    assert why_repeats_care('This shows people the point.', behavior) == ''
+    quote = 'The budget can wait until the client signs.'
+    assert care_grounded(
+        'You seem to care about inner peace, and it seemed like you were trying to show the point.',
+        quote,
+        quote,
+    )
+    assert care_grounded(behavior, '', quote)
+    assert not care_grounded(
+        'You seem to care about your team, and it seemed like you were trying to name the work.',
+        'And you make it hinge upon yourself.',
+        'And you make it hinge upon yourself.',
+    )
+    why = 'That story shows people the careful creative choice still matters a lot.'
+    grade = reading_grade(why)
+    assert 6.05 < grade <= 8.05
+    assert why_line_grade_problem(why, quote) == ''
+
+
+def test_enough_speech_gets_a_second_try_for_the_merged_bullet(monkeypatch, caplog):
+    import logging
+
+    from lib.personal_narrative import build_personal_story
+
+    seen = []
+    good = {
+        'behavior': 'You seem to care about real work, and it seemed like you were trying to show the point.',
+        'quote': 'Q1',
+        'why': 'This shows people the point.',
+    }
+
+    def fake_rest(model, key, prompt, mode='budget', max_output=512):
+        seen.append((model, prompt))
+        if prompt.startswith('Write one merged first bullet'):
+            assert 'SPEECH' in prompt
+            assert 'The earlier draft failed' in prompt
+            assert 'The budget can wait' in prompt
+            return type('Reply', (), {'content': __import__('json').dumps(good)})()
+        return type('Reply', (), {'content': __import__('json').dumps({
+            'bullets': [{
+                'behavior': 'You brought up the budget.',
+                'quote': 'Q1',
+                'why': 'You brought up the budget.',
+            }],
+        })})()
+
+    monkeypatch.setattr('lib.personal_narrative._rest_generate', fake_rest)
+
+    class Client:
+        google_api_key = 'test-key'
+        model = 'gemini-3.1-flash-lite'
+
+        def invoke(self, prompt, **kwargs):
+            raise AssertionError('the entry point should call REST')
+
+    transcript = {'utterances': [
+        {'speaker': 'L', 'text': 'The budget can wait until the client signs. ' * 8, 'start': 0, 'end': 80000},
+    ]}
+    with caplog.at_level(logging.WARNING):
+        story = build_personal_story(
+            Client(), transcript, 'L', {'name': 'Leslie'},
+            {'share': 18, 'turns': 4, 'questions': 0, 'speaker_count': 6, 'words': 80},
+        )
+    upgrades = [model for model, _prompt in seen if '3.6' in model]
+    assert len(upgrades) == 2
+    assert story['bullets'][0].lower().startswith('you seem to care')
+    assert 'show the point' in story['bullets'][0]
+
+    seen.clear()
+
+    def still_bad(model, key, prompt, mode='budget', max_output=512):
+        seen.append(model)
+        return type('Reply', (), {'content': __import__('json').dumps({
+            'bullets': [{
+                'behavior': 'You brought up the budget.',
+                'quote': 'Q1',
+                'why': 'You brought up the budget.',
+            }],
+        })})()
+
+    monkeypatch.setattr('lib.personal_narrative._rest_generate', still_bad)
+    with caplog.at_level(logging.WARNING):
+        missed = build_personal_story(
+            Client(), transcript, 'L', {'name': 'Leslie'},
+            {'share': 18, 'turns': 4, 'questions': 0, 'speaker_count': 6, 'words': 80},
+        )
+    assert seen.count('gemini-3.6-flash') == 2
+    assert missed['needs_review'] is True
+    assert 'merged bullet needs review' in caplog.text

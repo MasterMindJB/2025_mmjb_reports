@@ -171,7 +171,12 @@ def substantive_count(rows: list[dict]) -> int:
 
 def needs_short_report(rows: list[dict]) -> bool:
     """Only a small amount of speech. A long monologue is still a full report."""
-    return word_total(rows) < 60
+    return not enough_speech(rows)
+
+
+def enough_speech(rows: list[dict]) -> bool:
+    """A person with 60 words or more gets a full page, including the merged bullet."""
+    return word_total(rows) >= 60
 
 
 def turn_counts(transcript: dict | None) -> dict[str, int]:
@@ -244,7 +249,7 @@ def _prompt(name: str, lines: list[str], quotes: list[str], failures: list[str],
         'Never write a behavior that is only "You said."\n'
         'quote is only an id such as "Q1". Each bullet uses a different id. Do not retype the words.\n'
         'why is one sentence of 12 words or fewer. It starts with This or That and uses shows, helps, lets, or tells. '
-        'Do not put a restatement of the behavior in front of it. '
+        'Do not put a restatement of the behavior in front of it. Do not repeat the care phrase. '
         'Use short, common words. Do not say below, above, next page, or step below. '
         'No advice, no next time, and no should.\n'
         'Good why: That story shows people you know how long the climb takes.\n'
@@ -463,6 +468,9 @@ def _why_problem(why: str, quote: str, behavior: str, quotes: list[str] | None =
     long_why = why_length_problem(why)
     if long_why:
         return long_why
+    repeated = why_repeats_care(why, behavior)
+    if repeated:
+        return repeated
     if not why_on_topic(why, quote, behavior, quotes, speech):
         return 'why drifts from this quote'
     if why_restates(why, quote):
@@ -545,7 +553,7 @@ _EVERYDAY = {
     'self', 'hard', 'good', 'real', 'true', 'kind', 'fair', 'open', 'clear',
     'trust', 'hope', 'worth', 'heart', 'mind', 'hand', 'need', 'want', 'feel',
     'keep', 'give', 'share', 'start', 'place', 'story', 'choice', 'point',
-    'room', 'people', 'word', 'sense', 'hobby', 'hobbies',
+    'room', 'people', 'word', 'sense', 'hobby', 'hobbies', 'peace', 'art',
 }
 
 
@@ -629,6 +637,19 @@ def why_length_problem(why: str) -> str:
     sentence = listener_why(why) or str(why or '').strip()
     if sentence and len(_raw_words(sentence)) > 12:
         return 'why is longer than 12 words'
+    return ''
+
+
+def why_repeats_care(why: str, behavior: str) -> str:
+    """A why may not reuse a care phrase of two or more words."""
+    care = [word.lower() for word in _raw_words(_care_phrase(behavior))]
+    if len(care) < 2:
+        return ''
+    words = [word.lower() for word in _raw_words(why)]
+    width = len(care)
+    for index in range(len(words) - width + 1):
+        if words[index:index + width] == care:
+            return f'why repeats the care phrase: {_care_phrase(behavior)}'
     return ''
 
 
@@ -803,11 +824,33 @@ def _point_words(behavior: str, quote: str) -> set[str]:
     return {word.lower() for word in _content_words(source)}
 
 
+_DANGLING_PREP = {
+    'for', 'to', 'with', 'on', 'about', 'of', 'in', 'from', 'into', 'onto', 'at', 'by', 'as',
+}
+_COMPLEMENT_VERBS = {
+    'said', 'say', 'told', 'tell', 'thought', 'think', 'knew', 'know', 'felt', 'feel',
+    'wanted', 'want', 'asked', 'ask',
+}
+_REFLEXIVE = {'myself', 'yourself', 'himself', 'herself', 'ourselves', 'themselves'}
+
+
 def _shares_point(clause: str, point: set[str]) -> bool:
     if not point:
         return True
     got = [word.lower() for word in _content_words(clause)]
     return any(word in point or _lemma_hit(_lemma(word), list(point)) for word in got)
+
+
+def _clause_is_complete(clause: str) -> bool:
+    """A clause that stops before its complement, or on a preposition, is not a thought."""
+    words = [word.lower() for word in _raw_words(clause)]
+    if not words:
+        return False
+    if words[-1] in _DANGLING_PREP or words[-1] in _COMPLEMENT_VERBS:
+        return False
+    if len(words) >= 2 and words[-1] in _REFLEXIVE and words[-2] in _COMPLEMENT_VERBS:
+        return False
+    return True
 
 
 def shorten_quote(quote: str, behavior: str = '', limit: int = 20) -> str:
@@ -827,7 +870,7 @@ def shorten_quote(quote: str, behavior: str = '', limit: int = 20) -> str:
         count = len(_raw_words(clause))
         if count < 8 or count >= total or count >= best_len:
             continue
-        if not _shares_point(clause, point):
+        if not _clause_is_complete(clause) or not _shares_point(clause, point):
             continue
         best = clause
         best_len = count
@@ -1841,6 +1884,7 @@ def _build_personal_story(llm, transcript, label: str, info: dict, stats: dict, 
             _note_rejected_whys(label, payload, quotes, progress_dir, json.dumps(payload), reasons, {**style_note, 'model': personal_model_name(), 'repair': True}, speech)
         if payload is not None and repaired and not upgraded and (_why_failures(found) or _care_failures(found) or _behavior_failures(found)):
             logging.warning('personal why repair uses %s for %s', upgrade_model_name(), label)
+            note_upgrade(llm)
             payload = _repair_whys(llm, payload, quotes, upgrade_model_name(), speech, pool, '3.6-repair')
             payload = apply_quote_ids(payload, quotes)
             upgraded = True
@@ -1853,9 +1897,10 @@ def _build_personal_story(llm, transcript, label: str, info: dict, stats: dict, 
         if payload is not None and not reasons and not page['needs_review']:
             story = _ship_assembled(page, payload, lines, name, step, units, pick, False)
             return _stamp(story, progress_dir)
-        if payload is not None and reasons and not upgraded:
+        if payload is not None and reasons and not upgraded and upgrade_calls(llm) < 2:
             active = upgrade_model_name()
             logging.warning('personal narrative retry uses %s', active)
+            note_upgrade(llm)
             upgraded = True
             failures = reasons
             continue
@@ -1866,6 +1911,13 @@ def _build_personal_story(llm, transcript, label: str, info: dict, stats: dict, 
         if upgraded:
             break
     page = assemble_personal_bullets(pool, quotes, speech)
+    if enough_speech(rows) and not _has_merged_bullet(page) and upgrade_calls(llm) < 2:
+        logging.warning('merged bullet rescue for %s on 3.6: %s', label, '; '.join(failures))
+        note_upgrade(llm)
+        _rescue_merged_bullet(llm, quotes, speech, failures, pool)
+        page = assemble_personal_bullets(pool, quotes, speech)
+        if not _has_merged_bullet(page):
+            logging.warning('merged bullet needs review for %s: %s', label, '; '.join(failures) or 'no merged bullet')
     if page['bullets'] or (pool and page['needs_review']):
         logging.warning('personal narrative assembled from the candidate pool: %s', failures)
         payload = dict(best_payload or {})
@@ -1891,6 +1943,57 @@ def _build_personal_story(llm, transcript, label: str, info: dict, stats: dict, 
     story['short_mode'] = False
     _attach_style(story, units, str((best_payload or {}).get('style_id') or ''))
     return _stamp(story, progress_dir)
+
+
+def upgrade_calls(llm) -> int:
+    return int(getattr(llm, '_upgrade_calls', 0) or 0)
+
+
+def note_upgrade(llm) -> None:
+    try:
+        llm._upgrade_calls = upgrade_calls(llm) + 1
+    except Exception:
+        logging.warning('could not count a 3.6 call')
+
+
+def _has_merged_bullet(page: dict) -> bool:
+    items = page.get('items') or []
+    if items and items[0].get('merged') and str(items[0].get('why') or '').strip():
+        return True
+    bullets = page.get('bullets') or []
+    return bool(bullets) and str(bullets[0]).lower().startswith('you seem to care')
+
+
+def _rescue_merged_bullet(llm, quotes: list[str], speech: str, reasons: list[str], pool: list) -> None:
+    """One 3.6 call with the failing reasons and the full speech. This is the second try."""
+    quote_block = '\n'.join(f'Q{index + 1}: {quote}' for index, quote in enumerate(quotes)) or 'None.'
+    failed = '\n'.join(f'- {item}' for item in reasons) or '- the merged bullet did not pass'
+    prompt = (
+        'Write one merged first bullet. It starts with "You seem to care" and includes '
+        '"it seemed like you were trying to". Care is 2 to 4 words. The goal is 3 to 6 words. '
+        'why is one sentence of 12 words or fewer. It starts with This or That and uses shows, helps, lets, or tells. '
+        'Do not repeat the care phrase. Do not write I, me, my, or we. No advice. '
+        'quote is an id such as Q1.\n'
+        f'The earlier draft failed:\n{failed}\n'
+        f'SPEECH\n{speech or "None."}\n'
+        f'QUOTES\n{quote_block}\n'
+        'Return JSON only: {"behavior": "...", "quote": "Q1", "why": "..."}\n'
+    )
+    try:
+        raw = _raw_text(_invoke_personal(llm, prompt, upgrade_model_name()))
+    except Exception as exc:
+        logging.warning('merged bullet rescue failed: %s', exc)
+        return
+    data = _parse(raw) or {}
+    if not isinstance(data, dict):
+        return
+    behavior = str(data.get('behavior') or '')
+    why = str(data.get('why') or '')
+    quote = _quote_by_id(str(data.get('quote') or 'Q1'), quotes, 0)
+    if not quote or not _is_merged_bullet(behavior):
+        logging.warning('merged bullet rescue did not return a merged bullet')
+        return
+    pool.append(_make_candidate(behavior, quote, why, '3.6-rescue', quotes, speech))
 
 
 def _why_failures(found: dict) -> bool:
@@ -1990,7 +2093,7 @@ def _first_why_choice(llm, behavior: str, quote: str, quotes: list[str], speech:
         'Use short, common words, about a fifth-grade reading level. One sentence each. No advice. '
         'Describe them as they would recognize themselves. '
         'Do not write I, me, my, or we. "That tells me" is wrong. "This tells others" is right. '
-        'Do not restate the behavior. Return JSON only: {"whys": ["...", "...", "..."]}\n'
+        'Do not restate the behavior. Do not repeat the care phrase. Return JSON only: {"whys": ["...", "...", "..."]}\n'
         f'BEHAVIOR\n{behavior}\nQUOTE\n{quote}'
     )
     wanted = model or personal_model_name()
