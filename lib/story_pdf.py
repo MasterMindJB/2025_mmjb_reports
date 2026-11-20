@@ -1037,6 +1037,18 @@ def _short_headline(share: int, role: str) -> str:
     return 'You set the point. Name it.'
 
 
+def _bullet(pdf, text: str) -> None:
+    """One hanging bullet. The three parts stay in a single paragraph."""
+    if not text:
+        return
+    _flush_heading(pdf)
+    pdf.set_x(pdf.l_margin)
+    pdf.set_font('Poppins', '', getattr(pdf, '_body_size', 11))
+    pdf.set_text_color(20, 33, 74)
+    pdf.multi_cell(w=0, h=pdf.font_size * 1.35, text=f'• {text}', align='L')
+    pdf.ln(1)
+
+
 def _observed(text: str, observation_only: bool) -> str:
     """Drop a prescriptive sentence when the next-rep flag is off."""
     if not observation_only:
@@ -1125,22 +1137,20 @@ def write_personal_report(
     from lib.scorecard import personal_metrics
 
     observe = not personal_next_rep_enabled()
-    character = _observed(story.get('character') or '', observe)
-    goal = str(story.get('goal') or '')
-    if not goal.startswith('It seemed like you were trying to '):
-        goal = ''
-    challenge = _observed(story.get('challenge') or '', observe)
-    for line in (character, goal, challenge):
-        if line:
-            _body(pdf, line)
+    bullets = [line for line in (story.get('bullets') or []) if line]
+    if bullets:
+        for line in bullets:
+            _bullet(pdf, _observed(line, observe))
+    else:
+        character = _observed(story.get('character') or '', observe)
+        goal = str(story.get('goal') or '')
+        if not goal.startswith('It seemed like you were trying to '):
+            goal = ''
+        challenge = _observed(story.get('challenge') or '', observe)
+        for line in (character, goal, challenge):
+            if line:
+                _body(pdf, line)
     dropped = set(story.get('fallback_sections') or [])
-    why_text = story.get('why_it_matters') or ''
-    if not why_text and 'why_it_matters' not in dropped:
-        why_text = ''
-    why_text = _observed(why_text, observe)
-    if why_text:
-        _heading(pdf, 'Why it matters')
-        _body(pdf, why_text)
     _heading(pdf, 'By the numbers')
     _metric_box(pdf, story.get('scorecard') or personal_metrics(story))
     _heading(pdf, 'Your charts')

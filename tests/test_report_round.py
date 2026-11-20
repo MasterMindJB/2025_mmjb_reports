@@ -22,11 +22,11 @@ def test_header_uses_the_entered_name_then_the_email_then_nothing():
     assert header_name(entered='', email='room2@example.com') is None
     assert header_name(entered='', email='info@example.com') is None
     assert header_name(entered='', email='') is None
-    assert report_header('Steve Switaj') == "Steve, here's your report"
-    assert report_header('Ric') == "Ric, here's your report"
-    assert report_header(header_name(entered='', email='ric.viers@example.com')) == "Ric, here's your report"
-    assert report_header(None) == "Here's your report"
-    assert not report_header('Leslie').endswith('.')
+    assert report_header('Steve Switaj') == "Steve, here's your report."
+    assert report_header('Ric') == "Ric, here's your report."
+    assert report_header(header_name(entered='', email='ric.viers@example.com')) == "Ric, here's your report."
+    assert report_header(None) == "Here's your report."
+    assert report_header('Leslie').endswith('.')
 
 
 def test_steve_opening_is_not_the_garbled_line():
@@ -430,6 +430,52 @@ def test_group_page_uses_the_pattern_and_one_easy_action(tmp_path):
     assert 'back and forth' in joined
 
 
+def test_personal_bullets_use_a_different_quote_and_drop_why_it_matters(tmp_path):
+    from pypdf import PdfReader
+
+    from lib.pdf_functions import MM_PDF
+    from lib.personal_narrative import render_personal_bullets
+    from lib.story_pdf import write_personal_report
+
+    quotes = [
+        'The budget can wait until the client signs.',
+        'Name the owner before the next decision lands.',
+        'Please draft the timeline after this meeting.',
+    ]
+    text = render_personal_bullets({
+        'bullets': [
+            {'behavior': 'You seem to care about the budget.', 'quote': 'Q1', 'why': 'The budget is the point that line keeps open.'},
+            {'behavior': 'It seemed like you were trying to name an owner.', 'quote': 'Q2', 'why': 'The owner is still unnamed in that line.'},
+            {'behavior': 'The turn stayed on the timeline.', 'quote': 'Q3', 'why': 'The timeline is what that sentence keeps.'},
+        ],
+    }, quotes)
+    assert len(text) == 3
+    assert text[0].startswith('You seem to care about the budget.')
+    assert 'We came to that conclusion because of "The budget can wait until the client signs."' in text[0]
+    assert 'You seem' not in text[1]
+    assert 'You seem' not in text[2]
+    assert len({line.split('because of ')[1] for line in text}) == 3
+    short = render_personal_bullets({
+        'bullets': [
+            {'behavior': 'You seem to care about the budget.', 'quote': 'Q1', 'why': 'The budget stays open.'},
+            {'behavior': 'The turn stayed on the owner.', 'quote': 'Q2', 'why': 'The owner is still unnamed.'},
+            {'behavior': 'The timeline came last.', 'quote': 'Q3', 'why': 'The timeline can wait.'},
+        ],
+    }, quotes[:2])
+    assert len(short) == 2
+    pdf = MM_PDF(path_report_assets=__import__('pathlib').Path('report_assets'))
+    write_personal_report(pdf, {
+        'name': 'Leslie', 'header_name': 'Leslie Brathwaite', 'bullets': text,
+        'yes_but': '', 'share': 6, 'roster_shares': [('Leslie', 6)],
+        'appendix': {},
+    }, tmp_path)
+    pdf.output(tmp_path / 'leslie.pdf')
+    page = '\n'.join(item.extract_text() or '' for item in PdfReader(tmp_path / 'leslie.pdf').pages)
+    assert "Leslie, here's your report." in page
+    assert 'Why it matters' not in page
+    assert 'We came to that conclusion because of' in page
+
+
 def test_personal_box_keeps_longest_turn_and_leads_with_surprise():
     from lib.scorecard import personal_metrics
 
@@ -442,21 +488,31 @@ def test_personal_box_keeps_longest_turn_and_leads_with_surprise():
         'proposal_counts': [('Ric', 1), ('Steve', 1), ('Leslie', 1), ('G', 1)],
     }
     metrics = personal_metrics(story)
+    assert [item['key'] for item in metrics[:2]] == ['share', 'longest']
+    assert metrics[0]['label'] == 'Talk time'
     assert len(metrics) == 4
-    assert any(item['key'] == 'longest' for item in metrics)
-    surprises = [item['surprise'] for item in metrics]
-    assert surprises == sorted(surprises, reverse=True)
-    assert metrics[0]['key'] == 'questions'
-    assert 'ideas' not in {item['key'] for item in metrics}
+    tail = metrics[2:]
+    assert [item['surprise'] for item in tail] == sorted((item['surprise'] for item in tail), reverse=True)
     same = dict(story)
     same['word_counts'] = [('Ric', 200), ('Steve', 40), ('Leslie', 30), ('G', 50)]
     same['longest_turns'] = [('Ric', 200), ('Steve', 40), ('Leslie', 30), ('G', 50)]
     collapsed = personal_metrics(same)
     assert 'words' not in {item['key'] for item in collapsed}
     assert any(item['key'] == 'longest' for item in collapsed)
-    from lib.scorecard import round_half_up
+    from lib.scorecard import format_duration, round_half_up
     assert round_half_up(16.5) == 17
     assert round_half_up(5.5) == 6
+    assert format_duration(95_000) == '1:35'
+    assert format_duration(90_000) == '1:30'
+    assert format_duration(0) == '0:00'
+    timed = dict(story)
+    timed['talk_ms'] = [('Ric', 95_000), ('Steve', 40_000), ('Leslie', 20_000), ('G', 30_000)]
+    timed['longest_ms'] = [('Ric', 80_000), ('Steve', 20_000), ('Leslie', 15_000), ('G', 25_000)]
+    shown = personal_metrics(timed)
+    assert shown[0]['number'] == '1:35'
+    assert shown[0]['grade'].startswith('40% of the talk,')
+    assert shown[1]['label'] == 'Longest turn'
+    assert shown[1]['number'] == '1:20'
 
 
 def test_personal_report_has_no_next_rep_when_the_flag_is_off(tmp_path, monkeypatch):

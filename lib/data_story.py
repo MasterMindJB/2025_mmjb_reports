@@ -473,6 +473,8 @@ def personal_story(
         'question_counts': _question_roster(transcript),
         'word_counts': _word_roster(transcript),
         'longest_turns': _longest_turns(transcript),
+        'talk_ms': _talk_durations(transcript),
+        'longest_ms': _longest_durations(transcript),
         'proposal_counts': list(proposal_counts or []),
         'header_name': _header_for(info),
         'action': (draft or {}).get('action') or _personal_action(share_pct, speaker_count, question_count, int(words), turn_count),
@@ -540,6 +542,34 @@ def _longest_turns(transcript: dict | None) -> list[tuple[str, int]]:
         count = len(re.findall(r"[A-Za-z']+", text))
         best[str(who)] = max(best.get(str(who), 0), count)
     return sorted(best.items(), key=lambda item: (-item[1], item[0]))
+
+
+def _span_ms(row: dict) -> float:
+    return max(0.0, float(row.get('end') or 0) - float(row.get('start') or 0))
+
+
+def _duration_maps(transcript: dict | None) -> tuple[dict[str, float], dict[str, float]]:
+    talk: dict[str, float] = {}
+    longest: dict[str, float] = {}
+    names = _named_rows(transcript)
+    for row in (transcript or {}).get('utterances') or []:
+        if not str(row.get('text') or '').strip():
+            continue
+        who = str(row.get('name') or names.get(str(row.get('speaker') or '')) or row.get('speaker') or 'Speaker')
+        span = _span_ms(row)
+        talk[who] = talk.get(who, 0.0) + span
+        longest[who] = max(longest.get(who, 0.0), span)
+    return talk, longest
+
+
+def _talk_durations(transcript: dict | None) -> list[tuple[str, int]]:
+    talk, _longest = _duration_maps(transcript)
+    return sorted(((name, int(value)) for name, value in talk.items()), key=lambda item: (-item[1], item[0]))
+
+
+def _longest_durations(transcript: dict | None) -> list[tuple[str, int]]:
+    _talk, longest = _duration_maps(transcript)
+    return sorted(((name, int(value)) for name, value in longest.items()), key=lambda item: (-item[1], item[0]))
 
 
 def _word_roster(transcript: dict | None) -> list[tuple[str, int]]:

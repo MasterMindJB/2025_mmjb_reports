@@ -224,22 +224,22 @@ def _prompt(name: str, lines: list[str], quotes: list[str], failures: list[str],
         f'{PROMPT_MARK}\n'
         'Write in second person. Do not write the person\'s name. Say you. Do not give advice.\n'
         'Do not write a headline, a count, or a next step.\n'
-        'character: one sentence on what you seem to care about. No digits and no counts. '
-        'Ground it in a quote. Put that quote id in character_quote, such as "Q1". Do not retype the quote.\n'
-        'Good: You seem to care a lot about doing work you love.\n'
+        'bullets: 3 items when there are 3 quotes, otherwise 2. Each item has behavior, quote, and why.\n'
+        'behavior is one observed sentence. No advice, no question, no counts, no digits.\n'
+        'The first behavior starts with "You seem to care". No later behavior contains "You seem".\n'
+        'The last behavior is one thing that happened. It does not start with "It seemed like you were trying to ".\n'
+        'A middle behavior, when there are 3, may start with "It seemed like you were trying to ".\n'
+        'quote is only an id such as "Q1". Each bullet uses a different id. Do not retype the words.\n'
+        'why is one short specific sentence about that quote. Use a word from it. '
+        'Do not say below, above, next page, or step below.\n'
+        'Good behavior: You seem to care about doing work you love.\n'
         'Bad: You said "life" 5 times.\n'
-        'goal: one sentence that starts exactly "It seemed like you were trying to ".\n'
-        'challenge: one thing that happened. No advice, no question, no "what if", no "you should". '
-        'If you use a quote, put its id in challenge_quote. Do not retype it.\n'
-        'why_it_matters: one specific consequence of this pattern, using a word from their quote. '
-        'Do not say below, above, next page, or step below. No generic praise.\n'
         'yes_but: one observed caveat. No advice and no next step.\n'
         'said_quote: a quote id such as "Q2", or "" if there is no Q2.\n'
         f'{retry}'
         f'QUOTES\n{quote_block}\n'
         f'STYLE UNITS\n{_style_block(units)}\n'
-        'Return JSON only with keys character, character_quote, goal, challenge, challenge_quote, '
-        'why_it_matters, yes_but, said_quote.\n'
+        'Return JSON only with keys bullets, yes_but, said_quote.\n'
     )
 
 
@@ -281,6 +281,49 @@ def _place_quote(text: str, quote: str) -> str:
     return f'{sentences[0]} {spoken} ' + ' '.join(sentences[1:])
 
 
+def _bullet_problems(items, quotes: list[str]) -> list[str]:
+    """Each bullet is one observation, one new quote id, and one specific why."""
+    reasons = []
+    rows = [item for item in (items or []) if isinstance(item, dict)]
+    usable = [quote for quote in quotes if quote]
+    expected = 3 if len(usable) >= 3 else min(2, len(usable))
+    if expected and len(rows) != expected:
+        reasons.append(f'bullets should be {expected}')
+    seen = []
+    for index, item in enumerate(rows):
+        behavior = str(item.get('behavior') or '')
+        why = str(item.get('why') or '')
+        token = str(item.get('quote') or '').strip()
+        if index == 0 and not behavior.lower().startswith('you seem to care'):
+            reasons.append('the first bullet must start with You seem to care')
+        if index and 'you seem' in behavior.lower():
+            reasons.append('a later bullet repeats You seem')
+        if index == len(rows) - 1 and behavior.lower().startswith('it seemed like you were trying to'):
+            reasons.append('the last bullet must be the observed moment')
+        if not re.fullmatch(r'Q[1-3]', token, re.I):
+            reasons.append('each bullet needs its own quote id')
+        elif token.upper() in seen:
+            reasons.append('each bullet needs a different quote')
+        else:
+            seen.append(token.upper())
+            quote = _quote_by_id(token, quotes, -1)
+            words = _content_words(quote)
+            if words and not any(word in why.lower() for word in words):
+                reasons.append('why does not use this quote')
+        for reason in advice_problems(behavior) + advice_problems(why):
+            reasons.append(reason)
+        if _is_generic(behavior) or _is_generic(why):
+            reasons.append('a bullet is a generic line')
+        if re.search(r'\b(below|above|next page|step below)\b', f'{behavior} {why}', re.I):
+            reasons.append('a bullet points at the page')
+        if re.search(r'\b[QAU]\d+\b', f'{behavior} {why}'):
+            reasons.append('a bullet contains a control id')
+        rendered = _render_bullet(behavior, _quote_by_id(token, quotes, -1), why)
+        if reading_grade(rendered) > 6:
+            reasons.append('a bullet is above a sixth-grade reading level')
+    return reasons
+
+
 def advice_problems(text: str) -> list[str]:
     """Advice, a question, or a suggestion. Quoted speech is not judged."""
     plain = _outside_quotes(text)
@@ -292,6 +335,59 @@ def advice_problems(text: str) -> list[str]:
     if re.search(r'(?:^|[.!?]\s+)(ask|stop|name|come|put|give|let|invite|try|hand|pause)\b', plain, re.I):
         reasons.append('an imperative is advice here')
     return reasons
+
+
+def _render_bullet(behavior: str, quote: str, why: str) -> str:
+    """Behavior, the code-owned because line, then why. The quote is verbatim."""
+    statement = _strip_typed_quotes(behavior).strip().rstrip('.')
+    spoken = str(quote or '').strip().strip('"').strip('“”')
+    if spoken and spoken[-1] not in '.!?':
+        spoken += '.'
+    reason = _strip_typed_quotes(why).strip()
+    if reason and reason[-1] not in '.!?':
+        reason += '.'
+    line = f'{statement}. We came to that conclusion because of "{spoken}"'
+    if reason:
+        line = f'{line} {reason}'
+    return line
+
+
+def _bullet_sources(payload: dict) -> list[dict]:
+    raw = payload.get('bullets')
+    if isinstance(raw, list) and raw:
+        return [item for item in raw if isinstance(item, dict)]
+    sources = []
+    if payload.get('character'):
+        sources.append({
+            'behavior': payload.get('character'),
+            'quote': payload.get('character_quote') or 'Q1',
+            'why': payload.get('why_it_matters') or '',
+        })
+    if payload.get('goal'):
+        sources.append({'behavior': payload.get('goal'), 'quote': 'Q2', 'why': ''})
+    if payload.get('challenge'):
+        sources.append({
+            'behavior': payload.get('challenge'),
+            'quote': payload.get('challenge_quote') or 'Q3',
+            'why': '',
+        })
+    return sources
+
+
+def render_personal_bullets(payload: dict, quotes: list[str]) -> list[str]:
+    """Two or three bullets. Each quote is inserted by code and used once."""
+    limit = 3 if len([quote for quote in quotes if quote]) >= 3 else 2
+    rendered = []
+    used: set[str] = set()
+    for source in _bullet_sources(payload):
+        if len(rendered) >= limit:
+            break
+        quote = _quote_by_id(str(source.get('quote') or ''), quotes, -1)
+        if not quote or quote in used:
+            continue
+        used.add(quote)
+        rendered.append(_render_bullet(str(source.get('behavior') or ''), quote, str(source.get('why') or '')))
+    return rendered
 
 
 def apply_quote_ids(payload: dict, quotes: list[str]) -> dict:
@@ -312,6 +408,7 @@ def apply_quote_ids(payload: dict, quotes: list[str]) -> dict:
     if data.get('one_big_thing'):
         big = _quote_by_id(str(data.get('one_big_thing_quote') or ''), quotes, 0)
         data['one_big_thing'] = _place_quote(str(data.get('one_big_thing') or ''), big) if big else _strip_typed_quotes(str(data.get('one_big_thing') or ''))
+    data['bullets_text'] = render_personal_bullets(data, quotes)
     return data
 
 
@@ -358,8 +455,8 @@ def _content_words(text: str) -> list[str]:
 
 def _for_grade(text: str) -> str:
     """The mandated header is not part of the reading-grade check."""
-    body = re.sub(r"^[^.\n]{0,80}, here's your report\s*", '', str(text or ''), count=1)
-    return re.sub(r"^Here's your report\s*", '', body, count=1)
+    body = re.sub(r"^[^.\n]{0,80}, here's your report\.?\s*", '', str(text or ''), count=1)
+    return re.sub(r"^Here's your report\.?\s*", '', body, count=1)
 
 
 def section_problems(payload: dict, quotes: list[str], allowed: set[str], moment: str = '', share: int | None = None) -> dict[str, list[str]]:
@@ -374,42 +471,50 @@ def section_problems(payload: dict, quotes: list[str], allowed: set[str], moment
     def add(name: str, reason: str) -> None:
         found.setdefault(name, []).append(reason)
 
+    use_bullets = isinstance(payload.get('bullets'), list) and payload.get('bullets')
     fields = {
-        'character': str(payload.get('character') or ''),
-        'goal': str(payload.get('goal') or ''),
-        'challenge': str(payload.get('challenge') or ''),
-        'why_it_matters': str(payload.get('why_it_matters') or ''),
         'yes_but': str(payload.get('yes_but') or ''),
     }
+    if not use_bullets:
+        fields.update({
+            'character': str(payload.get('character') or ''),
+            'goal': str(payload.get('goal') or ''),
+            'challenge': str(payload.get('challenge') or ''),
+            'why_it_matters': str(payload.get('why_it_matters') or ''),
+        })
     if personal_next_rep_enabled():
         fields['next_rep'] = str(payload.get('next_rep') or '')
-    character = fields['character']
-    if not character.strip():
-        add('character', 'character is missing')
-    elif re.search(r'\d|%|\b(times|words|turns|percent)\b', _outside_quotes(character), re.I):
-        add('character', 'character has a count')
-    elif _is_generic(character):
-        add('character', 'character is a generic line')
-    token = str(payload.get('character_quote') or '').strip()
-    if quotes and not re.fullmatch(r'Q[1-3]', token, re.I):
-        add('character', 'character must point at a quote id')
-    elif quotes and re.fullmatch(r'Q[1-3]', token, re.I) and int(token[1]) > len(quotes):
-        add('character', 'character quote id is out of range')
-    if not fields['goal'].startswith('It seemed like you were trying to '):
-        add('goal', 'goal must start with the set phrase')
-    elif _is_generic(fields['goal']):
-        add('goal', 'goal is a generic line')
-    for reason in advice_problems(fields['challenge']):
-        add('challenge', reason)
+    if use_bullets:
+        for reason in _bullet_problems(payload.get('bullets'), quotes):
+            add('bullets', reason)
+    if not use_bullets:
+        character = fields.get('character', '')
+        if not character.strip():
+            add('character', 'character is missing')
+        elif re.search(r'\d|%|\b(times|words|turns|percent)\b', _outside_quotes(character), re.I):
+            add('character', 'character has a count')
+        elif _is_generic(character):
+            add('character', 'character is a generic line')
+        token = str(payload.get('character_quote') or '').strip()
+        if quotes and not re.fullmatch(r'Q[1-3]', token, re.I):
+            add('character', 'character must point at a quote id')
+        elif quotes and re.fullmatch(r'Q[1-3]', token, re.I) and int(token[1]) > len(quotes):
+            add('character', 'character quote id is out of range')
+        if not str(fields.get('goal') or '').startswith('It seemed like you were trying to '):
+            add('goal', 'goal must start with the set phrase')
+        elif _is_generic(fields['goal']):
+            add('goal', 'goal is a generic line')
+        for reason in advice_problems(fields.get('challenge', '')):
+            add('challenge', reason)
     for reason in advice_problems(fields['yes_but']):
         add('yes_but', reason)
-    why = fields['why_it_matters'].lower()
+    why = str(fields.get('why_it_matters') or '').lower()
     if any(phrase in why for phrase in ('your voice brings', 'good ideas', 'brings good ideas', 'to the team', 'your aim')) or _is_generic(why):
         add('why_it_matters', 'why_it_matters is generic praise')
     if re.search(r'\b(below|above|next page|step below)\b', why):
         add('why_it_matters', 'why_it_matters points at the page')
     heard = _content_words(str(payload.get('said_quote') or ''))
-    if heard and not any(word in why for word in heard):
+    if not use_bullets and heard and not any(word in why for word in heard):
         add('why_it_matters', 'why_it_matters does not use this person\'s words')
     if share is not None and re.search(r'\b(most of|almost all)\b', fields['yes_but'], re.I) and int(share) <= 50:
         add('yes_but', 'yes_but says most of the talk, but the share is not a majority')
@@ -517,6 +622,7 @@ def full_story(payload: dict, lines: list[str], name: str) -> dict:
         'next_rep': next_rep,
         'numbers': lines,
         'said_quote': str(payload.get('said_quote') or '').strip().strip('"'),
+        'bullets': list(payload.get('bullets_text') or []),
         'big_quote': '',
         'drama': character,
         'goal': goal,
@@ -860,6 +966,29 @@ def challenge_template(quotes: list[str]) -> str:
     return 'You held one turn and then stopped.'
 
 
+def _fallback_bullets(units: list[dict] | None, quotes: list[str]) -> list[str]:
+    """Care, then the observed moment, each with its own quote. No canned why."""
+    usable = [quote for quote in quotes if quote]
+    if not usable:
+        return []
+    unit = _top_content_unit(units)
+    subject = _about(unit) if unit else 'this point'
+    care = f'You seem to care a lot about {subject}'
+    moment = f'The turn stayed on {subject}'
+    goal = f'It seemed like you were trying to talk about {subject}'
+    chosen = usable[:3]
+    behaviors = [care]
+    if len(chosen) == 3:
+        behaviors.append(goal)
+    if len(chosen) >= 2:
+        behaviors.append(moment)
+    rendered = []
+    for behavior, quote in zip(behaviors, chosen):
+        word = (_content_words(quote) or ['point'])[0]
+        rendered.append(_render_bullet(behavior, quote, f'That line keeps coming back to {word}.'))
+    return rendered
+
+
 def why_template(rows: list[dict] | None = None, stats: dict | None = None, quote: str = '') -> str:
     """Why it matters is dropped when a rewrite cannot pass. There is no canned line."""
     del rows, stats, quote
@@ -884,6 +1013,9 @@ def _templated_story(name, rows, lines, quotes, stats, step, units, best_payload
     if why_failed or reading_grade(why) > 6:
         why = ''
     payload['why_it_matters'] = why
+    payload['bullets_text'] = render_personal_bullets(payload, quotes)
+    if not payload['bullets_text']:
+        payload['bullets_text'] = _fallback_bullets(units, quotes)
     yes_but = '' if (best_found or {}).get('yes_but') else str(payload.get('yes_but') or '')
     payload['yes_but'] = '' if advice_problems(yes_but) else yes_but
     payload['said_quote'] = quotes[1] if len(quotes) > 1 else (quotes[0] if quotes else '')
@@ -943,6 +1075,7 @@ def _build_personal_story(llm, transcript, label: str, info: dict, stats: dict, 
         story['character'] = beat_from_unit(units, 'character')
         story['goal'] = beat_from_unit(units, 'goal')
         story['why_it_matters'] = ''
+        story['bullets'] = _fallback_bullets(units, quotes)
         _attach_style(story, units, units[0]['id'] if units else '')
         return _stamp(story, progress_dir)
     failures: list[str] = []

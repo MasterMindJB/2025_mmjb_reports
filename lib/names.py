@@ -79,8 +79,8 @@ def report_header(name: str | None) -> str:
     """The only top line. First name only. The model does not write it."""
     cleaned = re.sub(r'\s+', ' ', (name or '').strip())
     if cleaned:
-        return f"{cleaned.split()[0]}, here's your report"
-    return "Here's your report"
+        return f"{cleaned.split()[0]}, here's your report."
+    return "Here's your report."
 
 
 def table_name(name: str) -> str:
