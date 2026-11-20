@@ -861,6 +861,129 @@ def test_two_quotes_never_become_a_short_report_and_a_bad_why_is_dropped():
     assert story['short_mode'] is False
     assert len(story['bullets']) >= 2
     assert 'name an owner' in story['bullets'][0]
-    assert 'weather' not in ' '.join(story['bullets']).lower()
     assert 'a loader' not in ' '.join(story['bullets']).lower()
     assert 'talk about the world' not in ' '.join(story['bullets']).lower()
+    assert 'We came to that conclusion because of' in story['bullets'][0]
+
+
+def test_listener_whys_pass_and_a_missing_care_noun_is_repaired(caplog, monkeypatch):
+    import logging
+
+    from lib.personal_narrative import (
+        _lemmas,
+        _usable_model_bullets,
+        _why_problem,
+        build_personal_story,
+        care_grounded,
+        why_line_grade_problem,
+        why_on_topic,
+    )
+
+    lines = [
+        'That story shows people that your dream has been real for years.',
+        'That moment lets others know this choice is not open for debate.',
+        'This shows listeners that you value daily effort over simple luck.',
+        'That history helps others see where your creative drive started.',
+        'That growth shows others how quickly your hard work paid off.',
+    ]
+    behavior = 'You seem to care about the work, and it seemed like you were trying to name it.'
+    quote = 'The budget can wait until the client signs.'
+    for line in lines:
+        assert why_on_topic(line, '', '', [], speech='')
+        assert _why_problem(line, quote, behavior, [quote], '') == ''
+    for word in ('dream', 'choice', 'work', 'effort', 'hard'):
+        assert word in _lemmas(f'The {word} stayed in the talk today.')
+    history = lines[3]
+    other = 'This highlights the specific area where you refuse to yield.'
+    with caplog.at_level(logging.INFO):
+        assert why_line_grade_problem(history, quote) == ''
+        other_problem = why_line_grade_problem(other, quote)
+    assert history in caplog.text
+    assert other in caplog.text
+    assert other_problem == '' or 'grade' in other_problem or 'long word' in other_problem
+    hinge = 'And you make it hinge upon yourself.'
+    assert not care_grounded(
+        'You seem to care about your team, and it seemed like you were trying to name the work.',
+        hinge,
+        hinge,
+    )
+    assert care_grounded(
+        'You seem to care about owning your results, and it seemed like you were trying to name the work.',
+        hinge,
+        hinge,
+    )
+    quotes = [quote, 'Name the owner before the next decision lands.']
+    kept = _usable_model_bullets({
+        'bullets': [
+            {'behavior': behavior, 'quote': 'Q1', 'why': history},
+            {
+                'behavior': 'The line named the owner.',
+                'quote': 'Q2',
+                'why': 'The weather stayed cold all morning.',
+                'why_rejected': 'The weather stayed cold all morning.',
+            },
+        ],
+    }, quotes, quote)
+    assert 'weather' in kept[1].lower()
+    assert 'history helps others' in kept[0].lower()
+    dropped = _usable_model_bullets({
+        'bullets': [
+            {'behavior': behavior, 'quote': 'Q1', 'why': history},
+            {'behavior': 'The line named the owner.', 'quote': 'Q2', 'why': lines[1]},
+            {
+                'behavior': 'The turn named the client.',
+                'quote': 'Q3',
+                'why': 'The weather stayed cold all morning.',
+                'why_rejected': 'The weather stayed cold all morning.',
+            },
+        ],
+    }, quotes + ['The client signs when the budget is ready.'], quote)
+    assert 'weather' not in dropped[2].lower()
+
+    seen = []
+
+    def fake_rest(model, key, prompt, mode='budget', max_output=512):
+        seen.append(prompt[:80])
+        if prompt.startswith('Rewrite this one sentence. Care'):
+            return type('Reply', (), {'content': 'You seem to care about owning your results, and it seemed like you were trying to name the work.'})()
+        if prompt.startswith('Rewrite this one sentence'):
+            return type('Reply', (), {'content': history})()
+        if 'Simplify' in prompt or prompt.startswith('Rewrite this one section'):
+            return type('Reply', (), {'content': 'The point was clear.'})()
+        return type('Reply', (), {'content': json.dumps({
+            'bullets': [
+                {
+                    'behavior': 'You seem to care about your team, and it seemed like you were trying to name the work.',
+                    'quote': 'Q1',
+                    'why': 'The weather stayed cold all morning.',
+                },
+                {
+                    'behavior': 'The line named the owner.',
+                    'quote': 'Q2',
+                    'why': history,
+                },
+            ],
+            'yes_but': 'Next time, try this step.',
+        })})()
+
+    monkeypatch.setattr('lib.personal_narrative._rest_generate', fake_rest)
+
+    class Client:
+        google_api_key = 'test-key'
+        model = 'gemini-3.1-flash-lite'
+
+        def invoke(self, prompt, **kwargs):
+            raise AssertionError('the entry point should call REST')
+
+    transcript = {'utterances': [
+        {'speaker': 'L', 'text': hinge + ' ' + quote, 'start': 0, 'end': 20000},
+        {'speaker': 'L', 'text': (quote + ' ') * 6, 'start': 20000, 'end': 80000},
+    ]}
+    story = build_personal_story(
+        Client(), transcript, 'L', {'name': 'Leslie'},
+        {'share': 22, 'turns': 4, 'questions': 1, 'speaker_count': 6, 'words': 80},
+    )
+    assert any(prompt.startswith('Rewrite this one sentence. Care') for prompt in seen)
+    assert any(prompt.startswith('Rewrite this one sentence') for prompt in seen)
+    assert story['short_mode'] is False
+    assert 'your team' not in story['bullets'][0].lower()
