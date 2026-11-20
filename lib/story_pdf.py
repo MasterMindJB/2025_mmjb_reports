@@ -489,14 +489,17 @@ def _vertical_bars(pairs, folder: Path, filename: str, title: str, highlight: st
     return _save_chart(figure, folder, filename)
 
 
-def _lollipop(pairs, folder: Path, filename: str, title: str, highlight: str = '') -> Path | None:
-    """A dot on a stem. Not a bar."""
+def _lollipop(pairs, folder: Path, filename: str, title: str, highlight: str = '', duration: bool = False) -> Path | None:
+    """A dot on a stem. Not a bar. Durations are labeled m:ss, from milliseconds."""
+    from lib.scorecard import format_duration
+
     rows = [(str(name), int(value or 0)) for name, value in (pairs or []) if str(name) != 'Average']
     if not rows:
         return None
     ranked = sorted(rows, key=lambda item: (item[1], item[0]))
     labels = ['You' if highlight and _same_person(name, highlight) else name for name, _value in ranked]
     values = [value for _name, value in ranked]
+    shown = [format_duration(value) if duration else str(int(value)) for value in values]
     top = max(values) if values else 0
     figure, axis = plt.subplots(figsize=(5.4, max(1.8, 0.38 * len(labels) + 0.6)), facecolor='white')
     _plain_axes(axis)
@@ -512,9 +515,9 @@ def _lollipop(pairs, folder: Path, filename: str, title: str, highlight: str = '
     axis.scatter(values, range(len(labels)), color=colors, s=36, zorder=3)
     ceiling = max(values) or 1
     pad = ceiling * 0.08 + 1
-    axis.set_xlim(0, ceiling + pad * 3)
+    axis.set_xlim(0, ceiling + pad * 4)
     for index, value in enumerate(values):
-        axis.text(value + pad, index, str(int(value)), va='center', ha='left', color=INK, fontproperties=load_poppins('regular'), fontsize=8)
+        axis.text(value + pad, index, shown[index], va='center', ha='left', color=INK, fontproperties=load_poppins('regular'), fontsize=8)
     axis.set_yticks(range(len(labels)))
     axis.set_yticklabels(labels)
     axis.get_xaxis().set_visible(False)
@@ -523,7 +526,7 @@ def _lollipop(pairs, folder: Path, filename: str, title: str, highlight: str = '
     axis.set_title(_wrap_title(title, 42), color=INK, fontproperties=load_poppins('semibold'), fontsize=11, loc='left')
     figure.tight_layout()
     _note_overlaps(figure, filename)
-    _remember(folder, filename, 'lollipop', values)
+    _remember(folder, filename, 'lollipop', values, labels, shown)
     return _save_chart(figure, folder, filename)
 
 
@@ -795,15 +798,19 @@ def _personal_charts(pdf, story: dict, folder: Path) -> None:
                 'You',
                 center=f'{you} of {total}',
             )
-    turns = story.get('longest_turns') or story.get('word_counts') or []
+    turns = list(story.get('longest_ms') or [])
+    duration = bool(turns)
+    if not turns:
+        turns = story.get('longest_turns') or story.get('word_counts') or []
     lollipop = None
     if turns:
         leaders = _join_names(_subject_names(_leaders(turns), subject))
-        verb = 'had the longest turn.' if story.get('longest_turns') else 'used the most words.'
+        verb = 'had the longest turn.' if duration or story.get('longest_turns') else 'used the most words.'
         lollipop = _lollipop(
             turns, folder, 'words.png',
             f'{leaders} {verb}' if leaders else 'No one spoke.',
             subject,
+            duration=duration,
         )
     ideas = story.get('proposal_counts') or []
     tile = None

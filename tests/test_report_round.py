@@ -529,6 +529,36 @@ def test_personal_box_keeps_longest_turn_and_leads_with_surprise():
     assert shown[1]['number'] == '1:20'
 
 
+def test_lollipop_longest_turn_matches_the_box(tmp_path):
+    from lib.pdf_functions import MM_PDF
+    from lib.scorecard import personal_metrics
+    from lib.story_pdf import _personal_charts, chart_types
+
+    story = {
+        'name': 'Ric',
+        'share': 40,
+        'speaker_count': 2,
+        'roster_shares': [('Ric', 40), ('Leslie', 20)],
+        'talk_ms': [('Ric', 120_000), ('Leslie', 40_000)],
+        'question_counts': [('Ric', 1), ('Leslie', 2)],
+        'word_counts': [('Ric', 226), ('Leslie', 91)],
+        'longest_turns': [('Ric', 226), ('Leslie', 91)],
+        'longest_ms': [('Ric', 53_000), ('Leslie', 27_000)],
+        'proposal_counts': [('Ric', 1), ('Leslie', 1)],
+    }
+    box = next(item['number'] for item in personal_metrics(story) if item['label'] == 'Longest turn')
+    assert box == '0:53'
+    pdf = MM_PDF(path_report_assets=__import__('pathlib').Path('report_assets'))
+    pdf.add_page()
+    _personal_charts(pdf, story, tmp_path)
+    saved = chart_types(tmp_path)['words.png']
+    reader = saved['labels'].index('You')
+    assert saved['value_labels'][reader] == box
+    assert saved['value_labels'][saved['labels'].index('Leslie')] == '0:27'
+    assert '226' not in saved['value_labels']
+    assert '91' not in saved['value_labels']
+
+
 def test_personal_report_has_no_next_rep_when_the_flag_is_off(tmp_path, monkeypatch):
     from PIL import Image
     from pypdf import PdfReader
