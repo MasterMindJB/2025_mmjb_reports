@@ -834,7 +834,7 @@ def session_action(stats: dict, rows: list[dict] | None = None) -> str:
     if questions == 0:
         return 'Ask 2 questions before your first point.'
     if turns <= 2 and words >= 60:
-        return 'Stop after 2 sentences and name someone.'
+        return 'Stop after two lines. Name one person.'
     if ideas == 0:
         return 'Put forward 1 idea before you stop.'
     return 'Ask 1 question before you add a point.'
@@ -844,7 +844,7 @@ def team_action(facilitator: str, quiet: str) -> str:
     """The group's one action, aimed at the person running the room."""
     who = facilitator or 'Team'
     person = quiet or 'one quiet person'
-    return f'{who}: invite {person} by name in the first 3 minutes.'
+    return f'{who}: ask {person} to speak in the first 3 minutes.'
 
 
 def turns_sentence(count: int, median: int | None = None, words: int | None = None) -> str:
@@ -1123,21 +1123,26 @@ def group_character_copy(facts: dict) -> str:
     pair = portrait.get('pair') or ()
     most, least_talk = _talk_ends(facts.get('_shares') or [])
     if most and least_talk and most != least_talk:
-        pattern = f'{most} talked the most, and {least_talk} the least.'
+        pattern = f'{most} held the floor, and {least_talk} stayed quiet.'
+        tied = most
     elif len(pair) >= 2 and pair[0] and pair[1]:
-        pattern = f'The most back and forth ran between {pair[0]} and {pair[1]}.'
+        pattern = f'{pair[0]} and {pair[1]} kept the exchange between them.'
+        tied = pair[0]
     elif portrait.get('least'):
         pattern = f'{portrait.get("least")} had the least back and forth.'
+        tied = ''
     else:
         pattern = 'Most people gave one long answer and then went quiet.'
+        tied = most
+    moment = facts.get('_moment') or {}
     closing = facts.get('_closing') or {}
-    name = str(closing.get('name') or '').strip()
-    quote = str(closing.get('text') or '').strip().strip('"')
+    quote_name = str(moment.get('name') or closing.get('name') or '').strip()
+    quote = str(moment.get('text') or '').strip().strip('"')
+    if not quote and quote_name and quote_name == tied:
+        quote = str(closing.get('text') or '').strip().strip('"')
     sentences = [pattern]
-    if name and quote:
-        sentences.append(f'{name} said "{quote}"')
-    elif name:
-        sentences.append(f'{name} said the last line.')
+    if tied and quote and (not quote_name or quote_name == tied):
+        sentences.append(f'{tied} said "{quote}"')
     ask = least_talk or portrait.get('least') or 'the person who talked the least'
     sentences.append(f'Who will ask {ask} to speak sooner?')
     return close_quotes(' '.join(sentences))

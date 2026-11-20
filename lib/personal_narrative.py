@@ -315,8 +315,17 @@ def _quote_is_verbatim(span: str, quotes: list[str]) -> bool:
     return any(cleaned == quote or cleaned in quote for quote in quotes)
 
 
+def _for_grade(text: str) -> str:
+    """The mandated header is not part of the reading-grade check."""
+    body = re.sub(r"^[^.\n]{0,80}, here's your report\s*", '', str(text or ''), count=1)
+    return re.sub(r"^Here's your report\s*", '', body, count=1)
+
+
 def section_problems(payload: dict, quotes: list[str], allowed: set[str], moment: str = '', share: int | None = None) -> dict[str, list[str]]:
     """Problems by section. Number lines are computed in code and are not judged here."""
+    if isinstance(moment, int) and share is None:
+        share = moment
+        moment = ''
     found: dict[str, list[str]] = {}
     if not isinstance(payload, dict):
         return {'one_big_thing': ['response was not an object']}
@@ -343,7 +352,8 @@ def section_problems(payload: dict, quotes: list[str], allowed: set[str], moment
         add('yes_but', 'yes_but says most of the talk, but the share is not a majority')
     for name, text in fields.items():
         plain = _outside_quotes(text)
-        if reading_grade(text) > 6:
+        limit = 5 if name == 'next_rep' else 6
+        if reading_grade(_for_grade(text)) > limit:
             add(name, f'{name} is above a sixth-grade reading level')
         lowered = plain.lower()
         for phrase in _BANNED:
@@ -355,6 +365,8 @@ def section_problems(payload: dict, quotes: list[str], allowed: set[str], moment
         for sentence in re.split(r'(?<=[.!?])\s+', text.strip()):
             if len(_numbers_outside(sentence)) > 1:
                 add(name, f'{name} has two numbers in one sentence')
+        if re.search(r'\b[QAU]\d+\b', text):
+            add(name, f'{name} contains a control id')
         if name == 'next_rep':
             continue
         for span in re.findall(r'(?:"([^"]*)"|“([^”]*)”)', text):
@@ -494,8 +506,16 @@ OUTPUT_PER_MILLION = 3.50
 
 
 def personal_model_name() -> str:
-    """Non-lite flash for the personal call. gemini-3.5-flash is deprecated."""
-    return os.getenv('GEMINI_PERSONAL_MODEL', 'gemini-3.6-flash')
+    """The first personal call. Gemini 3.6 does not honor a thinking-token cap."""
+    return os.getenv('GEMINI_PERSONAL_MODEL', 'gemini-3.1-flash-lite')
+
+
+def upgrade_model_name() -> str:
+    """Used once, only after the flash-lite draft fails a validator."""
+    return os.getenv('GEMINI_UPGRADE_MODEL', 'gemini-3.6-flash')
+
+
+THINKING_REQUEST = {'thinking_budget': THINKING_BUDGET, 'thinking_level': 'low'}
 
 
 def personal_client_settings(llm) -> dict:
@@ -546,28 +566,50 @@ def _model_not_found(exc: BaseException) -> bool:
 
 
 def for_personal_narrative(llm):
-    """Personal narrative uses non-lite flash. Every other call keeps flash-lite.
+    """The first personal call stays on flash-lite. A test double is returned unchanged."""
+    return llm
 
-    The default is gemini-3.6-flash. A 404 still falls back to flash-lite.
-    GEMINI_PERSONAL_MODEL can name a different id. A test double is returned unchanged.
-    """
-    model = getattr(llm, 'model', None)
-    if not isinstance(model, str) or 'lite' not in model:
-        return llm
+
+def upgrade_personal_llm(llm):
+    """One stronger retry after flash-lite fails a validator."""
     try:
         from langchain_google_genai import ChatGoogleGenerativeAI
     except ImportError:
         return llm
     if not isinstance(llm, ChatGoogleGenerativeAI):
         return llm
-    target = personal_model_name()
-    if target == model:
-        return llm
     kwargs = personal_client_settings(llm)
+    kwargs['model'] = upgrade_model_name()
     key = getattr(llm, 'google_api_key', None)
     if key:
         kwargs['google_api_key'] = key
     return ChatGoogleGenerativeAI(**kwargs)
+
+
+def _invoke_personal(llm, prompt):
+    """Ask for a low thinking level, then log whatever thought tokens came back."""
+    try:
+        raw = llm.invoke(prompt, generation_config={'thinking_config': dict(THINKING_REQUEST)})
+    except TypeError:
+        raw = llm.invoke(prompt)
+    meta = getattr(raw, 'usage_metadata', None) or {}
+    thoughts = meta.get('thoughts_token_count') if isinstance(meta, dict) else getattr(meta, 'thoughts_token_count', None)
+    if thoughts:
+        logging.warning('personal call thought tokens: %s', thoughts)
+    return raw
+
+
+def _simplify(llm, text: str) -> str:
+    prompt = (
+        'Simplify this to about a fifth-grade reading level. Short words. One or two short sentences. '
+        'Keep the meaning. Do not add Q1, A1, or any id. Return only the new text.\n'
+        f'{text}'
+    )
+    try:
+        return _raw_text(_invoke_personal(llm, prompt)).strip()
+    except Exception as exc:
+        logging.warning('simplify call failed: %s', exc)
+        return text
 
 
 def build_personal_story(llm, transcript, label: str, info: dict, stats: dict, progress_dir=None) -> dict:
@@ -599,13 +641,9 @@ def build_personal_story(llm, transcript, label: str, info: dict, stats: dict, p
     best_found: dict[str, list[str]] = {'one_big_thing': ['response was not JSON']}
     attempts = 0
     while attempts < 2:
-        if attempts == 1 and not used_fallback:
-            logging.warning('personal narrative retry uses flash-lite')
-            llm = fallback
-            used_fallback = True
         raw_text = ''
         try:
-            raw_text = _raw_text(llm.invoke(_prompt(name, lines, quotes, failures, '', step, units)))
+            raw_text = _raw_text(_invoke_personal(llm, _prompt(name, lines, quotes, failures, '', step, units)))
             payload = _parse(raw_text)
             if payload is not None:
                 payload = apply_quote_ids(payload, quotes)
@@ -631,12 +669,21 @@ def build_personal_story(llm, transcript, label: str, info: dict, stats: dict, p
         reasons = [reason for items in found.values() for reason in items]
         pick = str((payload or {}).get('style_id') or '')
         _record_attempt(progress_dir, label, raw_text, reasons, {**style_note, 'style_pick': pick})
+        if payload is not None and _grade_failures(found) and not used_fallback:
+            payload = _rewrite_grade(llm, payload, found)
+            found = section_problems(payload, quotes, allowed, moment, int(stats.get('share') or 0))
+            reasons = [reason for items in found.values() for reason in items]
+        if payload is not None and reasons and not used_fallback:
+            upgrade = upgrade_personal_llm(fallback)
+            if upgrade is not fallback and upgrade is not llm:
+                logging.warning('personal narrative retry uses %s', upgrade_model_name())
+                llm = upgrade
+                used_fallback = True
+                failures = reasons
+                continue
         if payload is not None and not reasons:
-            story = full_story(payload, lines, name)
+            story = _finish(full_story(payload, lines, name), step, units, pick)
             story['fallback_sections'] = []
-            story['next_rep'] = step
-            story['one_thing'] = step
-            _attach_style(story, units, pick)
             return story
         if payload is not None and (best_payload is None or len(found) < len(best_found)):
             best_payload = payload
@@ -663,6 +710,33 @@ def build_personal_story(llm, transcript, label: str, info: dict, stats: dict, p
     story['one_thing'] = step
     story['short_mode'] = False
     _attach_style(story, units, str((best_payload or {}).get('style_id') or ''))
+    return story
+
+
+def _grade_failures(found: dict) -> bool:
+    return any('reading level' in reason or 'grade' in reason for reasons in found.values() for reason in reasons)
+
+
+def _rewrite_grade(llm, payload: dict, found: dict) -> dict:
+    """One flash-lite rewrite of a section that failed the reading grade."""
+    data = dict(payload)
+    for section, reasons in found.items():
+        if any('reading level' in reason or 'grade' in reason for reason in reasons):
+            data[section] = _simplify(llm, str(data.get(section) or ''))
+    return data
+
+
+def _strip_ids(text: str) -> str:
+    cleaned = re.sub(r'\b[QAU]\d+\b', '', str(text or ''))
+    return re.sub(r'\s{2,}', ' ', cleaned).strip()
+
+
+def _finish(story: dict, step: str, units: list[dict], pick: str) -> dict:
+    story['next_rep'] = step
+    story['one_thing'] = step
+    for key in ('one_big_thing', 'why_it_matters', 'yes_but', 'next_rep'):
+        story[key] = _strip_ids(story.get(key) or '')
+    _attach_style(story, units, pick)
     return story
 
 

@@ -1004,7 +1004,7 @@ def save_chord_diagram(
     ends = _allocate_arc_ends(spans, directed)
 
     figure_width, figure_height = 10.0, 11.0
-    figure = plt.figure(figsize=(figure_width, figure_height), facecolor=LIGHT)
+    figure = plt.figure(figsize=(figure_width, figure_height), facecolor='white')
     # Square axes in inches, tight around the circle, so the chord is about two thirds of the page.
     axes_inches = 7.05
     axis = figure.add_axes(
@@ -1087,6 +1087,6 @@ def save_chord_diagram(
     path.parent.mkdir(parents=True, exist_ok=True)
     if layout_boxes is not None:
         _record_layout_boxes(figure, axis, layout_boxes)
-    figure.savefig(path, dpi=300, facecolor=LIGHT)
+    figure.savefig(path, dpi=300, facecolor='white')
     plt.close(figure)
     return names, ribbon, arcs

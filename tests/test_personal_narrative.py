@@ -252,7 +252,7 @@ def test_personal_call_uses_a_low_thinking_budget():
     from lib.personal_narrative import THINKING_BUDGET, personal_client_settings
 
     settings = personal_client_settings(type('LLM', (), {'timeout': 30})())
-    assert settings['model'] == 'gemini-3.6-flash'
+    assert settings['model'] == 'gemini-3.1-flash-lite'
     assert settings['thinking_budget'] == THINKING_BUDGET == 256
 
 
@@ -268,7 +268,7 @@ def test_personal_model_404_falls_back_to_flash_lite(monkeypatch, caplog):
     from lib.personal_narrative import moment_word, personal_model_name
 
     monkeypatch.delenv('GEMINI_PERSONAL_MODEL', raising=False)
-    assert personal_model_name() == 'gemini-3.6-flash'
+    assert personal_model_name() == 'gemini-3.1-flash-lite'
     rows = []
     for row in _long_rows():
         rows.append({**row, 'text': f"{row['text']} {row['text']}", 'end': row['start'] + 70000})

@@ -55,14 +55,43 @@ def test_a_hedge_can_beat_a_common_word_and_a_short_unit_is_subsumed():
     ] * 3)}
     units = style_candidates(transcript, 'Leslie', ['Leslie', 'Ric'])
     assert units[0]['text'] == 'i think'
+    assert opening_line(units[0]).startswith('You said "I think"')
     nested = {'utterances': _turns('Steve', ['We need a new onboarding plan.'] * 3)}
     kept = {item['text'] for item in style_candidates(nested, 'Steve', ['Steve'])}
-    assert 'a new onboarding plan' in kept
-    assert 'onboarding plan' not in kept
+    assert 'new onboarding plan' in kept
+    assert 'a new onboarding plan' not in kept
     assert 'plan' not in kept
     quiet = {'utterances': _turns('G', ['Hello there friend.'])}
     assert style_candidates(quiet, 'G', ['G']) == []
     assert opening_line(None) == ''
+
+
+def test_leslie_vocables_and_steve_contraction_are_not_units():
+    leslie = {'utterances': _turns('Leslie', ['da, da, da. da da da.'] * 3)}
+    assert style_candidates(leslie, 'Leslie', ['Leslie']) == []
+    steve = {'utterances': _turns('Steve', ["he's ready. he's here. he's the one. he's back."])}
+    assert style_candidates(steve, 'Steve', ['Steve']) == []
+    assert opening_line(None) == ''
+
+
+def test_chart_labels_do_not_cover_each_other(tmp_path):
+    from lib import story_pdf
+    from lib.story_pdf import _lollipop, _talk_share, _vertical_bars
+
+    story_pdf._OVERLAPS.clear()
+    talk = _talk_share({
+        'name': 'Leslie', 'share': 21,
+        'roster_shares': [('Leslie', 21), ('Steve', 14), ('Ric', 8)],
+    }, tmp_path)
+    columns = _vertical_bars(
+        [('Leslie', 1), ('Steve Switaj', 4), ('Ric Viers', 2)],
+        tmp_path, 'who-asked.png', 'Steve asked the most questions.', 'Leslie',
+    )
+    dots = _lollipop(
+        [('Leslie', 40), ('Steve', 120)], tmp_path, 'turns.png', 'Steve had the longest turn.', 'Leslie',
+    )
+    assert talk.is_file() and columns.is_file() and dots.is_file()
+    assert story_pdf._OVERLAPS == []
 
 
 def test_low_share_does_not_get_the_long_turn_script_and_most_of_needs_a_majority():
@@ -159,6 +188,35 @@ def test_chart_types_do_not_repeat_inside_one_report(tmp_path):
     text = '\n'.join(page.extract_text() or '' for page in PdfReader(tmp_path / 'group.pdf').pages)
     assert 'How to read this chart' not in text
     assert 'Appendix' in text
+
+
+def test_control_ids_are_rejected_and_next_rep_templates_stay_easy():
+    from lib.personal_narrative import section_problems
+    from lib.readability import reading_grade
+    from lib.story_render import session_action
+
+    leaked = {
+        'one_big_thing': 'You named the risk. Will you ask someone else?',
+        'why_it_matters': 'The point in A1 is the one the room can use.',
+        'yes_but': 'The turn was long.',
+        'next_rep': 'Ask 1 question before you add a point.',
+    }
+    reasons = section_problems(leaked, ['The point is the one the room can use.'], {'1'}, '', 21)
+    assert any('control id' in item for item in reasons['why_it_matters'])
+    # A stale runner passed the share as the moment argument.
+    stale = section_problems(leaked, ['The point is the one the room can use.'], {'1'}, 21)
+    assert 'yes_but' not in stale or 'majority' not in ' '.join(stale.get('yes_but', []))
+    for stats in (
+        {'share': 4, 'speaker_count': 6, 'questions': 2, 'ideas': 1, 'words': 80, 'turns': 4},
+        {'share': 30, 'speaker_count': 6, 'questions': 0, 'ideas': 1, 'words': 80, 'turns': 4},
+        {'share': 30, 'speaker_count': 6, 'questions': 2, 'ideas': 1, 'words': 90, 'turns': 1},
+        {'share': 30, 'speaker_count': 6, 'questions': 2, 'ideas': 0, 'words': 90, 'turns': 4},
+        {'share': 30, 'speaker_count': 6, 'questions': 2, 'ideas': 1, 'words': 90, 'turns': 4},
+    ):
+        assert reading_grade(session_action(stats)) <= 5
+    from lib.personal_narrative import _for_grade
+
+    assert _for_grade("Ric Viers, here's your report The turn was long.").startswith('The turn')
 
 
 def test_passed_to_stays_at_grade_six_and_the_run_stays_under_two_cents():

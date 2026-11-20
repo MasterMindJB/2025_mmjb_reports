@@ -10,10 +10,18 @@ import re
 
 from lib.report_stats import BIGRAM_STOPWORDS
 
-_FILLERS = {'um', 'uh', 'hmm', 'er', 'ah', 'erm', 'mm', 'hm'}
+_FILLERS = {'um', 'uh', 'hmm', 'er', 'ah', 'erm', 'mm', 'hm', 'da', 'la', 'na', 'bah', 'doo', 'oh', 'ha', 'hey', 'yo'}
 _STYLE_MARKERS = {
     'i think', 'i mean', 'you know', 'kind of', 'sort of', 'a little',
     'really', 'just', 'i guess', 'a bit', 'you see',
+}
+_PRONOUNS = {
+    'i', 'me', 'my', 'you', 'your', 'he', 'she', 'it', 'we', 'they', 'him', 'her',
+    'his', 'hers', 'them', 'us', 'our',
+}
+_CONTRACTIONS = {
+    'im', 'ive', 'id', 'ill', 'hes', 'shes', 'its', 'theyre', 'youre', 'thats',
+    'whats', 'whos', 'dont', 'cant', 'wont', 'didnt', 'isnt', 'arent', 'wasnt',
 }
 _STOP = set(BIGRAM_STOPWORDS) | {
     'like', 'yeah', 'yes', 'well', 'right', 'gonna', 'wanna', 'stuff', 'thing', 'things',
@@ -33,15 +41,58 @@ def _name_tokens(names: list[str] | None) -> set[str]:
     return found
 
 
+def _bare(part: str) -> str:
+    return part.replace("'", '')
+
+
+def _vocable(part: str) -> bool:
+    token = _bare(part)
+    if token in _FILLERS or len(token) < 3:
+        return True
+    if re.fullmatch(r'(.)\1+', token):
+        return True
+    return False
+
+
+def _reduplicated(parts: list[str]) -> bool:
+    bare = [_bare(part) for part in parts]
+    return len(bare) >= 2 and len(set(bare)) == 1
+
+
+def _content(part: str) -> bool:
+    token = _bare(part)
+    if len(token) < 3 or token in _STOP or token in _PRONOUNS or token in _CONTRACTIONS:
+        return False
+    if _vocable(part):
+        return False
+    return True
+
+
 def _keep(unit: str, names: set[str]) -> bool:
+    """A unit needs a content word, or it must be a known style marker."""
     parts = unit.split()
-    if any(part in _FILLERS or part in names for part in parts):
+    if not parts or any(part in names for part in parts):
         return False
     if unit in _STYLE_MARKERS or (len(parts) == 1 and parts[0] in _STYLE_MARKERS):
         return True
-    if all(part in _STOP for part in parts):
+    if _reduplicated(parts) or any(_vocable(part) for part in parts):
         return False
-    return True
+    if any(_bare(part) in _CONTRACTIONS or _bare(part) in _PRONOUNS for part in parts):
+        return False
+    return any(_content(part) for part in parts)
+
+
+def display_unit(unit: str) -> str:
+    """'i think' prints as 'I think'."""
+    shown = []
+    for part in str(unit or '').split():
+        if part == 'i':
+            shown.append('I')
+        elif part.startswith("i'") or part.startswith('i’'):
+            shown.append('I' + part[1:])
+        else:
+            shown.append(part)
+    return ' '.join(shown)
 
 
 def _counts(turns: list[str]) -> dict[str, int]:
@@ -123,7 +174,7 @@ def opening_line(candidate: dict | None) -> str:
     """The code-owned opening. No article before the quoted unit."""
     if not candidate:
         return ''
-    unit = str(candidate.get('text') or '').strip()
+    unit = display_unit(str(candidate.get('text') or '').strip())
     count = int(candidate.get('count') or 0)
     if not unit or count < 2:
         return ''
