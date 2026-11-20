@@ -811,9 +811,10 @@ def _personal_charts(pdf, story: dict, folder: Path) -> None:
         you_ideas = next((int(value) for name, value in ideas if _same_person(str(name), subject)), 0)
         top = max((int(value or 0) for _name, value in ideas), default=0)
         tile = _big_number(you_ideas, top, folder, 'ideas-you.png', 'Ideas put forward')
-    _image_row(pdf, talk, columns, anchor=True)
-    leftovers = [path for path in (donut, lollipop, tile) if path and Path(path).is_file()]
-    _place_leftover_charts(pdf, leftovers)
+    _image_row(pdf, talk, columns)
+    _image_row(pdf, donut, lollipop)
+    if tile:
+        _image(pdf, tile)
 
 
 def _leaders(pairs) -> list[str]:
@@ -925,90 +926,21 @@ def _phrase_chart(story: dict, folder: Path) -> Path | None:
     return _save_chart(figure, folder, 'phrase.png')
 
 
-def _group_height(pdf, charts: list, ratio: float) -> float:
-    height = 0
-    rows = [charts[:2]]
-    if len(charts) > 2:
-        rows.append(charts[2:4])
-    for row in rows:
-        files = [path for path in row if path]
-        if not files:
-            continue
-        width = pdf.epw * (min(0.72, ratio * 1.4) if len(files) == 1 else ratio)
-        height += max(_image_height(pdf, Path(path), width) for path in files) + 2
-    return height
-
-
-def _place_leftover_charts(pdf, charts: list) -> None:
-    """Page 2 holds the donut, the longest-turn chart, and the ideas tile at full size."""
-    charts = [path for path in charts if path and Path(path).is_file()]
-    if not charts:
-        return
-    pdf.add_page()
-    _draw_chart_group(pdf, charts, 0.48)
-
-
-def _draw_chart_group(pdf, charts: list, ratio: float) -> None:
-    """Draw leftover charts at this width. The caller already chose the page."""
-    previous = pdf.auto_page_break
-    margin = pdf.b_margin
-    pdf.set_auto_page_break(False)
-    rows = [charts[:2]]
-    if len(charts) > 2:
-        rows.append(charts[2:4])
-    for row in rows:
-        files = [path for path in row if path]
-        if not files:
-            continue
-        y = pdf.get_y()
-        if len(files) == 1:
-            width = pdf.epw * min(0.72, ratio * 1.4)
-            pdf.image(str(files[0]), x='C', w=width)
-            pdf.set_y(y + _image_height(pdf, Path(files[0]), width) + 1)
-            continue
-        width = pdf.epw * ratio
-        pdf.image(str(files[0]), x=pdf.l_margin, y=y, w=width)
-        pdf.image(str(files[1]), x=pdf.l_margin + pdf.epw - width, y=y, w=width)
-        height = max(_image_height(pdf, Path(path), width) for path in files)
-        pdf.set_y(y + height + 1)
-        if hasattr(pdf, 'note_y'):
-            pdf.note_y()
-    pdf.set_auto_page_break(previous, margin)
-
-
-def _row_height(pdf, paths, ratio: float = 0.48) -> float:
-    files = [Path(path) for path in paths if path and Path(path).is_file()]
-    if not files:
-        return 0
-    width = pdf.epw * (0.72 if len(files) == 1 else ratio)
-    return max(_image_height(pdf, path, width) for path in files) + 2
-
-
-def _image_row(pdf, left: Path | None, right: Path | None, *, anchor: bool = False, together: bool = False) -> None:
+def _image_row(pdf, left: Path | None, right: Path | None) -> None:
     """Two charts on one row when both exist. One chart uses the full width."""
     paths = [path for path in (left, right) if path and Path(path).is_file()]
     if not paths:
         return
-    ratio = 0.48
-    if together and not anchor and _remaining(pdf) < _row_height(pdf, paths, ratio) + 2:
-        pdf.add_page()
     _flush_heading(pdf)
-    if anchor:
-        room = _remaining(pdf)
-        height = _row_height(pdf, paths, ratio)
-        if height + 1 > room > 18:
-            ratio *= max(0.45, (room - 4) / height)
     y = pdf.get_y()
     if len(paths) == 1:
-        width = pdf.epw * (0.72 if not anchor else min(0.72, ratio * 1.4))
-        pdf.image(str(paths[0]), x='C', w=width)
-        pdf.set_y(y + _image_height(pdf, Path(paths[0]), width) + 1)
-    else:
-        width = pdf.epw * ratio
-        pdf.image(str(paths[0]), x=pdf.l_margin, y=y, w=width)
-        pdf.image(str(paths[1]), x=pdf.l_margin + pdf.epw - width, y=y, w=width)
-        height = max(_image_height(pdf, Path(path), width) for path in paths)
-        pdf.set_y(y + height + 1)
+        pdf.image(str(paths[0]), x='C', w=pdf.epw * 0.72)
+        pdf.ln(1)
+        return
+    width = pdf.epw * 0.48
+    pdf.image(str(paths[0]), x=pdf.l_margin, y=y, w=width)
+    pdf.image(str(paths[1]), x=pdf.l_margin + pdf.epw * 0.52, y=y, w=width)
+    pdf.set_y(y + 62)
     if hasattr(pdf, 'note_y'):
         pdf.note_y()
 

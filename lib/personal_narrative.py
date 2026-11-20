@@ -229,10 +229,12 @@ def _prompt(name: str, lines: list[str], quotes: list[str], failures: list[str],
         'No advice, no question, no counts, no digits. '
         'Do not use a long word that is not in the quote.\n'
         'The first behavior merges care and goal. It starts with "You seem to care" and includes "it seemed like you were trying to".\n'
-        'Care is a short phrase of 2 to 5 common words for what the quote shows they value. '
+        'Care is a short phrase of 2 to 4 words for what the quote shows they value. '
         'It is not a bare noun copied from the quote, and not "the" plus one noun. '
-        'The goal says what they were trying to show or do for the listener. '
+        'The goal is 3 to 6 words and says what they were trying to show or do for the listener. '
         'It must not repeat the quote\'s own verb and object. Do not copy a placeholder.\n'
+        'The first bullet, not counting the quote or "We came to that conclusion because of", '
+        'is 30 words or fewer. Count the fixed care and goal openers.\n'
         'Describe the person as they would recognize themselves. '
         'Do not frame them with self-importance, main focus, ego, selfish, or about yourself '
         'unless their own words use that framing.\n'
@@ -241,7 +243,7 @@ def _prompt(name: str, lines: list[str], quotes: list[str], failures: list[str],
         'No later behavior contains "You seem" or starts with "It seemed like you were trying to".\n'
         'Never write a behavior that is only "You said."\n'
         'quote is only an id such as "Q1". Each bullet uses a different id. Do not retype the words.\n'
-        'why is one sentence. It starts with This or That and uses shows, helps, lets, or tells. '
+        'why is one sentence of 12 words or fewer. It starts with This or That and uses shows, helps, lets, or tells. '
         'Do not put a restatement of the behavior in front of it. '
         'Use short, common words. Do not say below, above, next page, or step below. '
         'No advice, no next time, and no should.\n'
@@ -458,6 +460,9 @@ def _why_problem(why: str, quote: str, behavior: str, quotes: list[str] | None =
     voice = voice_problem(why, speech)
     if voice:
         return voice
+    long_why = why_length_problem(why)
+    if long_why:
+        return long_why
     if not why_on_topic(why, quote, behavior, quotes, speech):
         return 'why drifts from this quote'
     if why_restates(why, quote):
@@ -587,26 +592,58 @@ def _phrase_words(phrase: str) -> list[str]:
     return [word.lower() for word in re.findall(r"[A-Za-z']+", phrase or '') if word.lower() not in skip]
 
 
+def _raw_words(text: str) -> list[str]:
+    return re.findall(r"[A-Za-z']+", text or '')
+
+
 def care_phrase_problem(behavior: str, quote: str = '') -> str:
-    """Care is a 2–5 word value phrase, not a bare noun from the quote."""
+    """Care is a 2–4 word value phrase, not a bare noun from the quote."""
     phrase = _care_phrase(behavior)
     if not phrase:
         return ''
-    words = _phrase_words(phrase)
-    if len(words) < 2 or len(words) > 5 or re.fullmatch(r'(?:the|a|an|your|my)\s+\w+', phrase.strip(), re.I):
+    raw = _raw_words(phrase)
+    if len(raw) < 2 or len(_phrase_words(phrase)) < 2 or re.fullmatch(r'(?:the|a|an|your|my)\s+\w+', phrase.strip(), re.I):
         return f'care object is a bare noun: {phrase}'
+    if len(raw) > 4:
+        return f'care phrase is the wrong length: {phrase}'
     return ''
 
 
 def goal_phrase_problem(behavior: str, quote: str) -> str:
-    """A goal whose content words are all copied from the quote restates it."""
+    """A goal is 3–6 words, and it does not only restate the quote."""
     phrase = _goal_phrase(behavior)
+    raw = _raw_words(phrase)
+    if raw and (len(raw) < 3 or len(raw) > 6):
+        return f'goal phrase is the wrong length: {phrase}'
     words = _example_lemmas(phrase)
     if not words:
         return ''
     quote_lemmas = _example_lemmas(quote)
     if all(_lemma_hit(word, quote_lemmas) or word in str(quote or '').lower() for word in words):
         return f'goal restates the quote: {phrase}'
+    return ''
+
+
+def why_length_problem(why: str) -> str:
+    """Every why is one sentence of 12 words or fewer."""
+    sentence = listener_why(why) or str(why or '').strip()
+    if sentence and len(_raw_words(sentence)) > 12:
+        return 'why is longer than 12 words'
+    return ''
+
+
+def merged_length_problem(behavior: str, why: str) -> str:
+    """The merged bullet, excluding the quote and its because-line, stays within 30 words.
+
+    The fixed openers inside the behavior are counted. The quote is not.
+    """
+    if not _is_merged_bullet(behavior):
+        return ''
+    statement = _strip_typed_quotes(behavior).strip().rstrip('.')
+    reason = listener_why(_strip_typed_quotes(why), behavior)
+    text = f'{statement}. {reason}'.strip() if reason else statement
+    if len(_raw_words(text)) > 30:
+        return 'bullet is longer than 30 words'
     return ''
 
 
@@ -673,6 +710,10 @@ def _bullet_problems(items, quotes: list[str], speech: str = '') -> list[str]:
             copied_goal = goal_phrase_problem(behavior, quote)
             if copied_goal:
                 reasons.append(copied_goal)
+            if index == 0:
+                too_long = merged_length_problem(behavior, why)
+                if too_long:
+                    reasons.append(too_long)
             hard_behavior = behavior_word_problem(behavior, quote)
             if hard_behavior:
                 reasons.append(hard_behavior)
@@ -737,10 +778,50 @@ def _sentence_restates(sentence: str, behavior: str) -> bool:
     return len(left & right) / len(left) >= 0.5
 
 
+_CLAUSE_SPLIT = re.compile(r'\s*[,;:]+\s*|\s+[—–]\s+|\s+-\s+|\s+\b(?:and|but|or)\b\s+', re.I)
+
+
+def _verbatim_clauses(text: str) -> list[str]:
+    """Contiguous spans that end at a comma, colon, dash, conjunction, or the sentence end."""
+    parts = []
+    start = 0
+    for match in _CLAUSE_SPLIT.finditer(text):
+        chunk = text[start:match.start()].strip(' ,;:—–-')
+        if chunk:
+            parts.append(chunk)
+        start = match.end()
+    tail = text[start:].strip(' ,;:—–-')
+    if tail:
+        parts.append(tail)
+    return parts
+
+
+def shorten_quote(quote: str, limit: int = 20) -> str:
+    """The shortest verbatim clause that still shares the sentence's point. No ellipsis."""
+    text = str(quote or '').strip().strip('"').strip('“”').strip()
+    if len(_raw_words(text)) <= limit:
+        return text
+    point = {word.lower() for word in _content_words(text)}
+    best = ''
+    best_len = len(_raw_words(text)) + 1
+    for clause in _verbatim_clauses(text):
+        core = clause.rstrip('.!?').strip()
+        if not core or core not in text:
+            continue
+        got = {word.lower() for word in _content_words(core)}
+        if point and not (got & point):
+            continue
+        count = len(_raw_words(core))
+        if count and count < best_len:
+            best = core
+            best_len = count
+    return best or text
+
+
 def _render_bullet(behavior: str, quote: str, why: str) -> str:
     """Behavior, the code-owned because line, then one why. The quote keeps its own period."""
     statement = _strip_typed_quotes(behavior).strip().rstrip('.')
-    spoken = str(quote or '').strip().strip('"').strip('“”')
+    spoken = shorten_quote(str(quote or '').strip().strip('"').strip('“”'))
     if spoken and spoken[-1] not in '.!?':
         spoken += '.'
     reason = listener_why(_strip_typed_quotes(why), behavior)
@@ -1813,7 +1894,9 @@ def _care_failures(found: dict) -> bool:
     reasons = [reason for items in found.values() for reason in items]
     return any(
         reason.startswith('care object') or reason.startswith('goal object') or reason.startswith('goal restates')
+        or reason.startswith('goal phrase') or reason.startswith('care phrase')
         or reason.startswith('uncharitable') or reason.startswith('first person')
+        or reason.startswith('bullet is longer') or reason.startswith('why is longer')
         for reason in reasons
     )
 
@@ -1837,7 +1920,7 @@ def _fk_only(found: dict) -> bool:
 def _repair_sentence(llm, text: str, quote: str, behavior: str = '', model: str | None = None) -> str:
     """Rewrite one why. Flash-lite uses thinkingBudget 0 and a 128 cap. 3.6 uses minimal."""
     prompt = (
-        'Rewrite this one sentence in short words, about a fifth-grade reading level. '
+        'Rewrite this one sentence in 12 words or fewer, about a fifth-grade reading level. '
         'Say why it matters for this person or the listener. '
         'Keep the topic of the behavior and the quote. '
         'Describe them as they would recognize themselves. '
@@ -1862,8 +1945,9 @@ def _repair_sentence(llm, text: str, quote: str, behavior: str = '', model: str 
 def _repair_behavior(llm, behavior: str, quote: str, model: str | None = None) -> str:
     """Rewrite a care sentence that is a bare noun, a copied goal, or ungrounded."""
     prompt = (
-        'Rewrite this one sentence. Care is a phrase of 2 to 5 common words for what they value, not a bare noun from the quote. '
-        'The goal says what they were trying to show or do for the listener, and does not copy the quote\'s verb and object. '
+        'Rewrite this one sentence. Care is a phrase of 2 to 4 words for what they value, not a bare noun from the quote. '
+        'The goal is 3 to 6 words. It says what they were trying to show or do for the listener, and does not copy the quote\'s verb and object. '
+        'The care sentence plus a why of 12 words or fewer stays within 30 words. Do not count the quote. '
         'Describe them as they would recognize themselves. '
         'Do not use self-importance, main focus, ego, selfish, or about yourself unless the quote does. '
         'Do not write I, me, my, or we. '
@@ -1886,7 +1970,7 @@ def _repair_behavior(llm, behavior: str, quote: str, model: str | None = None) -
 def _first_why_choice(llm, behavior: str, quote: str, quotes: list[str], speech: str, model: str | None, source: str) -> str:
     """Three one-sentence whys in one call. The first that passes is kept."""
     prompt = (
-        'Write 3 different one-sentence whys. Each starts with This or That and uses shows, helps, lets, or tells. '
+        'Write 3 different one-sentence whys of 12 words or fewer. Each starts with This or That and uses shows, helps, lets, or tells. '
         'Use short, common words, about a fifth-grade reading level. One sentence each. No advice. '
         'Describe them as they would recognize themselves. '
         'Do not write I, me, my, or we. "That tells me" is wrong. "This tells others" is right. '
@@ -1935,6 +2019,7 @@ def _repair_whys(llm, payload: dict, quotes: list[str], model: str | None = None
             or care_phrase_problem(behavior, quote)
             or goal_phrase_problem(behavior, quote)
             or voice_problem(behavior, heard)
+            or merged_length_problem(behavior, '')
             or (index == 0 and not care_grounded(behavior, heard, quote))
         ):
             bullet['behavior'] = _repair_behavior(llm, behavior, quote, model)
@@ -1947,6 +2032,8 @@ def _repair_whys(llm, payload: dict, quotes: list[str], model: str | None = None
             or problem.startswith('a bullet is above')
             or problem.startswith('first person')
             or problem.startswith('uncharitable')
+            or problem.startswith('why is longer')
+            or merged_length_problem(behavior, why)
             or problem == 'why is missing'
         )
         if index == 0 and _is_merged_bullet(behavior) and failing:
@@ -2010,6 +2097,9 @@ def _make_candidate(behavior: str, quote: str, why: str, source: str, quotes: li
     copied_goal = goal_phrase_problem(behavior, quote)
     if copied_goal:
         problems.append(copied_goal)
+    too_long = merged_length_problem(behavior, why)
+    if too_long:
+        problems.append(too_long)
     leaked = prompt_example_problem(behavior, speech)
     if leaked:
         problems.append(leaked)
@@ -2075,6 +2165,7 @@ def assemble_personal_bullets(pool: list, quotes: list[str], speech: str = '') -
             item for item in merged_rows
             if not behavior_word_problem(item['behavior'], item['quote'])
             and not voice_problem(item['behavior'], speech)
+            and not merged_length_problem(item['behavior'], '')
         ]
         passing = [
             item for item in shippable
@@ -2098,7 +2189,9 @@ def assemble_personal_bullets(pool: list, quotes: list[str], speech: str = '') -
             quote = base['quote']
             same_quote = [
                 item for item in pool
-                if item.get('quote') == quote and _why_passes_gate(behavior, quote, item.get('why') or '', quotes, speech)
+                if item.get('quote') == quote
+                and _why_passes_gate(behavior, quote, item.get('why') or '', quotes, speech)
+                and not merged_length_problem(behavior, item.get('why') or '')
             ]
             first = {
                 'behavior': behavior,

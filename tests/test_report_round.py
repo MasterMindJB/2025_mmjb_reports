@@ -764,9 +764,11 @@ def test_talk_and_question_charts_stay_with_the_box(tmp_path):
     assert 'By the numbers' in first
     assert 'Your charts' in first
     counts = [len(list(page.images)) for page in pages]
-    assert len(pages) >= 2
-    assert 'What you said' not in first
-    assert counts[1] >= 4
+    assert 'Your charts' in first
+    assert counts[0] > 1
+    full = '\n'.join((page.extract_text() or '') for page in pages)
+    assert full.find('Your charts') < full.find('What you said')
+    assert 'Why it matters' not in full
 
 
 def test_a_drifting_why_is_rewritten_without_dropping_the_behavior(monkeypatch, tmp_path):
@@ -1004,8 +1006,8 @@ def test_the_page_is_assembled_from_passing_candidates_only():
 
     movies = "I've always been into making movies, making music, whatever it is."
     music = 'Making music stayed with him for years before the room heard it.'
-    merged = 'You seem to care about making movies, and it seemed like you were trying to make music.'
-    good = 'That story shows people that making movies started early.'
+    merged = 'You seem to care about making movies, and it seemed like you were trying to show the music.'
+    good = 'This shows movies started early.'
     other = 'That moment lets others know the music still matters.'
     hard = 'That choice shows people your autonomy grew into independence over years.'
     assert why_line_grade_problem(hard, movies)
@@ -1019,7 +1021,7 @@ def test_the_page_is_assembled_from_passing_candidates_only():
     assert page['needs_review'] is False
     assert page['bullets'][0].lower().startswith('you seem to care')
     assert 'autonomy' not in page['bullets'][0].lower()
-    assert 'making movies started early' in page['bullets'][0].lower()
+    assert 'movies started early' in page['bullets'][0].lower()
     for bullet in page['bullets']:
         why = bullet.split('."')[-1].strip()
         quote = movies if 'movies' in bullet else music
@@ -1036,7 +1038,7 @@ def test_the_page_is_assembled_from_passing_candidates_only():
     ric = assemble_personal_bullets(ric_pool, [movies, music], movies)
     assert ric['bullets'][0].lower().startswith('you seem to care')
     assert 'autonomy' not in ' '.join(ric['bullets']).lower()
-    assert 'making movies started early' in ric['bullets'][0].lower()
+    assert 'movies started early' in ric['bullets'][0].lower()
 
     stephen_pool = [
         {'behavior': merged, 'quote': movies, 'why': good, 'merged': True, 'passes': True, 'source': 'flash-lite'},
@@ -1058,7 +1060,7 @@ def test_a_prompt_example_does_not_become_stephens_goal_and_bare_bullets_drop(mo
     instructions = _prompt('Stephen', [], [quote], [], '', '', None)
     assert 'owning your results' not in instructions
     assert 'your team' not in instructions
-    assert '2 to 5 common words' in instructions
+    assert '2 to 4 words' in instructions
 
     why = 'That story shows people that making movies started early.'
     other = 'That moment lets others know the music still matters.'
@@ -1295,7 +1297,8 @@ def test_the_merged_behavior_is_graded_without_the_scaffold():
         'and it seemed like you were trying to show people how that early start still shapes the work.'
     )
     assert behavior_word_problem(hard, quote)
-    why = 'This shows people the point.'
+    why = 'This shows people.'
+    fit = 'You seem to care about work you can trust, and it seemed like you were trying to show people now.'
     blocked = assemble_personal_bullets(
         [{'behavior': hard, 'quote': quote, 'why': why, 'merged': True, 'passes': True, 'source': 'flash-lite'}],
         [quote],
@@ -1306,7 +1309,7 @@ def test_the_merged_behavior_is_graded_without_the_scaffold():
     kept = assemble_personal_bullets(
         [
             {'behavior': hard, 'quote': quote, 'why': why, 'merged': True, 'passes': True, 'source': 'flash-lite'},
-            {'behavior': easy, 'quote': quote, 'why': why, 'merged': True, 'passes': True, 'source': 'repair'},
+            {'behavior': fit, 'quote': quote, 'why': why, 'merged': True, 'passes': True, 'source': 'repair'},
         ],
         [quote],
         quote,
@@ -1319,7 +1322,7 @@ def test_the_merged_behavior_is_graded_without_the_scaffold():
 
         def invoke(self, prompt, **kwargs):
             assert prompt.startswith('Rewrite this one sentence. Care')
-            return type('Reply', (), {'content': easy})()
+            return type('Reply', (), {'content': fit})()
 
     fixed = _repair_whys(
         Repair(),
@@ -1327,4 +1330,48 @@ def test_the_merged_behavior_is_graded_without_the_scaffold():
         [quote],
         speech=quote,
     )
-    assert fixed['bullets'][0]['behavior'] == easy
+    assert fixed['bullets'][0]['behavior'] == fit
+
+
+def test_the_first_bullet_stays_short_and_a_long_quote_keeps_a_clause():
+    from lib.personal_narrative import (
+        care_phrase_problem,
+        goal_phrase_problem,
+        merged_length_problem,
+        shorten_quote,
+        why_length_problem,
+        _render_bullet,
+    )
+
+    short = 'You seem to care about real work, and it seemed like you were trying to show the point.'
+    why = 'This helps people.'
+    quote = 'The budget can wait until the client signs.'
+    assert care_phrase_problem(short, quote) == ''
+    assert goal_phrase_problem(short, quote) == ''
+    assert why_length_problem(why) == ''
+    assert merged_length_problem(short, why) == ''
+    assert care_phrase_problem(
+        'You seem to care about the work you can trust most, and it seemed like you were trying to show the point.',
+        quote,
+    )
+    assert goal_phrase_problem(
+        'You seem to care about real work, and it seemed like you were trying to show it.',
+        quote,
+    )
+    assert why_length_problem('This shows people that the long history of the work still matters today.')
+    assert merged_length_problem(
+        'You seem to care about work you can trust, and it seemed like you were trying to show people the point.',
+        'This shows people the point of the work in the room today.',
+    )
+    long = (
+        "I've always been into making movies, making music, whatever it is, "
+        'and the work should show people a feeling they can keep for years.'
+    )
+    clause = shorten_quote(long)
+    assert len(clause.split()) < len(long.split())
+    assert len(clause.split()) <= 20
+    assert '...' not in clause
+    assert clause in long
+    rendered = _render_bullet(short, long, why)
+    assert '...' not in rendered
+    assert clause in rendered
