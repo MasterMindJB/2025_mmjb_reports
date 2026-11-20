@@ -301,13 +301,14 @@ def _lemmas(text: str) -> list[str]:
     skip = {
         'about', 'their', 'there', 'which', 'would', 'could', 'should', 'while', 'still',
         'being', 'people', 'shows', 'showed', 'matters', 'means', 'because', 'room',
+        'helps', 'help', 'this', 'that', 'your', 'with', 'from', 'have', 'been',
     }
     found = []
     for word in re.findall(r"[A-Za-z']+", text or ''):
         if "'" in word or word.lower() in _FUNCTION or word.lower() in skip:
             continue
         lemma = _lemma(word)
-        if len(lemma) < 4 or lemma in skip:
+        if len(lemma) < 3 or lemma in skip:
             continue
         found.append(lemma)
     return found
@@ -327,13 +328,16 @@ _CONSEQUENCE = re.compile(
 )
 
 
-def why_on_topic(why: str, quote: str, behavior: str = '') -> bool:
-    """A why may share a content lemma with the quote or with the behavior."""
+def why_on_topic(why: str, quote: str, behavior: str = '', quotes: list[str] | None = None) -> bool:
+    """Reject a why only when every content word is absent from this person's speech."""
     lemmas = _lemmas(why)
     if not lemmas:
         return False
-    pool = _lemmas(quote) + _lemmas(behavior)
-    return any(_lemma_hit(item, pool) for item in lemmas)
+    speech = ' '.join([quote or '', behavior or '', *(quotes or [])])
+    pool = _lemmas(speech)
+    if any(_lemma_hit(item, pool) for item in lemmas):
+        return True
+    return False
 
 
 def why_restates(why: str, quote: str) -> bool:
@@ -350,14 +354,41 @@ def why_restates(why: str, quote: str) -> bool:
     return overlap / len(lemmas) >= 0.67
 
 
+def _why_problem(why: str, quote: str, behavior: str, quotes: list[str] | None = None) -> str:
+    """A why-line failure, or '' when the line can stand."""
+    if not str(why or '').strip():
+        return 'why is missing'
+    if not why_on_topic(why, quote, behavior, quotes):
+        return 'why drifts from this quote'
+    if why_restates(why, quote):
+        return 'why restates the quote'
+    if reading_grade(why) > 6:
+        return 'a why line is above a sixth-grade reading level'
+    return ''
+
+
+def rejected_why_lines(items, quotes: list[str]) -> list[dict]:
+    """Each rejected why, verbatim, with the reason. This is the report debug list."""
+    found = []
+    rows = [item for item in (items or []) if isinstance(item, dict)]
+    for item in rows:
+        why = str(item.get('why') or '')
+        behavior = str(item.get('behavior') or '')
+        quote = _quote_by_id(str(item.get('quote') or ''), quotes, -1)
+        problem = _why_problem(why, quote, behavior, quotes)
+        if problem:
+            found.append({'why': why.strip(), 'reason': problem, 'quote': quote})
+    return found
+
+
 def _bullet_problems(items, quotes: list[str]) -> list[str]:
     """Each bullet is one observation, one new quote id, and one specific why."""
     reasons = []
     rows = [item for item in (items or []) if isinstance(item, dict)]
     usable = [quote for quote in quotes if quote]
     expected = 3 if len(usable) >= 3 else min(2, len(usable))
-    if expected and len(rows) != expected:
-        reasons.append(f'bullets should be {expected}')
+    if expected and len(rows) < 2:
+        reasons.append('bullets should be 2')
     seen = []
     for index, item in enumerate(rows):
         behavior = str(item.get('behavior') or '')
@@ -380,14 +411,9 @@ def _bullet_problems(items, quotes: list[str]) -> list[str]:
         else:
             seen.append(token.upper())
             quote = _quote_by_id(token, quotes, -1)
-            if not why.strip():
-                reasons.append('why is missing')
-            elif not why_on_topic(why, quote, behavior):
-                reasons.append('why drifts from this quote')
-            elif why_restates(why, quote):
-                reasons.append('why restates the quote')
-            elif reading_grade(why) > 6:
-                reasons.append('a why line is above a sixth-grade reading level')
+            problem = _why_problem(why, quote, behavior, usable)
+            if problem:
+                reasons.append(f'{problem}: {why.strip()}')
         for reason in advice_problems(behavior) + advice_problems(why):
             reasons.append(reason)
         if _is_generic(behavior) or _is_generic(why):
@@ -734,6 +760,18 @@ def _fallback_line(section: str, rows, lines, quotes, stats, moment: str) -> str
     return ''
 
 
+def _note_rejected_whys(label, payload, quotes, progress_dir, raw, reasons, extra: dict | None = None) -> list[dict]:
+    """Write each rejected why, verbatim, into the checkpoint debug log."""
+    items = (payload or {}).get('bullets') if isinstance(payload, dict) else []
+    rejected = rejected_why_lines(items, quotes)
+    for item in rejected:
+        logging.warning('rejected why (%s): %s', item['reason'], item['why'])
+    note = dict(extra or {})
+    note['rejected_whys'] = rejected
+    _record_attempt(progress_dir, label, raw, reasons, note)
+    return rejected
+
+
 def _record_attempt(progress_dir, label: str, raw: str, reasons: list[str], extra: dict | None = None) -> None:
     """Raw personal responses stay in the local checkpoint file, mode 600."""
     if not progress_dir:
@@ -1043,6 +1081,13 @@ def _top_content_unit(units: list[dict] | None) -> str:
     return ''
 
 
+_VERBISH = {
+    'wait', 'waits', 'sign', 'signs', 'land', 'lands', 'change', 'changes', 'changed',
+    'begin', 'began', 'love', 'loved', 'keep', 'keeps', 'need', 'needs', 'make', 'makes',
+    'made', 'start', 'starts', 'leave', 'leaves', 'take', 'takes', 'come', 'comes',
+}
+
+
 _GOAL_VERBS = {
     'name', 'make', 'find', 'keep', 'hold', 'show', 'tell', 'build', 'start',
     'finish', 'decide', 'share', 'explain', 'describe', 'choose', 'write',
@@ -1069,9 +1114,9 @@ def _phrases_in(quote: str) -> list[str]:
     while index < len(tokens):
         low = tokens[index].lower()
         if low in {'a', 'an', 'the'} and index + 1 < len(tokens) and _real_content_word(tokens[index + 1]):
-            words = [low]
-            cursor = index + 1
-            while cursor < len(tokens) and cursor < index + 4 and _real_content_word(tokens[cursor]):
+            words = [low, tokens[index + 1].lower()]
+            cursor = index + 2
+            if cursor < len(tokens) and _real_content_word(tokens[cursor]) and tokens[cursor].lower() not in _VERBISH:
                 words.append(tokens[cursor].lower())
                 cursor += 1
             phrases.append(' '.join(words))
@@ -1081,29 +1126,78 @@ def _phrases_in(quote: str) -> list[str]:
     return phrases
 
 
-def merged_care_goal(quotes: list[str]) -> str:
-    """Bullet 1. Care and goal, using only phrases that appear in the quotes."""
-    phrases: list[str] = []
-    for quote in quotes or []:
-        for phrase in _phrases_in(quote):
-            if phrase not in phrases:
-                phrases.append(phrase)
-    if not phrases:
-        return ''
-    goal = ''
-    for quote in quotes or []:
-        tokens = re.findall(r"[A-Za-z']+", quote or '')
-        if not tokens or tokens[0].lower() not in _GOAL_VERBS:
+def _phrase_head(phrase: str) -> str:
+    parts = [part for part in str(phrase or '').split() if part.lower() not in {'a', 'an', 'the'}]
+    return parts[-1].lower() if parts else ''
+
+
+def _topic_phrase(quote: str) -> str:
+    """One noun phrase that actually occurs in this quote."""
+    phrases = []
+    seen = set()
+    for phrase in _phrases_in(quote):
+        head = _phrase_head(phrase)
+        if not head or head in seen:
             continue
-        objects = _phrases_in(quote)
-        if objects:
-            goal = f'{tokens[0].lower()} {objects[0]}'
-            break
-    care = next((phrase for phrase in phrases if not goal or phrase not in goal), phrases[0])
-    if not goal:
-        other = next((phrase for phrase in phrases if phrase != care), care)
-        goal = f'talk about {other}'
-    return f'You seem to care about {care}, and it seemed like you were trying to {goal}'
+        seen.add(head)
+        phrases.append(phrase)
+    if phrases:
+        return phrases[0]
+    for word in re.findall(r"[A-Za-z']+", quote or ''):
+        if _real_content_word(word):
+            return word.lower()
+    return ''
+
+
+def _distinct_phrases(quote: str) -> list[str]:
+    phrases = []
+    seen = set()
+    for phrase in _phrases_in(quote):
+        head = _phrase_head(phrase)
+        if not head or head in seen:
+            continue
+        seen.add(head)
+        phrases.append(phrase)
+    return phrases
+
+
+def merged_care_goal(quote: str) -> str:
+    """Care and goal from two different nouns in this one quote. '' when that is not possible."""
+    text = quote if isinstance(quote, str) else ''
+    if isinstance(quote, (list, tuple)):
+        text = str(quote[0] if quote else '')
+    phrases = _distinct_phrases(text)
+    if len(phrases) < 2:
+        return ''
+    tokens = re.findall(r"[A-Za-z']+", text)
+    if tokens and tokens[0].lower() in _GOAL_VERBS:
+        goal_phrase = phrases[0]
+        care = next((phrase for phrase in phrases if _phrase_head(phrase) != _phrase_head(goal_phrase)), '')
+        if not care:
+            return ''
+        return (
+            f'You seem to care about {care}, and it seemed like you were trying to '
+            f'{tokens[0].lower()} {goal_phrase}'
+        )
+    care, other = phrases[0], phrases[1]
+    if _phrase_head(care) == _phrase_head(other):
+        return ''
+    return f'You seem to care about {care}, and it seemed like you were trying to talk about {other}'
+
+
+def _spoke_about(quote: str) -> str:
+    topic = _topic_phrase(quote)
+    if not topic:
+        return ''
+    return f'You spoke about {topic}'
+
+
+def _unit_in_quote(unit: str, quote: str) -> bool:
+    parts = [part for part in str(unit or '').split() if _real_content_word(part)]
+    if not parts:
+        return False
+    hay = str(quote or '').lower()
+    return all(part.lower() in hay for part in parts)
 
 
 def later_return_line(unit: str) -> str:
@@ -1146,39 +1240,40 @@ def challenge_template(quotes: list[str]) -> str:
     return 'You held one turn and then stopped.'
 
 
+def _first_bullet_behavior(quote: str) -> str:
+    return merged_care_goal(quote) or _spoke_about(quote)
+
+
+def _later_bullet_behavior(quote: str, units: list[dict] | None) -> str:
+    for item in units or []:
+        unit = str(item.get('text') or '')
+        if _unit_in_quote(unit, quote):
+            line = later_return_line(unit)
+            if line:
+                return line
+    return _spoke_about(quote)
+
+
 def _fallback_bullets(units: list[dict] | None, quotes: list[str]) -> list[str]:
-    """Two bullets from the quotes. No invented why, and no second goal."""
+    """Two bullets. Each noun comes from the quote on that bullet. No invented why."""
     usable = []
     for quote in quotes:
         if quote and quote not in usable:
             usable.append(quote)
     if len(usable) < 2:
         return []
-    care = merged_care_goal(usable)
-    if not care.startswith('You seem to care') or 'it seemed like you were trying to' not in care.lower():
+    first = _first_bullet_behavior(usable[0])
+    second = _later_bullet_behavior(usable[1], units)
+    if not first or not second:
         return []
-    later = ''
-    for item in units or []:
-        later = later_return_line(str(item.get('text') or ''))
-        if later:
-            break
-    if not later:
-        for quote in usable:
-            for word in _lemmas(quote):
-                later = later_return_line(word)
-                if later:
-                    break
-            if later:
-                break
-    if not later or later.lower().startswith('it seemed'):
+    if second.lower().startswith('it seemed') or second.lower().startswith('you seem'):
+        second = _spoke_about(usable[1])
+    if not second:
         return []
-    rendered = [
-        _render_bullet(care, usable[0], ''),
-        _render_bullet(later, usable[1], ''),
+    return [
+        _render_bullet(first, usable[0], ''),
+        _render_bullet(second, usable[1], ''),
     ]
-    if any('That line is about' in line or 'The turn stayed on that point' in line for line in rendered):
-        return []
-    return rendered
 
 
 def why_template(rows: list[dict] | None = None, stats: dict | None = None, quote: str = '') -> str:
@@ -1207,16 +1302,21 @@ def _templated_story(name, rows, lines, quotes, stats, step, units, best_payload
     payload['why_it_matters'] = why
     payload['bullets_text'] = _fallback_bullets(units, quotes)
     if len(payload['bullets_text']) < 2:
-        story = short_story(name, rows, lines, quotes, stats)
-        story['bullets'] = []
-        story['character'] = ''
-        story['goal'] = ''
-        story['challenge'] = ''
-        story['why_it_matters'] = ''
-        story['short_mode'] = True
-        story['fallback_sections'] = ['bullets']
-        story['rejection_reasons'] = {'bullets': '; '.join((best_found or {}).get('bullets') or [])}
-        return story
+        if len([quote for quote in quotes if quote]) >= 2:
+            payload['bullets_text'] = _fallback_bullets(None, quotes)
+        if len(payload['bullets_text']) >= 2:
+            pass
+        else:
+            story = short_story(name, rows, lines, quotes, stats)
+            story['bullets'] = []
+            story['character'] = ''
+            story['goal'] = ''
+            story['challenge'] = ''
+            story['why_it_matters'] = ''
+            story['short_mode'] = True
+            story['fallback_sections'] = ['bullets']
+            story['rejection_reasons'] = {'bullets': '; '.join((best_found or {}).get('bullets') or [])}
+            return story
     yes_but = '' if (best_found or {}).get('yes_but') else str(payload.get('yes_but') or '')
     payload['yes_but'] = '' if advice_problems(yes_but) else yes_but
     payload['said_quote'] = quotes[1] if len(quotes) > 1 else (quotes[0] if quotes else '')
@@ -1315,21 +1415,29 @@ def _build_personal_story(llm, transcript, label: str, info: dict, stats: dict, 
             found = section_problems(payload, quotes, allowed, moment, int(stats.get('share') or 0))
         reasons = [reason for items in found.values() for reason in items]
         pick = str((payload or {}).get('style_id') or '')
-        _record_attempt(progress_dir, label, raw_text, reasons, {**style_note, 'style_pick': pick, 'model': active})
+        _note_rejected_whys(label, payload, quotes, progress_dir, raw_text, reasons, {**style_note, 'style_pick': pick, 'model': active})
         if payload is not None and not simplified and any(found.get(section) for section in ('character', 'goal', 'why_it_matters', 'challenge', 'yes_but')):
             payload = _grounded_simplify(llm, payload, units, quotes, found)
             payload = apply_quote_ids(payload, quotes)
             simplified = True
             found = section_problems(payload, quotes, allowed, moment, int(stats.get('share') or 0))
             reasons = [reason for items in found.values() for reason in items]
-        if payload is not None and reasons and not repaired and not upgraded and _fk_only(found):
+        if payload is not None and reasons and not repaired and not upgraded and _why_only(found):
             logging.warning('personal why repair for %s: %s', label, '; '.join(reasons))
-            payload = _repair_fk(llm, payload, quotes, found)
+            payload = _repair_whys(llm, payload, quotes)
             payload = apply_quote_ids(payload, quotes)
             repaired = True
             found = section_problems(payload, quotes, allowed, moment, int(stats.get('share') or 0))
             reasons = [reason for items in found.values() for reason in items]
-            _record_attempt(progress_dir, label, json.dumps(payload), reasons, {**style_note, 'model': personal_model_name(), 'repair': True})
+            _note_rejected_whys(label, payload, quotes, progress_dir, json.dumps(payload), reasons, {**style_note, 'model': personal_model_name(), 'repair': True})
+        if payload is not None and reasons and repaired and not upgraded and _why_only(found):
+            logging.warning('personal why repair uses %s for %s', upgrade_model_name(), label)
+            payload = _repair_whys(llm, payload, quotes, upgrade_model_name())
+            payload = apply_quote_ids(payload, quotes)
+            upgraded = True
+            found = section_problems(payload, quotes, allowed, moment, int(stats.get('share') or 0))
+            reasons = [reason for items in found.values() for reason in items]
+            _note_rejected_whys(label, payload, quotes, progress_dir, json.dumps(payload), reasons, {**style_note, 'model': upgrade_model_name(), 'repair': True})
         if reasons and not upgraded:
             logging.warning('personal flash-lite rejected %s: %s', label, '; '.join(reasons))
         if payload is not None and not reasons:
@@ -1346,6 +1454,19 @@ def _build_personal_story(llm, transcript, label: str, info: dict, stats: dict, 
             best_payload = payload
             best_found = found
         failures = reasons
+    salvaged = _usable_model_bullets(best_payload, quotes)
+    if len(salvaged) >= 2 and best_payload is not None:
+        logging.warning('personal narrative kept the model bullets and dropped bad why lines: %s', failures)
+        payload = dict(best_payload)
+        payload['bullets_text'] = salvaged
+        story = _finish(full_story(payload, lines, name), step, units, str(payload.get('style_id') or ''))
+        story['short_mode'] = False
+        story['fallback_sections'] = ['why']
+        story['rejected_whys'] = rejected_why_lines(payload.get('bullets'), quotes)
+        story['rejection_reasons'] = {
+            'why': '; '.join(f"{item['reason']}: {item['why']}" for item in story['rejected_whys']),
+        }
+        return _stamp(story, progress_dir)
     if best_payload is None or best_found.get('character') or best_found.get('goal') or best_found.get('bullets'):
         logging.warning('personal narrative used the code template: %s', failures)
         return _stamp(_templated_story(name, rows, lines, quotes, stats, step, units, best_payload, best_found), progress_dir)
@@ -1366,45 +1487,87 @@ def _build_personal_story(llm, transcript, label: str, info: dict, stats: dict, 
     return _stamp(story, progress_dir)
 
 
+def _why_only(found: dict) -> bool:
+    """True when every failure is a why line (drift or reading grade)."""
+    reasons = [reason for items in found.values() for reason in items]
+    if not reasons:
+        return False
+    return all(
+        reason.startswith('why ') or 'reading level' in reason or reason.startswith('a why line')
+        for reason in reasons
+    )
+
+
 def _fk_only(found: dict) -> bool:
     reasons = [reason for items in found.values() for reason in items]
     return bool(reasons) and all('reading level' in reason or 'grade' in reason for reason in reasons)
 
 
-def _repair_sentence(llm, text: str, quote: str) -> str:
-    """One flash-lite rewrite of a single sentence. thinkingBudget 0, small cap."""
+def _repair_sentence(llm, text: str, quote: str, behavior: str = '', model: str | None = None) -> str:
+    """Rewrite one why. Flash-lite uses thinkingBudget 0 and a 128 cap. 3.6 uses minimal."""
     prompt = (
         'Rewrite this one sentence in short words, about a fifth-grade reading level. '
         'Say why it matters for this person or the listener. '
+        'Keep the topic of the behavior and the quote. '
         'Do not restate the quote. No advice, no next time, no should. '
+        'Good why: This helps people see that your love for art started early.\n'
         'Return only the new sentence.\n'
+        f'BEHAVIOR\n{behavior or "None."}\n'
         f'QUOTE\n{quote or "None."}\nTEXT\n{text}'
     )
+    wanted = model or personal_model_name()
     try:
-        return _raw_text(_invoke_personal(llm, prompt, personal_model_name(), simplify=True)).strip()
+        return _raw_text(_invoke_personal(
+            llm, prompt, wanted, simplify='3.6' not in _bare_model(wanted),
+        )).strip()
     except Exception as exc:
         logging.warning('why repair failed: %s', exc)
         return text
 
 
-def _repair_fk(llm, payload: dict, quotes: list[str], found: dict) -> dict:
-    """Rewrite only the sentences that failed the reading grade."""
+def _repair_whys(llm, payload: dict, quotes: list[str], model: str | None = None) -> dict:
+    """Keep each behavior and quote. Rewrite only a why that drifts or fails the grade."""
     data = dict(payload)
-    if any(key != 'bullets' and found.get(key) for key in found):
-        data = _rewrite_grade(llm, data, found)
     bullets = []
     for item in data.get('bullets') or []:
         if not isinstance(item, dict):
             continue
         bullet = dict(item)
+        behavior = str(bullet.get('behavior') or '')
         why = str(bullet.get('why') or '')
-        if why and reading_grade(why) > 6:
-            quote = _quote_by_id(str(bullet.get('quote') or ''), quotes, -1)
-            bullet['why'] = _repair_sentence(llm, why, quote)
+        quote = _quote_by_id(str(bullet.get('quote') or ''), quotes, -1)
+        problem = _why_problem(why, quote, behavior, quotes)
+        if problem.startswith('why drifts') or 'reading level' in problem or problem.startswith('a why line'):
+            bullet['why'] = _repair_sentence(llm, why, quote, behavior, model)
         bullets.append(bullet)
     if bullets:
         data['bullets'] = bullets
     return data
+
+
+def _usable_model_bullets(payload: dict | None, quotes: list[str]) -> list[str]:
+    """Keep behaviors and quotes that pass. Drop only a why that still fails."""
+    if not isinstance(payload, dict):
+        return []
+    rendered = []
+    used: set[str] = set()
+    for source in payload.get('bullets') or []:
+        if not isinstance(source, dict):
+            continue
+        behavior = str(source.get('behavior') or '').strip()
+        if not behavior or re.fullmatch(r'you said\.?', behavior.lower()):
+            continue
+        if advice_problems(behavior) or _is_generic(behavior):
+            continue
+        quote = _quote_by_id(str(source.get('quote') or ''), quotes, -1)
+        if not quote or quote in used:
+            continue
+        why = str(source.get('why') or '')
+        if _why_problem(why, quote, behavior, quotes):
+            why = ''
+        used.add(quote)
+        rendered.append(_render_bullet(behavior, quote, why))
+    return rendered if len(rendered) >= 2 else []
 
 
 def _grade_failures(found: dict) -> bool:

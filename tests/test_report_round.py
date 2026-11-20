@@ -581,19 +581,25 @@ def test_bare_units_are_quoted_and_incomplete_bullets_are_dropped():
         'The budget can wait until the client signs.',
         'Name the owner before the next decision lands.',
     ]
-    assert merged_care_goal(quotes).startswith('You seem to care about the budget, and it seemed like you were trying to name the owner')
+    assert merged_care_goal(quotes[0]).startswith('You seem to care about the budget, and it seemed like you were trying to talk about the client')
+    assert 'loader' not in merged_care_goal(quotes[0])
+    assert merged_care_goal('The world can wait until the world changes today.') == ''
     for unit in ('life', 'passion', 'hard', 'speak'):
         assert later_return_line(unit) == f'You kept coming back to "{unit}"'
     assert later_return_line("that's") == ''
     assert later_return_line("he's") == ''
-    bullets = _fallback_bullets([{'text': 'life', 'count': 3}], quotes)
+    bullets = _fallback_bullets([{'text': 'speak', 'count': 3}], quotes)
     assert len(bullets) == 2
-    assert bullets[0].startswith('You seem to care about the budget, and it seemed like you were trying to')
-    assert bullets[1].startswith('You kept coming back to "life".')
+    assert bullets[0].startswith('You seem to care about the budget, and it seemed like you were trying to talk about the client')
+    assert 'speak' not in bullets[1].lower()
+    assert 'owner' in bullets[1].lower()
     assert 'That line is about' not in ' '.join(bullets)
     assert 'The turn stayed on that point' not in ' '.join(bullets)
     assert all('We came to that conclusion because of "' in bullet for bullet in bullets)
     assert not bullets[1].lower().startswith('it seemed')
+    life = 'I have loved this life since the work began today.'
+    paired = _fallback_bullets([{'text': 'life', 'count': 3}], [quotes[0], life])
+    assert 'You kept coming back to "life"' in paired[1]
     assert _fallback_bullets([{'text': 'life', 'count': 3}], quotes[:1]) == []
     dropped = render_personal_bullets({
         'bullets': [
@@ -616,6 +622,18 @@ def test_a_why_can_share_the_behavior_and_a_restatement_is_rejected():
     assert not why_restates('That story shows people you know how long the climb takes.', 'The climb took years before the film opened.')
     assert why_on_topic('The room can hear how long that climb takes.', 'The climb took years.', behavior)
     assert why_on_topic('The movies still matter to people.', quote, 'You kept the point.')
+    assert why_on_topic(
+        'This helps people see that your love for art started early.',
+        'The budget can wait until the client signs.',
+        'You seem to care about the budget.',
+        ['Your love for art started when you were young.'],
+    )
+    assert not why_on_topic(
+        'The weather stayed cold all morning.',
+        'The budget can wait until the client signs.',
+        'You seem to care about the budget.',
+        ['Name the owner before the next decision lands.'],
+    )
     problems = _bullet_problems([
         {'behavior': behavior, 'quote': 'Q1', 'why': 'You brought up making movies.'},
     ], [quote])
@@ -741,6 +759,108 @@ def test_talk_and_question_charts_stay_with_the_box(tmp_path):
     assert 'By the numbers' in first
     assert 'Your charts' in first
     counts = [len(list(page.images)) for page in pages]
-    assert counts[0] >= 2
-    if len(counts) > 1:
-        assert counts[1] != 1
+    assert counts[0] >= 5
+    for count in counts[1:]:
+        assert count == 1 or count >= 4
+
+
+def test_a_drifting_why_is_rewritten_without_dropping_the_behavior(monkeypatch, tmp_path):
+    from lib.personal_narrative import build_personal_story
+
+    seen = []
+
+    def fake_rest(model, key, prompt, mode='budget', max_output=512):
+        seen.append((model, mode, max_output, prompt[:40]))
+        if prompt.startswith('Rewrite this one sentence'):
+            assert 'BEHAVIOR' in prompt
+            assert 'This helps people see that your love for art started early.' in prompt
+            assert mode == 'budget' and max_output <= 128
+            return type('Reply', (), {'content': 'This helps people see that the budget still matters.'})()
+        return type('Reply', (), {'content': json.dumps({
+            'bullets': [
+                {
+                    'behavior': 'You seem to care about the budget, and it seemed like you were trying to name an owner.',
+                    'quote': 'Q1',
+                    'why': 'The weather stayed cold all morning.',
+                },
+                {
+                    'behavior': 'The line named the owner.',
+                    'quote': 'Q2',
+                    'why': 'This helps people see that the owner still matters.',
+                },
+            ],
+        })})()
+
+    monkeypatch.setattr('lib.personal_narrative._rest_generate', fake_rest)
+
+    class Client:
+        google_api_key = 'test-key'
+        model = 'gemini-3.1-flash-lite'
+
+        def invoke(self, prompt, **kwargs):
+            raise AssertionError('the entry point should call REST')
+
+    transcript = {'utterances': [
+        {'speaker': 'L', 'name': 'Leslie', 'text': 'The budget can wait until the client signs. ' * 4, 'start': 0, 'end': 40000},
+        {'speaker': 'L', 'name': 'Leslie', 'text': 'Name the owner before the next decision lands. ' * 4, 'start': 40000, 'end': 80000},
+    ]}
+    story = build_personal_story(
+        Client(), transcript, 'L', {'name': 'Leslie'},
+        {'share': 18, 'turns': 4, 'questions': 1, 'speaker_count': 6, 'words': 90},
+        progress_dir=tmp_path,
+    )
+    assert story['short_mode'] is False
+    assert len(story['bullets']) >= 2
+    assert 'name an owner' in story['bullets'][0]
+    assert 'weather' not in story['bullets'][0].lower()
+    assert not any(item[0] == 'gemini-3.6-flash' for item in seen)
+    saved = json.loads((tmp_path / 'checkpoints.json').read_text(encoding='utf-8'))
+    rejected = [item for entry in saved for item in (entry.get('rejected_whys') or [])]
+    assert any(item['why'] == 'The weather stayed cold all morning.' and 'drifts' in item['reason'] for item in rejected)
+
+
+def test_two_quotes_never_become_a_short_report_and_a_bad_why_is_dropped():
+    from lib.personal_narrative import _fallback_bullets, build_personal_story
+
+    quotes = [
+        'The budget can wait until the client signs.',
+        'Name the owner before the next decision lands.',
+    ]
+    bullets = _fallback_bullets([{'text': 'speak', 'count': 4}], quotes)
+    assert len(bullets) == 2
+    assert all('We came to that conclusion because of "' in bullet for bullet in bullets)
+    assert 'speak' not in bullets[1].lower()
+
+    class Drift:
+        def invoke(self, prompt, **kwargs):
+            if str(prompt).startswith('Rewrite'):
+                return type('Reply', (), {'content': 'The weather stayed cold all morning.'})()
+            return type('Reply', (), {'content': json.dumps({
+                'bullets': [
+                    {
+                        'behavior': 'You seem to care about the budget, and it seemed like you were trying to name an owner.',
+                        'quote': 'Q1',
+                        'why': 'The weather stayed cold all morning.',
+                    },
+                    {
+                        'behavior': 'The line named the owner.',
+                        'quote': 'Q2',
+                        'why': 'The weather stayed cold all morning.',
+                    },
+                ],
+            })})()
+
+    transcript = {'utterances': [
+        {'speaker': 'L', 'name': 'Leslie', 'text': quotes[0] + ' ' + quotes[1], 'start': 0, 'end': 20000},
+        {'speaker': 'L', 'name': 'Leslie', 'text': (quotes[0] + ' ') * 6, 'start': 20000, 'end': 80000},
+    ]}
+    story = build_personal_story(
+        Drift(), transcript, 'L', {'name': 'Leslie'},
+        {'share': 22, 'turns': 4, 'questions': 1, 'speaker_count': 6, 'words': 80},
+    )
+    assert story['short_mode'] is False
+    assert len(story['bullets']) >= 2
+    assert 'name an owner' in story['bullets'][0]
+    assert 'weather' not in ' '.join(story['bullets']).lower()
+    assert 'a loader' not in ' '.join(story['bullets']).lower()
+    assert 'talk about the world' not in ' '.join(story['bullets']).lower()
