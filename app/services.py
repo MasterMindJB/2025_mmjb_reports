@@ -281,11 +281,13 @@ def attachments_for(participant: dict, reports: list[dict]) -> list[Path]:
 def send_session(db: Database, emailer, session: dict) -> str:
     if session['status'] != 'review':
         raise RuntimeError('Reports can be sent only from the review screen.')
-    speakers = db.list_speakers(session['id'])
+    from lib.naming import assign_display_names
+
+    speakers = assign_display_names(db.list_speakers(session['id']))
     reports = db.list_reports(session['id'])
-    participants = [speaker for speaker in speakers if speaker['role'] in REPORT_ROLES]
+    participants = [speaker for speaker in speakers if speaker.get('receives_report')]
     if not participants:
-        raise RuntimeError('There are no participants to email.')
+        raise RuntimeError('There are no participants with a name and email to send to.')
     already = {
         item['recipient_email']
         for item in db.list_emails(session['id'])

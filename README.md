@@ -6,6 +6,20 @@ An admin signs in, uploads a recording, attaches a name and email to each detect
 
 The report text still comes from the existing prompt chain (AssemblyAI, then Gemini through LangChain, then fpdf2). Enneagram, Doshas, and AMASE sections are still in the individual report until this application is stable.
 
+## Prototype
+
+One command creates the virtualenv, installs dependencies, fills a local `.env` if the sign-in values are blank, and starts the app. `make dev` forces `EMAIL_PROVIDER=dry-run`, so Send writes JSON under `data/outbox/` and does not contact a mail server.
+
+```shell
+make dev
+```
+
+Open http://127.0.0.1:8000 and sign in with the username printed in the terminal. The first run prints a local password when `.env` did not already have one.
+
+The path is: upload a recording, wait for transcription, name speakers (a name is optional), add an email for each participant who should get a PDF, generate, preview and download the PDFs in the browser, then Send. A skipped speaker stays in the group report and is not emailed.
+
+Transcription of a real recording needs `ASSEMBLYAI_API_KEY`. Writing the report text needs `GOOGLE_API_KEY`. Without those keys the app still starts, and the session page shows the missing step with a retry button.
+
 ## Run it locally
 
 Python 3.12 is the version used in CI and in the Docker image. Python 3.11 and 3.13 should also work.

@@ -528,13 +528,14 @@ def create_app(
                 session_id,
             )
             return RedirectResponse(f'/sessions/{session_id}', status_code=303)
-        if transcript_ready and speakers and all(speaker.get('name') for speaker in speakers):
+        if transcript_ready and speakers:
             try:
                 validate_assignments(
                     [speaker['name'] or '' for speaker in speakers],
                     [speaker['email'] or '' for speaker in speakers],
                     [speaker['role'] for speaker in speakers],
                     [speaker['label'] for speaker in speakers],
+                    [speaker['label'] for speaker in speakers if speaker.get('name_status') in {'skipped', 'ignored'} or not (speaker.get('name') or '').strip()],
                 )
             except ValueError as exc:
                 db.update_session(session_id, status='naming', error_message=str(exc))
@@ -549,8 +550,6 @@ def create_app(
                 settings,
                 session_id,
             )
-        elif transcript_ready and speakers:
-            db.update_session(session_id, status='naming', error_message=None)
         else:
             db.update_session(session_id, status='transcribing', error_message=None)
             background.add_task(

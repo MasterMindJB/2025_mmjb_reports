@@ -821,3 +821,60 @@ def test_generate_session_keeps_personal_bullets_in_the_pdf(tmp_path):
     text = '\n'.join(page.extract_text() or '' for page in PdfReader(tmp_path / 'stephen.pdf').pages)
     assert 'You seem to care about real work' in text
     assert 'We came to that conclusion because of' not in text
+
+
+def test_smoke_upload_name_preview_and_dry_run(tmp_path):
+    """Upload, mocked transcription, optional names, PDFs, preview, dry-run email."""
+    app, _transcription = build_client(tmp_path)
+    with TestClient(app) as client:
+        login(client)
+        created = upload(client)
+        assert created.status_code == 303
+        session_url = created.headers['location']
+        named = client.get(session_url)
+        assert 'Name the speakers' in named.text
+        assert 'Speaker A' in named.text
+
+        review = client.post(
+            f'{session_url}/speakers',
+            params={'csrf_token': current_csrf(client)},
+            data={
+                'action': 'generate',
+                'label': ['A', 'B', 'C'],
+                'name': ['Alex Rivera', '', ''],
+                'email': ['alex@example.com', '', ''],
+                'role': ['participant', 'participant', 'facilitator'],
+                'skip': ['B'],
+            },
+            follow_redirects=True,
+        )
+        assert review.status_code == 200
+        assert 'Preview every report' in review.text
+        assert 'iframe' in review.text
+        assert 'Dry-run is on' in review.text
+        assert app.state.db.get_session(1)['status'] == 'review'
+        reports = {report['filename']: report for report in app.state.db.list_reports(1)}
+        assert set(reports) == {'Alex Rivera.pdf', 'group.pdf'}
+
+        for filename in ('Alex Rivera.pdf', 'group.pdf'):
+            response = client.get(f"/sessions/1/reports/{reports[filename]['id']}")
+            assert response.status_code == 200
+            assert response.headers['content-type'] == 'application/pdf'
+            assert 'inline' in response.headers.get('content-disposition', '')
+            assert response.content.startswith(b'%PDF')
+            assert 'Alex Rivera.pdf' in review.text
+
+        sent = client.post(
+            '/sessions/1/send',
+            params={'csrf_token': current_csrf(client)},
+            follow_redirects=True,
+        )
+        assert 'saved locally' in sent.text
+        assert 'dry-run' in sent.text
+        messages = list((tmp_path / 'outbox').glob('*.json'))
+        assert len(messages) == 1
+        record = json.loads(messages[0].read_text())
+        assert record['provider'] == 'dry-run'
+        assert record['to_email'] == 'alex@example.com'
+        assert record['attachment_filenames'] == ['Alex Rivera.pdf', 'group.pdf']
+        assert app.state.emailer.name == 'dry-run'
