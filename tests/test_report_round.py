@@ -366,7 +366,8 @@ def test_a_long_turn_stays_full_when_both_models_fail_the_grade():
     assert 'The turn stayed on that point' not in ' '.join(story['bullets'])
     assert 'it seemed like you were trying to' not in story['bullets'][1].lower()
     assert 'You said.' not in ' '.join(story['bullets'])
-    assert all('We came to that conclusion because of "' in bullet for bullet in story['bullets'])
+    assert 'we came to that conclusion' not in ' '.join(story['bullets']).lower()
+    assert story['bullets'][1].startswith('When you said "')
     assert 'below' not in ' '.join(story['bullets']).lower()
     assert 'A1' not in ' '.join(story['bullets'])
 
@@ -619,17 +620,18 @@ def test_bare_units_are_quoted_and_incomplete_bullets_are_dropped():
     assert later_return_line("that's") == ''
     assert later_return_line("he's") == ''
     bullets = _fallback_bullets([{'text': 'speak', 'count': 3}], quotes)
-    assert len(bullets) == 2
+    assert len(bullets) == 3
     assert bullets[0].startswith('You seem to care about the budget, and it seemed like you were trying to talk about the client')
-    assert 'speak' not in bullets[1].lower()
-    assert 'owner' in bullets[1].lower()
+    assert bullets[1].startswith('When you said "')
+    assert bullets[2].startswith('As a point of curiosity, I wonder how')
+    assert 'speak' not in ' '.join(bullets).lower()
     assert 'That line is about' not in ' '.join(bullets)
     assert 'The turn stayed on that point' not in ' '.join(bullets)
-    assert all('We came to that conclusion because of "' in bullet for bullet in bullets)
+    assert 'we came to that conclusion' not in ' '.join(bullets).lower()
     assert not bullets[1].lower().startswith('it seemed')
     life = 'I have loved this life since the work began today.'
     paired = _fallback_bullets([{'text': 'life', 'count': 3}], [quotes[0], life])
-    assert 'You kept coming back to "life"' in paired[1]
+    assert paired[1].startswith('When you said "')
     assert _fallback_bullets([{'text': 'life', 'count': 3}], quotes[:1]) == []
     dropped = render_personal_bullets({
         'bullets': [
@@ -739,7 +741,7 @@ def test_a_grade_repair_stays_on_flash_lite_and_one_upgrade_is_the_cap(monkeypat
     assert story['short_mode'] is False
     assert any(item[3].startswith('Write 3') for item in seen)
     assert not any(item[0] == 'gemini-3.6-flash' for item in seen)
-    assert 'the budget still matters' in story['bullets'][0].lower()
+    assert 'the budget still matters' in ' '.join(story['bullets']).lower()
     assert 'autonomy' not in story['bullets'][0].lower()
 
     seen.clear()
@@ -878,9 +880,11 @@ def test_two_quotes_never_become_a_short_report_and_a_bad_why_is_dropped():
         'Name the owner before the next decision lands.',
     ]
     bullets = _fallback_bullets([{'text': 'speak', 'count': 4}], quotes)
-    assert len(bullets) == 2
-    assert all('We came to that conclusion because of "' in bullet for bullet in bullets)
-    assert 'speak' not in bullets[1].lower()
+    assert len(bullets) == 3
+    assert bullets[0].startswith('You seem to care')
+    assert bullets[1].startswith('When you said "')
+    assert 'we came to that conclusion' not in ' '.join(bullets).lower()
+    assert 'speak' not in ' '.join(bullets).lower()
 
     class Drift:
         def invoke(self, prompt, **kwargs):
@@ -973,7 +977,7 @@ def test_listener_whys_pass_and_a_missing_care_noun_is_repaired(caplog, monkeypa
             },
         ],
     }, quotes, quote)
-    assert 'history helps others' in kept[0].lower()
+    assert 'history helps others' in ' '.join(kept).lower()
     assert all('weather' not in line.lower() for line in kept)
     dropped = _usable_model_bullets({
         'bullets': [
@@ -1057,14 +1061,15 @@ def test_the_page_is_assembled_from_passing_candidates_only():
         {'behavior': 'The turn named the movies.', 'quote': movies, 'why': '', 'merged': False, 'passes': False, 'source': 'repair'},
     ]
     page = assemble_personal_bullets(pool, [movies, music], movies)
-    assert page['needs_review'] is False
+    assert page['needs_review'] is True
     assert page['bullets'][0].lower().startswith('you seem to care')
     assert 'autonomy' not in page['bullets'][0].lower()
-    assert 'movies started early' in page['bullets'][0].lower()
+    assert 'movies started early' in ' '.join(page['bullets']).lower()
+    assert 'we came to that conclusion' not in ' '.join(page['bullets']).lower()
     for bullet in page['bullets']:
-        why = bullet.split('."')[-1].strip()
-        quote = movies if 'movies' in bullet else music
-        if why:
+        if bullet.lower().startswith('when you said'):
+            why = bullet.split('it felt like ', 1)[-1]
+            quote = movies if 'movies' in bullet else music
             assert why_line_grade_problem(why, quote) == ''
             assert 'autonomy' not in why.lower()
             assert 'independence' not in why.lower()
@@ -1077,7 +1082,7 @@ def test_the_page_is_assembled_from_passing_candidates_only():
     ric = assemble_personal_bullets(ric_pool, [movies, music], movies)
     assert ric['bullets'][0].lower().startswith('you seem to care')
     assert 'autonomy' not in ' '.join(ric['bullets']).lower()
-    assert 'movies started early' in ric['bullets'][0].lower()
+    assert 'movies started early' in ' '.join(ric['bullets']).lower()
 
     stephen_pool = [
         {'behavior': merged, 'quote': movies, 'why': good, 'merged': True, 'passes': True, 'source': 'flash-lite'},
@@ -1085,8 +1090,8 @@ def test_the_page_is_assembled_from_passing_candidates_only():
     ]
     stephen = assemble_personal_bullets(stephen_pool, [movies, music], movies)
     assert stephen['needs_review'] is True
-    assert len(stephen['bullets']) == 1
     assert stephen['bullets'][0].lower().startswith('you seem to care')
+    assert 'movies started early' in stephen['bullets'][1].lower()
 
 
 def test_a_prompt_example_does_not_become_stephens_goal_and_bare_bullets_drop(monkeypatch):
@@ -1115,7 +1120,7 @@ def test_a_prompt_example_does_not_become_stephens_goal_and_bare_bullets_drop(mo
     assert kept
     assert not any('make music' in bullet.lower() for bullet in kept)
     assert any('music still matters' in bullet.lower() for bullet in kept)
-    assert all('we came to that conclusion because of' in bullet.lower() for bullet in kept)
+    assert all('we came to that conclusion' not in bullet.lower() for bullet in kept)
 
     dropped = _usable_model_bullets({
         'bullets': [
@@ -1125,8 +1130,8 @@ def test_a_prompt_example_does_not_become_stephens_goal_and_bare_bullets_drop(mo
         ],
     }, quotes, quote)
     assert not any(line.lower().startswith('you seem to care') for line in dropped)
-    assert len(dropped) == 2
-    assert all('we came to that conclusion because of' in line.lower() for line in dropped)
+    assert dropped
+    assert all('we came to that conclusion' not in line.lower() for line in dropped)
 
     seen = []
 
@@ -1464,7 +1469,8 @@ def test_an_eleven_word_goal_without_a_why_does_not_ship():
     )
     assert 'hold firm now' in kept['bullets'][0]
     assert 'what matters most' not in kept['bullets'][0]
-    assert 'this shows people the limits' in kept['bullets'][0].lower()
+    assert 'we came to that conclusion' not in kept['bullets'][0].lower()
+    assert 'this shows people the limits' in ' '.join(kept['bullets']).lower()
 
     class Repair:
         model = 'gemini-3.1-flash-lite'
@@ -1559,7 +1565,7 @@ def test_enough_speech_gets_a_second_try_for_the_merged_bullet(monkeypatch, capl
             {'share': 18, 'turns': 4, 'questions': 0, 'speaker_count': 6, 'words': 80},
         )
     upgrades = [model for model, _prompt in seen if '3.6' in model]
-    assert len(upgrades) == 2
+    assert len(upgrades) == 1
     assert story['bullets'][0].lower().startswith('you seem to care')
     assert 'show the point' in story['bullets'][0]
 
@@ -1584,6 +1590,79 @@ def test_enough_speech_gets_a_second_try_for_the_merged_bullet(monkeypatch, capl
     assert seen.count('gemini-3.6-flash') == 2
     assert missed['needs_review'] is True
     assert 'merged bullet needs review' in caplog.text
+
+
+def test_leslie_v40_pieces_mix_before_a_why_repair(monkeypatch, caplog):
+    import logging
+
+    from lib.personal_narrative import build_personal_story, care_grounded
+
+    speech = (
+        'And you make it hinge upon yourself when the work gets hard and the room is waiting for a choice. '
+        'Since I was a kid I told myself I would hold firm on the limits that matter most to the people here. '
+        'The client can wait until the work is honest and clear enough to share with the room today. '
+        'I keep coming back to the choices that make the work real for the people who will use it later on.'
+    )
+    quote = 'The client can wait until the work is honest and clear enough to share with the room today.'
+    worth = (
+        'You seem to care about your own worth, and it seemed like you were trying to '
+        'show that things depend on you because you want to be seen as the center.'
+    )
+    why = 'This shows that your choices truly shape the world around you.'
+    assert care_grounded(
+        'You seem to care about personal power, and it seemed like you were trying to show people now.',
+        speech,
+        quote,
+    )
+    assert not care_grounded(
+        'You seem to care about personal agency, and it seemed like you were trying to show people now.',
+        speech,
+        quote,
+    )
+    prompts = []
+
+    def fake_rest(model, key, prompt, mode='budget', max_output=512):
+        prompts.append((model, prompt))
+        if prompt.startswith('Write 3 goals'):
+            assert '3.6' in model
+            return type('Reply', (), {'content': __import__('json').dumps({
+                'goals': ['make them', 'show people now', 'do it'],
+            })})()
+        if prompt.startswith('Rewrite'):
+            return type('Reply', (), {'content': worth})()
+        if prompt.startswith('Write 3 different') or prompt.startswith('Write 3 merged'):
+            raise AssertionError(prompt[:80])
+        return type('Reply', (), {'content': __import__('json').dumps({
+            'bullets': [{
+                'behavior': 'You seem to care about personal agency, and it seemed like you were trying to name the individual.',
+                'quote': 'Q1',
+                'why': why,
+            }],
+            'yes_but': 'This extraordinarily complicated organizational demonstration remains unsatisfactory for everyone today.',
+            'said_quote': 'Q1',
+        })})()
+
+    monkeypatch.setattr('lib.personal_narrative._rest_generate', fake_rest)
+
+    class Client:
+        google_api_key = 'test-key'
+        model = 'gemini-3.1-flash-lite'
+
+        def invoke(self, prompt, **kwargs):
+            raise AssertionError('the entry point should call REST')
+
+    transcript = {'utterances': [{'speaker': 'L', 'text': speech, 'start': 0, 'end': 90000}]}
+    with caplog.at_level(logging.WARNING):
+        story = build_personal_story(
+            Client(), transcript, 'L', {'name': 'Leslie'},
+            {'share': 18, 'turns': 4, 'questions': 0, 'speaker_count': 6, 'words': 80},
+        )
+    assert story['bullets'][0].lower().startswith('you seem to care')
+    assert 'your own worth' in story['bullets'][0].lower()
+    assert 'we came to that conclusion' not in story['bullets'][0].lower()
+    assert 'merged piece failures' in caplog.text
+    assert sum(1 for model, _prompt in prompts if '3.6' in model) == 1
+    assert any(prompt.startswith('Write 3 goals') for _model, prompt in prompts)
 
 
 def test_leslie_merged_bullet_mixes_across_five_runs(monkeypatch, caplog):
@@ -1652,8 +1731,68 @@ def test_leslie_merged_bullet_mixes_across_five_runs(monkeypatch, caplog):
                 Client(), transcript, 'L', {'name': 'Leslie'},
                 {'share': 18, 'turns': 4, 'questions': 0, 'speaker_count': 6, 'words': 91},
             )
-        assert seen.count('gemini-3.6-flash') == 2
+        assert seen.count('gemini-3.6-flash') == 1
         assert story['bullets'][0].lower().startswith('you seem to care')
         assert 'real work' in story['bullets'][0]
         assert 'show the room now' in story['bullets'][0]
     assert 'merged piece failures' in caplog.text
+
+
+def test_three_bullet_shapes_and_the_i_wonder_exception():
+    from lib.personal_narrative import (
+        care_bullet_problem,
+        compose_three_bullets,
+        curiosity_problem,
+        first_person_problem,
+        reading_problem,
+        render_care_bullet,
+        render_curiosity_bullet,
+        render_reading_bullet,
+    )
+
+    speech = 'I keep the work honest and I focus on hard work when the group shares ideas.'
+    quote = 'I focus on hard work when the group is waiting for the next idea.'
+    assert care_bullet_problem('real work', 'show the point', speech, quote) == ''
+    care = render_care_bullet('real work', 'show the point')
+    assert care.startswith('You seem to care about real work')
+    assert 'we came to that conclusion' not in care.lower()
+    assert '"' not in care
+    assert len(care.split()) <= 20
+    assert care_bullet_problem('personal power', 'show the point', speech, quote) == ''
+    assert 'agency' in care_bullet_problem('personal agency', 'show the point', speech, quote)
+
+    reading = 'the work stayed honest'
+    assert reading_problem(reading, quote, speech) == ''
+    heard = render_reading_bullet(quote, reading)
+    assert heard.startswith('When you said "')
+    assert 'it felt like the work stayed honest.' in heard
+    assert reading_problem('this is an incredible and extraordinary result for everyone', quote, speech)
+    assert curiosity_problem('your focus on hard work', 'how the group shares ideas', speech) == ''
+    wonder = render_curiosity_bullet('your focus on hard work', 'how the group shares ideas')
+    assert wonder == (
+        'As a point of curiosity, I wonder how your focus on hard work '
+        'affects how the group shares ideas.'
+    )
+    assert first_person_problem(wonder) == ''
+    assert first_person_problem('I wonder if I should tell them.')
+    assert first_person_problem('That tells me the work is done.')
+    assert curiosity_problem('focus on hard work', 'how the group shares ideas', speech)
+    assert curiosity_problem('your focus on hard work', 'you should stop now', speech)
+
+    lines, missing = compose_three_bullets({
+        'cares': ['life', 'real work', 'the niche'],
+        'goals': ['do it', 'show the point', 'make them'],
+        'readings': [
+            {'quote': 'Q1', 'reading': 'this is incredible'},
+            {'quote': 'Q1', 'reading': reading},
+        ],
+        'curiosities': [
+            {'behavior': 'the work', 'dynamic': 'the room'},
+            {'behavior': 'your focus on hard work', 'dynamic': 'how the group shares ideas'},
+        ],
+    }, [quote], speech)
+    assert missing == set()
+    assert len(lines) == 3
+    assert lines[0] == care
+    assert lines[1] == heard
+    assert lines[2] == wonder

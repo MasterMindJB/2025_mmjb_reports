@@ -229,38 +229,26 @@ def _prompt(name: str, lines: list[str], quotes: list[str], failures: list[str],
         f'{PROMPT_MARK}\n'
         'Write in second person. Do not write the person\'s name. Say you. Do not give advice.\n'
         'Do not write a headline, a count, or a next step.\n'
-        'bullets: 3 items when there are 3 quotes, otherwise 2. Each item has behavior, quote, and why.\n'
-        'behavior is one observed sentence in short, common words, about a fifth-grade reading level. '
-        'No advice, no question, no counts, no digits. '
-        'Do not use a long word that is not in the quote.\n'
-        'The first behavior merges care and goal. It starts with "You seem to care" and includes "it seemed like you were trying to".\n'
-        'Care is a short phrase of 2 to 4 words for what the quote shows they value. '
-        'It is not a bare noun copied from the quote, and not "the" plus one noun. '
-        'The goal is 3 to 6 words and says what they were trying to show or do for the listener. '
-        'It must not repeat the quote\'s own verb and object. Do not copy a placeholder.\n'
-        'The first bullet, not counting the quote or "We came to that conclusion because of", '
-        'is 30 words or fewer. Count the fixed care and goal openers.\n'
-        'Describe the person as they would recognize themselves. '
+        'Return three slots, with 3 candidates each.\n'
+        'cares: 3 phrases of 2 to 4 words for what they value. Not a bare noun.\n'
+        'goals: 3 phrases of 3 to 6 words for what they were trying to show the listener. Do not copy the quote.\n'
+        'readings: 3 items with quote (an id such as Q1) and reading. '
+        'The reading is a charitable interpretation the quote supports, 15 words or fewer, '
+        'with overlap with their speech. Do not flatter past the evidence. No ego or negative framing.\n'
+        'curiosities: 3 items with behavior and dynamic. '
+        'behavior is 3 to 8 words, starts with your, and is something they did. '
+        'dynamic is 2 to 6 words for a plain group effect, such as how the group shares ideas. '
+        'No advice and no judgment. The only first person is the fixed "I wonder".\n'
+        'Describe them as they would recognize themselves. '
         'Do not frame them with self-importance, main focus, ego, selfish, or about yourself '
         'unless their own words use that framing.\n'
-        'Do not write I, me, my, or we outside a quote. '
-        '"That tells me" is wrong. "This tells others" is right.\n'
-        'No later behavior contains "You seem" or starts with "It seemed like you were trying to".\n'
-        'Never write a behavior that is only "You said."\n'
-        'quote is only an id such as "Q1". Each bullet uses a different id. Do not retype the words.\n'
-        'why is one sentence of 12 words or fewer. It starts with This or That and uses shows, helps, lets, or tells. '
-        'Do not put a restatement of the behavior in front of it. Do not repeat the care phrase. '
-        'Use short, common words. Do not say below, above, next page, or step below. '
-        'No advice, no next time, and no should.\n'
-        'Good why: That story shows people you know how long the climb takes.\n'
-        'Bad why: You brought up making movies.\n'
-        'Bad: You said "life" 5 times.\n'
+        'Do not write I, me, my, or we except inside "I wonder".\n'
         'yes_but: one observed caveat. No advice and no next step.\n'
         'said_quote: a quote id such as "Q2", or "" if there is no Q2.\n'
         f'{retry}'
         f'QUOTES\n{quote_block}\n'
         f'STYLE UNITS\n{_style_block(units)}\n'
-        'Return JSON only with keys bullets, yes_but, said_quote.\n'
+        'Return JSON only with keys cares, goals, readings, curiosities, yes_but, said_quote.\n'
     )
 
 
@@ -553,7 +541,7 @@ _EVERYDAY = {
     'self', 'hard', 'good', 'real', 'true', 'kind', 'fair', 'open', 'clear',
     'trust', 'hope', 'worth', 'heart', 'mind', 'hand', 'need', 'want', 'feel',
     'keep', 'give', 'share', 'start', 'place', 'story', 'choice', 'point',
-    'room', 'people', 'word', 'sense', 'hobby', 'hobbies', 'peace', 'art',
+    'room', 'people', 'word', 'sense', 'hobby', 'hobbies', 'peace', 'art', 'power',
 }
 
 
@@ -579,8 +567,9 @@ def charity_problem(text: str, speech: str = '') -> str:
 
 
 def first_person_problem(text: str) -> str:
-    """me, I, my, and we are rejected outside a quote. The fixed because-line is allowed."""
+    """me, I, my, and we are rejected outside a quote. 'I wonder' is the one exception."""
     body = _FIXED_WE.sub(' ', _outside_quotes(text))
+    body = re.sub(r'\bI wonder\b', ' ', body)
     match = _OUTSIDE_PERSON.search(body)
     if match:
         return f'first person outside a quote: {match.group(1).lower()}'
@@ -878,7 +867,7 @@ def shorten_quote(quote: str, behavior: str = '', limit: int = 20) -> str:
 
 
 def _render_bullet(behavior: str, quote: str, why: str) -> str:
-    """Behavior, the code-owned because line, then one why. The quote keeps its own period."""
+    """Legacy renderer. New pages use the three fixed shapes."""
     statement = _strip_typed_quotes(behavior).strip().rstrip('.')
     spoken = shorten_quote(str(quote or '').strip().strip('"').strip('“”'), behavior)
     if spoken and spoken[-1] not in '.!?':
@@ -888,6 +877,108 @@ def _render_bullet(behavior: str, quote: str, why: str) -> str:
     if reason:
         line = f'{line} {reason}'
     return line
+
+
+def render_care_bullet(care: str, goal: str) -> str:
+    """Bullet 1. Care and goal only. No quote and no why."""
+    return (
+        f'You seem to care about {str(care or "").strip().rstrip(".")}, '
+        f'and it seemed like you were trying to {str(goal or "").strip().rstrip(".")}.'
+    )
+
+
+def render_reading_bullet(quote: str, reading: str) -> str:
+    """Bullet 2. The quote is verbatim. The reading is the interpretation."""
+    spoken = str(quote or '').strip().strip('"').strip('“”')
+    if spoken and spoken[-1] not in '.!?':
+        spoken += '.'
+    felt = str(reading or '').strip().rstrip('.')
+    return f'When you said "{spoken}", it felt like {felt}.'
+
+
+def render_curiosity_bullet(behavior: str, dynamic: str) -> str:
+    """Bullet 3. The only first person is the fixed 'I wonder'."""
+    act = str(behavior or '').strip().rstrip('.')
+    effect = str(dynamic or '').strip().rstrip('.')
+    return f'As a point of curiosity, I wonder how {act} affects {effect}.'
+
+
+_FLATTER = {
+    'amazing', 'incredible', 'brilliant', 'perfect', 'extraordinary', 'genius',
+    'wonderful', 'outstanding', 'flawless', 'inspiring',
+}
+_JUDGMENT = {
+    'selfish', 'ego', 'failure', 'wrong', 'bad', 'stupid', 'lazy', 'should', 'must', 'fault',
+}
+
+
+def care_bullet_problem(care: str, goal: str, speech: str, quote: str) -> str:
+    """Bullet 1 validators, including the 20-word cap and the piece checks."""
+    line = render_care_bullet(care, goal)
+    if len(_raw_words(line)) > 20:
+        return 'care bullet is longer than 20 words'
+    care_problem = care_piece_problem(care, speech, quote)
+    if care_problem:
+        return care_problem
+    goal_problem = goal_piece_problem(goal, quote, speech)
+    if goal_problem:
+        return goal_problem
+    behavior = _merged_behavior(care, goal)
+    return (
+        behavior_word_problem(behavior, quote)
+        or voice_problem(behavior, speech)
+        or prompt_example_problem(behavior, speech)
+        or ('' if care_grounded(behavior, speech, quote) else f'care object is not in this person\'s speech: {_care_head(behavior)}')
+    )
+
+
+def reading_problem(reading: str, quote: str, speech: str) -> str:
+    """A charitable reading the quote can support. Fifteen words, no flattery, no long words."""
+    phrase = str(reading or '').strip().rstrip('.')
+    words = _raw_words(phrase)
+    if not words or len(words) > 15:
+        return 'reading is the wrong length'
+    rude = voice_problem(phrase, speech)
+    if rude:
+        return rude
+    if advice_problems(phrase):
+        return 'reading gives advice'
+    long = _long_word_outside(phrase, quote)
+    if long:
+        return f'reading uses a long word not in the quote: {long}'
+    if why_restates(phrase, quote):
+        return 'reading restates the quote'
+    if not why_on_topic(phrase, quote, '', [quote], speech):
+        return 'reading does not overlap this person\'s speech'
+    said = f'{speech} {quote}'.lower()
+    for word in words:
+        if word.lower() in _FLATTER and word.lower() not in said:
+            return 'reading flatters beyond the evidence'
+    return ''
+
+
+def curiosity_problem(behavior: str, dynamic: str, speech: str) -> str:
+    """A curious question. 'I wonder' is allowed. Nothing else in the first person, and no judgment."""
+    act = str(behavior or '').strip().rstrip('.')
+    effect = str(dynamic or '').strip().rstrip('.')
+    if not re.search(r'\byour\b', act, re.I):
+        return 'behavior must use your'
+    if not 3 <= len(_raw_words(act)) <= 8:
+        return 'behavior is the wrong length'
+    if not 2 <= len(_raw_words(effect)) <= 6:
+        return 'team dynamic is the wrong length'
+    line = render_curiosity_bullet(act, effect)
+    person = first_person_problem(line)
+    if person:
+        return person
+    if advice_problems(line) or voice_problem(line, speech):
+        return 'curiosity gives advice or a judgment'
+    if any(word.lower() in _JUDGMENT for word in _raw_words(line)):
+        return 'curiosity gives advice or a judgment'
+    point = [word.lower() for word in _content_words(act)]
+    if point and not any(word in str(speech or '').lower() for word in point):
+        return 'behavior is not in this person\'s speech'
+    return ''
 
 
 def _bullet_sources(payload: dict) -> list[dict]:
@@ -1694,7 +1785,8 @@ def _later_bullet_behavior(quote: str, units: list[dict] | None) -> str:
 
 
 def _fallback_bullets(units: list[dict] | None, quotes: list[str]) -> list[str]:
-    """Two bullets. Each noun comes from the quote on that bullet. No invented why."""
+    """Three fixed shapes from the quotes, when the quote itself can carry them."""
+    del units
     usable = []
     for quote in quotes:
         if quote and quote not in usable:
@@ -1702,17 +1794,21 @@ def _fallback_bullets(units: list[dict] | None, quotes: list[str]) -> list[str]:
     if len(usable) < 2:
         return []
     first = _first_bullet_behavior(usable[0])
-    second = _later_bullet_behavior(usable[1], units)
-    if not first or not second:
+    care = _care_phrase(first)
+    goal = _goal_phrase(first)
+    if not care or not goal or len(_raw_words(render_care_bullet(care, goal))) > 20:
         return []
-    if second.lower().startswith('it seemed') or second.lower().startswith('you seem'):
-        second = _spoke_about(usable[1])
-    if not second:
-        return []
-    return [
-        _render_bullet(first, usable[0], ''),
-        _render_bullet(second, usable[1], ''),
-    ]
+    spoken = shorten_quote(usable[0], first)
+    topic = _topic_phrase(usable[0]) or 'the work'
+    reading = f'the words stayed on {topic}'
+    if reading_problem(reading, spoken, usable[0]):
+        return [render_care_bullet(care, goal)]
+    behavior = f'your focus on {topic}'
+    dynamic = 'how the group shares ideas'
+    lines = [render_care_bullet(care, goal), render_reading_bullet(spoken, reading)]
+    if not curiosity_problem(behavior, dynamic, usable[0]):
+        lines.append(render_curiosity_bullet(behavior, dynamic))
+    return lines
 
 
 def why_template(rows: list[dict] | None = None, stats: dict | None = None, quote: str = '') -> str:
@@ -1868,6 +1964,16 @@ def _build_personal_story(llm, transcript, label: str, info: dict, stats: dict, 
         pick = str((payload or {}).get('style_id') or '')
         _note_rejected_whys(label, payload, quotes, progress_dir, raw_text, reasons, {**style_note, 'style_pick': pick, 'model': active}, speech)
         _snapshot_candidates(pool, payload, active, quotes, speech)
+        if payload is not None and _new_shape(payload):
+            shaped = ensure_three_bullets(llm, payload, quotes, speech, reasons, rows)
+            if shaped:
+                if advice_problems(str(payload.get('yes_but') or '')):
+                    payload['yes_but'] = ''
+                story = _ship_assembled(
+                    {'bullets': shaped, 'needs_review': len(shaped) < 3},
+                    payload, lines, name, step, units, pick, len(shaped) < 3,
+                )
+                return _stamp(story, progress_dir)
         if payload is not None and not simplified and any(found.get(section) for section in ('character', 'goal', 'why_it_matters', 'challenge', 'yes_but')):
             payload = _grounded_simplify(llm, payload, units, quotes, found)
             payload = apply_quote_ids(payload, quotes)
@@ -1883,19 +1989,29 @@ def _build_personal_story(llm, transcript, label: str, info: dict, stats: dict, 
             reasons = [reason for items in found.values() for reason in items]
             _note_rejected_whys(label, payload, quotes, progress_dir, json.dumps(payload), reasons, {**style_note, 'model': personal_model_name(), 'repair': True}, speech)
         if payload is not None and repaired and not upgraded and (_why_failures(found) or _care_failures(found) or _behavior_failures(found)):
-            logging.warning('personal why repair uses %s for %s', upgrade_model_name(), label)
-            note_upgrade(llm)
-            payload = _repair_whys(llm, payload, quotes, upgrade_model_name(), speech, pool, '3.6-repair')
-            payload = apply_quote_ids(payload, quotes)
-            upgraded = True
-            found = section_problems(payload, quotes, allowed, moment, int(stats.get('share') or 0), speech)
-            reasons = [reason for items in found.values() for reason in items]
-            _note_rejected_whys(label, payload, quotes, progress_dir, json.dumps(payload), reasons, {**style_note, 'model': upgrade_model_name(), 'repair': True}, speech)
+            _fill_merged_from_attempts(pool, quotes, speech)
+            page = assemble_personal_bullets(pool, quotes, speech)
+            if _has_merged_bullet(page):
+                upgraded = True
+            elif enough_speech(rows) and upgrade_calls(llm) < 2:
+                logging.warning('merged bullet rescue for %s before why-repair: %s', label, '; '.join(reasons))
+                note_upgrade(llm)
+                _rescue_merged_bullet(llm, quotes, speech, reasons, pool)
+                upgraded = True
+            elif upgrade_calls(llm) < 2:
+                logging.warning('personal why repair uses %s for %s', upgrade_model_name(), label)
+                note_upgrade(llm)
+                payload = _repair_whys(llm, payload, quotes, upgrade_model_name(), speech, pool, '3.6-repair')
+                payload = apply_quote_ids(payload, quotes)
+                upgraded = True
+                found = section_problems(payload, quotes, allowed, moment, int(stats.get('share') or 0), speech)
+                reasons = [reason for items in found.values() for reason in items]
+                _note_rejected_whys(label, payload, quotes, progress_dir, json.dumps(payload), reasons, {**style_note, 'model': upgrade_model_name(), 'repair': True}, speech)
         if reasons and not upgraded:
             logging.warning('personal flash-lite rejected %s: %s', label, '; '.join(reasons))
         page = assemble_personal_bullets(pool, quotes, speech)
-        if payload is not None and not reasons and not page['needs_review']:
-            story = _ship_assembled(page, payload, lines, name, step, units, pick, False)
+        if payload is not None and not reasons and _has_merged_bullet(page):
+            story = _ship_assembled(page, payload, lines, name, step, units, pick, page['needs_review'])
             return _stamp(story, progress_dir)
         if payload is not None and reasons and not upgraded and upgrade_calls(llm) < 2:
             active = upgrade_model_name()
@@ -2036,92 +2152,311 @@ def pick_merged_quote(behavior: str, quotes: list[str], speech: str, avoid: set[
     return quotes[0] if quotes else ''
 
 
-def mix_merged_triples(triples, quotes: list[str], speech: str) -> tuple[dict | None, list[str]]:
+def triples_from_attempts(attempts) -> list[dict]:
+    """Care, goal, and why pulled off every draft, including ones that were rejected whole."""
+    triples = []
+    for item in attempts or []:
+        if not isinstance(item, dict):
+            continue
+        behavior = str(item.get('behavior') or '')
+        triples.append({
+            'care': _care_phrase(behavior) or str(item.get('care') or ''),
+            'goal': _goal_phrase(behavior) or str(item.get('goal') or ''),
+            'why': str(item.get('why') or ''),
+        })
+    return triples
+
+
+def mix_merged_triples(triples, quotes: list[str], speech: str, extras: dict | None = None) -> tuple[dict | None, list[str], set[str]]:
     """Keep a passing care, a passing goal, and any passing why, even from different triples."""
     logs: list[str] = []
     cares: list[str] = []
     goals: list[str] = []
     whys: list[str] = []
     sample = quotes[0] if quotes else speech
-    for index, triple in enumerate(list(triples or [])[:3]):
+    rows = list(triples or [])
+    for kind, bucket in (('care', cares), ('goal', goals), ('why', whys)):
+        for piece in (extras or {}).get(kind) or []:
+            rows.append({kind: piece})
+    for index, triple in enumerate(rows):
         if not isinstance(triple, dict):
             logs.append(f'triple {index + 1}: not an object')
             continue
         care = str(triple.get('care') or '').strip()
         goal = str(triple.get('goal') or '').strip()
         why = str(triple.get('why') or '').strip()
-        care_problem = care_piece_problem(care, speech, sample)
-        if care_problem:
-            logs.append(f'care {index + 1}: {care_problem}')
-        else:
-            cares.append(care)
-        goal_problem = goal_piece_problem(goal, sample, speech)
-        if goal_problem:
-            logs.append(f'goal {index + 1}: {goal_problem}')
-        else:
-            goals.append(goal)
-        if not why:
-            logs.append(f'why {index + 1}: why is missing')
-        else:
-            whys.append(why)
+        if 'care' in triple:
+            care_problem = care_piece_problem(care, speech, sample)
+            if care_problem:
+                logs.append(f'care {index + 1}: {care_problem}')
+            elif care not in cares:
+                cares.append(care)
+        if 'goal' in triple:
+            goal_problem = goal_piece_problem(goal, sample, speech)
+            if goal_problem:
+                logs.append(f'goal {index + 1}: {goal_problem}')
+            elif goal not in goals:
+                goals.append(goal)
+        if 'why' in triple:
+            if not why:
+                logs.append(f'why {index + 1}: why is missing')
+            elif why not in whys:
+                whys.append(why)
     if logs:
         logging.warning('merged piece failures: %s', '; '.join(logs))
-    if not cares or not goals or not whys:
-        return None, logs
-    for care in cares:
-        for goal in goals:
-            behavior = _merged_behavior(care, goal)
-            choices = merged_quote_choices(behavior, quotes, speech) or ['']
-            for quote in choices:
-                if not quote:
-                    logs.append('quote: no complete thought in the speech')
+    usable_goals: list[str] = []
+    if cares and goals:
+        for care in cares:
+            for goal in goals:
+                behavior = _merged_behavior(care, goal)
+                if len(_raw_words(behavior)) > 20:
+                    logs.append(f'pair {care!r} / {goal!r}: care bullet is longer than 20 words')
                     continue
-                copied = goal_phrase_problem(behavior, quote)
-                joined = copied or behavior_word_problem(behavior, quote) or voice_problem(behavior, speech) or prompt_example_problem(behavior, speech)
-                if joined:
-                    logs.append(f'pair {care!r} / {goal!r}: {joined}')
-                    continue
-                if not care_grounded(behavior, speech, quote):
-                    logs.append(f'pair {care!r}: care object is not in this person\'s speech')
-                    continue
-                for why in whys:
-                    if merged_length_problem(behavior, why) or not _why_passes_gate(behavior, quote, why, quotes, speech):
-                        reason = merged_length_problem(behavior, why) or _why_problem(why, quote, behavior, quotes, speech) or 'why does not pass'
-                        logs.append(f'why for {care!r}: {reason}')
+                choices = merged_quote_choices(behavior, quotes, speech) or ['']
+                for quote in choices:
+                    if not quote:
+                        logs.append('quote: no complete thought in the speech')
                         continue
-                    logging.warning('merged bullet mixed care %r goal %r why %r', care, goal, why)
-                    return {'behavior': behavior, 'quote': quote, 'why': listener_why(why, behavior)}, logs
-    return None, logs
+                    copied = goal_phrase_problem(behavior, quote)
+                    joined = copied or behavior_word_problem(behavior, quote) or voice_problem(behavior, speech) or prompt_example_problem(behavior, speech)
+                    if joined:
+                        logs.append(f'pair {care!r} / {goal!r}: {joined}')
+                        continue
+                    if not care_grounded(behavior, speech, quote):
+                        logs.append(f'pair {care!r}: care object is not in this person\'s speech')
+                        continue
+                    usable_goals.append(goal)
+                    logging.warning('merged bullet mixed care %r goal %r', care, goal)
+                    return {'behavior': behavior, 'quote': quote, 'why': ''}, logs, set()
+    missing = set()
+    if not cares:
+        missing.add('care')
+    if not usable_goals:
+        missing.add('goal')
+    return None, logs, missing
 
 
-def _rescue_merged_bullet(llm, quotes: list[str], speech: str, reasons: list[str], pool: list) -> list[str]:
-    """One 3.6 call. Three care/goal/why triples, mixed from whichever piece passes."""
+def _mix_attempt_pool(pool: list, quotes: list[str], speech: str) -> tuple[dict | None, list[str], set[str]]:
+    """Mix care, goal, and why pieces from every draft, including rejected ones."""
+    return mix_merged_triples(triples_from_attempts(pool), quotes, speech)
+
+
+def _store_mixed(pool: list, mixed: dict | None, quotes: list[str], speech: str) -> None:
+    if not mixed:
+        return
+    pool.append(_make_candidate(mixed['behavior'], mixed['quote'], mixed['why'], 'mixed', quotes, speech))
+
+
+def _request_missing_pieces(llm, missing: set[str], quotes: list[str], speech: str, reasons: list[str]) -> list[dict]:
+    """One 3.6 call for only the piece types still missing. Three goals when that is all."""
     quote_block = '\n'.join(f'Q{index + 1}: {quote}' for index, quote in enumerate(quotes)) or 'None.'
     failed = '\n'.join(f'- {item}' for item in reasons) or '- the merged bullet did not pass'
-    prompt = (
-        'Write 3 merged triples. Each care is 2 to 4 words. Each goal is 3 to 6 words. '
-        'Each why is one sentence of 12 words or fewer. It starts with This or That and uses shows, helps, lets, or tells. '
-        'Do not repeat the care phrase. Do not write I, me, my, or we. No advice.\n'
-        f'The earlier draft failed:\n{failed}\n'
-        f'SPEECH\n{speech or "None."}\n'
-        f'QUOTES\n{quote_block}\n'
-        'Return JSON only: {"triples": [{"care": "...", "goal": "...", "why": "..."}, {"care": "...", "goal": "...", "why": "..."}, {"care": "...", "goal": "...", "why": "..."}]}\n'
-    )
+    if missing == {'goal'}:
+        prompt = (
+            'Write 3 goals of 3 to 6 words. Each says what the person was trying to show the listener. '
+            'Do not copy the quote. Do not write I, me, my, or we. No advice.\n'
+            f'The earlier draft failed:\n{failed}\nSPEECH\n{speech or "None."}\nQUOTES\n{quote_block}\n'
+            'Return JSON only: {"goals": ["...", "...", "..."]}\n'
+        )
+        key = 'goals'
+    elif missing == {'care'}:
+        prompt = (
+            'Write 3 care phrases of 2 to 4 words. Each says what the person values. '
+            'Not a bare noun. Do not write I, me, my, or we.\n'
+            f'The earlier draft failed:\n{failed}\nSPEECH\n{speech or "None."}\nQUOTES\n{quote_block}\n'
+            'Return JSON only: {"cares": ["...", "...", "..."]}\n'
+        )
+        key = 'cares'
+    elif missing == {'why'}:
+        prompt = (
+            'Write 3 whys. Each is one sentence of 12 words or fewer. '
+            'It starts with This or That and uses shows, helps, lets, or tells. '
+            'Do not repeat the care phrase. Do not write I, me, my, or we. No advice.\n'
+            f'The earlier draft failed:\n{failed}\nSPEECH\n{speech or "None."}\nQUOTES\n{quote_block}\n'
+            'Return JSON only: {"whys": ["...", "...", "..."]}\n'
+        )
+        key = 'whys'
+    else:
+        prompt = (
+            'Write 3 merged triples. Each care is 2 to 4 words. Each goal is 3 to 6 words. '
+            'Each why is one sentence of 12 words or fewer. It starts with This or That and uses shows, helps, lets, or tells. '
+            'Do not repeat the care phrase. Do not write I, me, my, or we. No advice.\n'
+            f'The earlier draft failed:\n{failed}\n'
+            f'SPEECH\n{speech or "None."}\n'
+            f'QUOTES\n{quote_block}\n'
+            'Return JSON only: {"triples": [{"care": "...", "goal": "...", "why": "..."}, {"care": "...", "goal": "...", "why": "..."}, {"care": "...", "goal": "...", "why": "..."}]}\n'
+        )
+        key = 'triples'
     try:
         raw = _raw_text(_invoke_personal(llm, prompt, upgrade_model_name()))
     except Exception as exc:
         logging.warning('merged bullet rescue failed: %s', exc)
-        return [f'rescue failed: {exc}']
+        return []
     data = _parse(raw) or {}
-    triples = data.get('triples') if isinstance(data, dict) else None
-    if not isinstance(triples, list):
-        logging.warning('merged piece failures: the rescue did not return triples')
-        return ['the rescue did not return triples']
-    mixed, logs = mix_merged_triples(triples, quotes, speech)
-    if not mixed:
-        return logs or ['no passing care, goal, and why']
-    pool.append(_make_candidate(mixed['behavior'], mixed['quote'], mixed['why'], '3.6-rescue', quotes, speech))
-    return logs
+    if not isinstance(data, dict):
+        return []
+    if key == 'triples':
+        found = data.get('triples')
+        return list(found) if isinstance(found, list) else []
+    found = data.get(key) or data.get(key[:-1])
+    if not isinstance(found, list):
+        return []
+    kind = {'cares': 'care', 'goals': 'goal', 'whys': 'why'}[key]
+    return [{kind: str(item)} for item in found if str(item or '').strip()]
+
+
+def _payload_slots(payload: dict) -> tuple[list, list, list, list]:
+    data = payload or {}
+    cares = [str(item).strip() for item in (data.get('cares') or []) if str(item).strip()]
+    goals = [str(item).strip() for item in (data.get('goals') or []) if str(item).strip()]
+    readings = [item for item in (data.get('readings') or []) if isinstance(item, dict)]
+    curiosities = [item for item in (data.get('curiosities') or []) if isinstance(item, dict)]
+    for bullet in data.get('bullets') or []:
+        if not isinstance(bullet, dict):
+            continue
+        behavior = str(bullet.get('behavior') or '')
+        care = _care_phrase(behavior)
+        goal = _goal_phrase(behavior)
+        if care:
+            cares.append(care)
+        if goal:
+            goals.append(goal)
+    return cares, goals, readings, curiosities
+
+
+def compose_three_bullets(payload: dict, quotes: list[str], speech: str) -> tuple[list[str], set[str]]:
+    """Three fixed shapes. Each slot is mixed from its own candidates."""
+    cares, goals, readings, curiosities = _payload_slots(payload)
+    lines: list[str] = []
+    missing: set[str] = set()
+    logs: list[str] = []
+    sample = quotes[0] if quotes else speech
+    care_goal = None
+    for care in cares:
+        for goal in goals:
+            problem = care_bullet_problem(care, goal, speech, sample)
+            if problem:
+                logs.append(f'care bullet: {problem}')
+                continue
+            care_goal = (care, goal)
+            break
+        if care_goal:
+            break
+    if care_goal:
+        lines.append(render_care_bullet(*care_goal))
+        logging.warning('merged bullet mixed care %r goal %r', care_goal[0], care_goal[1])
+    else:
+        care_ok = any(not care_piece_problem(care, speech, sample) for care in cares)
+        goal_ok = any(not goal_piece_problem(goal, sample, speech) for goal in goals)
+        if not care_ok:
+            missing.add('care')
+        if not goal_ok or (care_ok and not care_goal):
+            missing.add('goal')
+    reading_line = ''
+    for item in readings:
+        quote = _quote_by_id(str(item.get('quote') or ''), quotes, 0) or pick_merged_quote('', quotes, speech)
+        spoken = shorten_quote(quote, str(item.get('reading') or ''))
+        problem = reading_problem(str(item.get('reading') or ''), spoken, speech)
+        if problem:
+            logs.append(f'reading: {problem}')
+            continue
+        reading_line = render_reading_bullet(spoken, str(item.get('reading') or ''))
+        break
+    if reading_line:
+        lines.append(reading_line)
+    elif readings or 'readings' in (payload or {}):
+        missing.add('reading')
+    curiosity_line = ''
+    for item in curiosities:
+        behavior = str(item.get('behavior') or '')
+        dynamic = str(item.get('dynamic') or '')
+        problem = curiosity_problem(behavior, dynamic, speech)
+        if problem:
+            logs.append(f'curiosity: {problem}')
+            continue
+        curiosity_line = render_curiosity_bullet(behavior, dynamic)
+        break
+    if curiosity_line:
+        lines.append(curiosity_line)
+    elif curiosities or 'curiosities' in (payload or {}):
+        missing.add('curiosity')
+    if logs:
+        logging.warning('merged piece failures: %s', '; '.join(logs))
+    return lines, missing
+
+
+def _new_shape(payload: dict | None) -> bool:
+    return any(key in (payload or {}) for key in ('cares', 'goals', 'readings', 'curiosities'))
+
+
+def _request_missing_slots(llm, missing: set[str], quotes: list[str], speech: str, reasons: list[str]) -> dict:
+    """One 3.6 call that asks only for the slots that are still empty."""
+    parts = []
+    if 'care' in missing:
+        parts.append('Write 3 care phrases of 2 to 4 words under "cares".')
+    if 'goal' in missing:
+        parts.append('Write 3 goals of 3 to 6 words under "goals".')
+    if 'reading' in missing:
+        parts.append(
+            'Write 3 readings under "readings", each {"quote": "Q1", "reading": ""}. '
+            'A reading is 15 words or fewer.'
+        )
+    if 'curiosity' in missing:
+        parts.append(
+            'Write 3 curiosities under "curiosities", each {"behavior": "your ...", "dynamic": ""}. '
+            'behavior is 3 to 8 words. dynamic is 2 to 6 words.'
+        )
+    if not parts:
+        return {}
+    quote_block = '\n'.join(f'Q{index + 1}: {quote}' for index, quote in enumerate(quotes)) or 'None.'
+    prompt = (
+        ' '.join(parts) + '\n'
+        'No advice. No first person except I wonder. Do not flatter or judge.\n'
+        + ('Failures:\n' + '\n'.join(reasons) + '\n' if reasons else '')
+        + f'SPEECH\n{speech}\nQUOTES\n{quote_block}\nReturn JSON only.\n'
+    )
+    raw = _invoke_personal(llm, prompt, upgrade_model_name(), 'minimal', 2048)
+    return _parse_json(raw) or {}
+
+
+def ensure_three_bullets(llm, payload: dict, quotes: list[str], speech: str, reasons: list[str], rows) -> list[str]:
+    """Mix the three slots. Spend at most two 3.6 calls, and only on slots that failed."""
+    if not _new_shape(payload) or needs_short_report(rows):
+        return []
+    data = dict(payload)
+    lines, missing = compose_three_bullets(data, quotes, speech)
+    while missing and upgrade_calls(llm) < 2 and enough_speech(rows):
+        logging.warning('bullet slot rescue: %s', ', '.join(sorted(missing)))
+        note_upgrade(llm)
+        added = _request_missing_slots(llm, missing, quotes, speech, reasons)
+        for key in ('cares', 'goals', 'readings', 'curiosities'):
+            if added.get(key):
+                data[key] = list(data.get(key) or []) + list(added[key])
+        lines, missing = compose_three_bullets(data, quotes, speech)
+    if missing:
+        logging.warning('bullet slots need review: %s', ', '.join(sorted(missing)))
+    return lines
+
+
+def _fill_merged_from_attempts(pool: list, quotes: list[str], speech: str, extra: list | None = None) -> tuple[list[str], set[str]]:
+    """Mix every attempt. Return the piece-failure log and whichever piece types are still missing."""
+    bank = triples_from_attempts(pool) + list(extra or [])
+    mixed, logs, missing = mix_merged_triples(bank, quotes, speech)
+    _store_mixed(pool, mixed, quotes, speech)
+    return logs, missing
+
+
+def _rescue_merged_bullet(llm, quotes: list[str], speech: str, reasons: list[str], pool: list) -> list[str]:
+    """One 3.6 call for the piece types still missing. Existing attempts are mixed in first."""
+    logs, missing = _fill_merged_from_attempts(pool, quotes, speech)
+    if not missing:
+        return logs
+    added = _request_missing_pieces(llm, missing, quotes, speech, reasons)
+    if not added:
+        logging.warning('merged piece failures: the rescue did not return the missing pieces')
+        return logs + ['the rescue did not return the missing pieces']
+    more_logs, _still = _fill_merged_from_attempts(pool, quotes, speech, added)
+    return logs + more_logs
 
 
 def _why_failures(found: dict) -> bool:
@@ -2359,7 +2694,7 @@ def _make_candidate(behavior: str, quote: str, why: str, source: str, quotes: li
         problem = _why_problem(why, quote, behavior, quotes, speech)
         if problem:
             problems.append(problem)
-    else:
+    elif not _is_merged_bullet(behavior):
         problems.append('why is missing')
     return {
         'behavior': behavior,
@@ -2433,27 +2768,15 @@ def assemble_personal_bullets(pool: list, quotes: list[str], speech: str = '') -
             )
 
         passing = [item for item in phrase_ok if _why_ok(item['behavior'], item['quote'], item.get('why') or '')]
-        if passing:
-            first = dict(passing[0])
-        elif phrase_ok:
-            borrowed = None
-            for base in phrase_ok:
-                for item in pool:
-                    why = str(item.get('why') or '')
-                    if item.get('quote') == base['quote'] and _why_ok(base['behavior'], base['quote'], why):
-                        borrowed = (base, why)
-                        break
-                if borrowed:
-                    break
-            if borrowed:
-                base, why = borrowed
-                first = {
-                    'behavior': base['behavior'],
-                    'quote': base['quote'],
-                    'why': why,
-                    'merged': True,
-                    'source': base.get('source') or '',
-                }
+        if phrase_ok:
+            base = dict(passing[0] if passing else phrase_ok[0])
+            first = {
+                'behavior': base['behavior'],
+                'quote': base['quote'],
+                'why': base.get('why') or '',
+                'merged': True,
+                'source': base.get('source') or '',
+            }
     others = []
     used = {first['quote']} if first else set()
     for item in pool:
@@ -2477,23 +2800,47 @@ def assemble_personal_bullets(pool: list, quotes: list[str], speech: str = '') -
             or care_phrase_problem(item['behavior'], item['quote'])
             or goal_phrase_problem(item['behavior'], item['quote'])
             or prompt_example_problem(item['behavior'], speech)
-            or not why
-            or why_length_problem(why)
-            or not _why_passes_gate(item['behavior'], item['quote'], why, quotes, speech)
+            or len(_raw_words(item['behavior'])) > 20
         ):
             continue
-        if why and not item.get('merged') and not _why_passes_gate(item['behavior'], item['quote'], why, quotes, speech):
+        if not item.get('merged') and why and not _why_passes_gate(item['behavior'], item['quote'], why, quotes, speech):
             continue
         checked.append(item)
-    if checked and checked[0].get('merged'):
-        checked = [checked[0]] + [item for item in checked[1:] if item.get('why')]
-    complete_others = [item for item in checked[1:] if item.get('why')] if checked and checked[0].get('merged') else []
-    needs_review = not checked or not checked[0].get('merged') or len(complete_others) < 1
+    lines = _three_lines(checked, speech)
+    has_care = any(line.lower().startswith('you seem to care') for line in lines)
+    needs_review = not has_care or len(lines) < 3
     return {
-        'bullets': [_render_bullet(item['behavior'], item['quote'], item.get('why') or '') for item in checked],
+        'bullets': lines,
         'items': checked,
         'needs_review': needs_review,
     }
+
+
+def _three_lines(checked: list[dict], speech: str) -> list[str]:
+    """Ship the three fixed shapes. The old because-line never reaches the page."""
+    lines: list[str] = []
+    if not checked:
+        return lines
+    first = checked[0]
+    if first.get('merged') or str(first.get('behavior') or '').lower().startswith('you seem to care'):
+        care = _care_phrase(str(first.get('behavior') or ''))
+        goal = _goal_phrase(str(first.get('behavior') or ''))
+        if care and goal and len(_raw_words(render_care_bullet(care, goal))) <= 20:
+            lines.append(render_care_bullet(care, goal))
+    for item in checked:
+        quote = str(item.get('quote') or '')
+        why = str(item.get('why') or '')
+        if why and not reading_problem(why, quote, speech):
+            lines.append(render_reading_bullet(shorten_quote(quote, why), why))
+            break
+    for item in checked[1:]:
+        behavior = str(item.get('behavior') or '')
+        if curiosity_problem(behavior, 'how the group shares ideas', speech):
+            continue
+        if re.search(r'\byour\b', behavior, re.I) and 3 <= len(_raw_words(behavior)) <= 8:
+            lines.append(render_curiosity_bullet(behavior, 'how the group shares ideas'))
+            break
+    return lines[:3]
 
 
 def _usable_model_bullets(payload: dict | None, quotes: list[str], speech: str = '') -> list[str]:

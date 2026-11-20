@@ -727,7 +727,7 @@ def test_generate_session_keeps_personal_bullets_in_the_pdf(tmp_path):
                 return json.dumps({
                     'bullets': [
                         {
-                            'behavior': 'You seem to care about the budget, and it seemed like you were trying to name an owner.',
+                            'behavior': 'You seem to care about real work, and it seemed like you were trying to name an owner.',
                             'quote': 'Q1',
                             'why': 'The budget stays in that line.',
                         },
@@ -813,9 +813,11 @@ def test_generate_session_keeps_personal_bullets_in_the_pdf(tmp_path):
         draft=draft,
     )
     assert story['bullets']
-    assert any('We came to that conclusion because of' in bullet for bullet in story['bullets'])
+    assert story['bullets'][0].startswith('You seem to care about real work')
+    assert all('We came to that conclusion because of' not in bullet for bullet in story['bullets'])
     pdf = MM_PDF(path_report_assets=__import__('pathlib').Path('report_assets'))
     write_personal_report(pdf, story, tmp_path)
     pdf.output(tmp_path / 'stephen.pdf')
     text = '\n'.join(page.extract_text() or '' for page in PdfReader(tmp_path / 'stephen.pdf').pages)
-    assert 'We came to that conclusion because of' in text
+    assert 'You seem to care about real work' in text
+    assert 'We came to that conclusion because of' not in text
