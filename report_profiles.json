@@ -1,0 +1,82 @@
+{
+  "hot_seat": {
+    "title": "Hot seat rep",
+    "use_for": "Open Lab, Kickoff, Pilot and Full Program reps with a trained actor. Run it once per rep and pass Rep 1 as the baseline for Rep 2.",
+    "report_roles": ["participant"],
+    "group_roles": ["participant"],
+    "min_words": 60,
+    "personal": ["four_beats", "time_to_point", "filler_rate", "pace_wpm", "response_gap", "acknowledged_first", "held_under_pushback", "open_question_share", "rubric_total"],
+    "brief": ["talk_time", "words"],
+    "group": ["group_open_share"],
+    "targets": {
+      "participant": {
+        "time_to_point": {"max": 30, "source": "HTS: Headline First puts the headline in the first two sentences"},
+        "pace_wpm": {"min": 130, "max": 170, "source": "HTS house band; tune per cohort"}
+      }
+    },
+    "lenses": false
+  },
+  "sales_call": {
+    "title": "Demo or sales call",
+    "use_for": "HTS's own Demo and discovery calls, and client sales teams.",
+    "report_roles": ["seller"],
+    "group_roles": ["seller", "buyer"],
+    "min_words": 150,
+    "personal": ["talk_share", "longest_turn", "open_question_share", "question_rate", "longest_listen", "filler_rate", "response_gap", "next_step"],
+    "group": ["group_questions", "group_open_share"],
+    "targets": {
+      "seller": {
+        "talk_share": {"min": 40, "max": 60, "source": "Gong Labs: 43% in the original study; win rates fall past 65% in the 2025 update"},
+        "longest_turn": {"max": 150000, "source": "Gong: no more than 2:30 at a time"}
+      }
+    },
+    "lenses": false
+  },
+  "team_meeting": {
+    "title": "Team meeting",
+    "use_for": "A working team's own meeting. Client engagements and Practice Lab.",
+    "report_roles": ["participant", "lead"],
+    "group_roles": ["participant", "lead"],
+    "min_words": 150,
+    "personal": ["talk_share", "turns", "questions", "open_question_share", "response_gap", "cut_ins", "we_share", "follow_ups"],
+    "group": ["balance", "top_voice_share", "quiet_voices", "group_questions", "group_open_share"],
+    "targets": {
+      "lead": {
+        "talk_share": {"max": 35, "source": "HTS house band for the most senior person in the room; tune per client"}
+      }
+    },
+    "lenses": false
+  },
+  "panel": {
+    "title": "Panel or show",
+    "use_for": "Panels, podcasts, webinars. Moderators and panelists are compared only with their own role.",
+    "report_roles": ["panelist", "moderator"],
+    "group_roles": ["panelist", "moderator"],
+    "min_words": 200,
+    "personal": ["talk_time", "turns", "longest_turn", "pace_wpm", "filler_rate", "questions", "follow_ups"],
+    "brief": ["talk_time", "words", "turns"],
+    "group": ["balance", "top_voice_share", "quiet_voices", "group_questions"],
+    "targets": {
+      "moderator": {
+        "talk_share": {"max": 25, "source": "HTS house band for a moderator; tune per show"}
+      }
+    },
+    "lenses": false
+  },
+  "family_interview": {
+    "title": "Family interview",
+    "use_for": "Child welfare simulations: investigator, case manager or supervisor with an actor playing a parent or caregiver.",
+    "report_roles": ["participant"],
+    "group_roles": ["participant"],
+    "min_words": 100,
+    "personal": ["open_question_share", "reflections", "talk_share", "longest_listen", "acknowledged_first", "cut_ins", "pace_wpm", "rubric_total"],
+    "group": ["group_open_share"],
+    "targets": {
+      "participant": {
+        "talk_share": {"max": 50, "source": "HTS house band: the family member should hold at least half the talk; tune per agency"},
+        "open_question_share": {"min": 50, "source": "Motivational interviewing practice favours open questions; set the exact bar with the agency's own curriculum"}
+      }
+    },
+    "lenses": false
+  }
+}
